@@ -222,6 +222,7 @@ export async function POST(request: Request) {
     .select({
       id: intakeForms.id,
       isActive: intakeForms.isActive,
+      name: intakeForms.name,
       fields: intakeForms.fields,
     })
     .from(intakeForms)
@@ -474,6 +475,28 @@ export async function POST(request: Request) {
     contactId: contactId ?? null,
     data: answers,
   });
+
+  // EPIC 2026-10-04: every form enquiry leaves ONE owned follow-up task and fills an empty contact assignment.
+  // Never blocks the public response; an unowned result is logged for staff.
+  if (contactId) {
+    try {
+      const { drizzleFollowUpStore, recordOwnedFormFollowUp } = await import("@/lib/bookings/owned-follow-up");
+      const fu = await recordOwnedFormFollowUp(drizzleFollowUpStore(), {
+        orgId: org.id,
+        contactId,
+        formId: form.id,
+        formName: form.name,
+        service: typeof answers.service === "string" ? answers.service : null,
+        details: typeof answers.details === "string" ? answers.details : null,
+        contactBits: [extracted.firstName ? `${extracted.firstName} ${extracted.lastName ?? ""}`.trim() : null, extracted.email, extracted.phone],
+      });
+      if (!fu.recorded) {
+        console.error(JSON.stringify({ event: "public_intake_follow_up_unowned", org_id: org.id, form_id: form.id, contact_id: contactId, reason: fu.reason }));
+      }
+    } catch (fuErr) {
+      console.error(JSON.stringify({ event: "public_intake_follow_up_failed", org_id: org.id, error: fuErr instanceof Error ? fuErr.message : String(fuErr) }));
+    }
+  }
 
   // v1.57 — intake → Documents bridge. When the submission included file
   // uploads, insert a portal_documents row per file so the operator sees

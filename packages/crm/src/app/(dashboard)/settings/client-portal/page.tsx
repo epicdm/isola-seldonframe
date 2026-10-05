@@ -7,6 +7,8 @@ import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import { getBrandingSettings } from "@/lib/branding/actions";
 import { checkPortalPlanGate } from "@/lib/portal/plan-gate";
 import { ClientPortalSettings } from "@/components/settings/client-portal-settings";
+import { PortalServiceLinksForm } from "@/components/settings/portal-service-links-form";
+import { serviceLinksFromSettings } from "@/lib/portal/service-links";
 
 /**
  * May 1, 2026 — Client Portal V1: workspace-level settings page.
@@ -60,7 +62,7 @@ export default async function ClientPortalSettingsPage() {
   const [orgRow, branding, planGate, enabledCountRow, activeCountRow, totalCountRow] =
     await Promise.all([
       db
-        .select({ id: organizations.id, name: organizations.name, slug: organizations.slug })
+        .select({ id: organizations.id, name: organizations.name, slug: organizations.slug, settings: organizations.settings })
         .from(organizations)
         .where(eq(organizations.id, orgId))
         .limit(1)
@@ -134,6 +136,8 @@ export default async function ClientPortalSettingsPage() {
         portalUrl={portalUrl}
         hideTierMentions={isInsideClientWorkspace}
       />
+
+      <PortalServiceLinksForm initial={serviceLinksFromSettings(orgRow?.settings)} />
     </section>
   );
 }

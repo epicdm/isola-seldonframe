@@ -1,5 +1,6 @@
 "use server";
 
+import { contactFromAnswers } from "@/lib/forms/contact-from-answers";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
@@ -231,16 +232,29 @@ export async function submitPublicIntakeAction({
       .where(and(eq(contacts.orgId, form.orgId), eq(contacts.email, email)))
       .limit(1);
 
+    const answered = contactFromAnswers(data);
     if (existing) {
       contactId = existing.id;
+      // EPIC 2026-10-04: fill ONLY blanks/placeholders from this submission; never overwrite a real name or phone.
+      const patch: { firstName?: string; lastName?: string; phone?: string } = {};
+      if (answered.firstName && (!existing.firstName || existing.firstName === "New")) patch.firstName = answered.firstName;
+      if (answered.lastName && !existing.lastName) patch.lastName = answered.lastName;
+      if (answered.phone && !existing.phone) patch.phone = answered.phone;
+      if (Object.keys(patch).length > 0) {
+        await db.update(contacts).set(patch).where(and(eq(contacts.id, existing.id), eq(contacts.orgId, form.orgId)));
+      }
     } else {
       const [created] = await db
         .insert(contacts)
         .values({
           orgId: form.orgId,
-          firstName: String(data.name ?? "New"),
+          // EPIC 2026-10-04: the form keys the name fullName; the old data.name read produced a contact called "New".
+          firstName: answered.firstName ?? "New",
+          lastName: answered.lastName,
+          phone: answered.phone,
           email,
           status: "lead",
+          source: "intake",
         })
         .returning();
 
