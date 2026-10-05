@@ -169,7 +169,6 @@ export function LeadFormCard({ orgSlug, businessName, leadForm }: LeadFormCardPr
               <button type="submit" className="sf-leadform-submit" disabled={pending}>
                 {pending ? "Sending…" : "Get my callback"}
               </button>
-              <p className="sf-leadform-trust">★★★★★ Trusted by your neighbors</p>
               {customConsentText ? (
                 <p className="sf-leadform-consent">{customConsentText}</p>
               ) : (
