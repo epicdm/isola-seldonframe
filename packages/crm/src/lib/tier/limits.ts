@@ -3,6 +3,8 @@ import { db } from "@/db";
 import { landingPages, organizations, users } from "@/db/schema";
 import { isSuperAdminUser } from "@/lib/auth/super-admin";
 import { CLOUD_TIERS, type CloudTierKey } from "./config";
+import { pickEffectivePlan } from "./effective-plan";
+import { resolveTierForWorkspace } from "@/lib/billing/tier-resolver";
 
 // v1.36.2 — entitlement bypass for SF super-admins. Workspaces
 // owned by anyone whose email is in SF_SUPERADMIN_EMAILS skip every
@@ -94,7 +96,10 @@ async function getOrgUsageState(orgId: string) {
     throw new Error("Organization not found");
   }
 
-  return org as OrgUsageState;
+  // EPIC 2026-10-05: agency-managed client workspaces inherit the operator tier (same resolver checkPortalPlanGate uses).
+  // Without this the portal home threw upgrade_required portalEnabled for a customer who had just signed in.
+  const inheritedTier = await resolveTierForWorkspace(orgId).catch(() => null);
+  return { ...org, plan: pickEffectivePlan(org.plan, inheritedTier) } as OrgUsageState;
 }
 
 async function maybeResetUsageCounters(org: OrgUsageState) {
