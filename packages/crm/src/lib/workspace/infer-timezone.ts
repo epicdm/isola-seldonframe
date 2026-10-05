@@ -81,9 +81,14 @@ const STATE_TIMEZONES: Record<string, string> = {
   NL: "America/St_Johns",
   PE: "America/Halifax",
   SK: "America/Regina",
+  // EPIC 2026-10-05: Dominica (Caribbean). Keyed by ISO alpha-3 so the strict 2-letter free-text matching (where an
+  // uppercase "DM" in a description would otherwise match) is untouched. Without any entry, createFullWorkspace's
+  // timezone check can never pass for a customer outside the US and Canada.
+  DMA: "America/Dominica",
 };
 
 const STATE_NAME_TO_CODE: Record<string, string> = {
+  dominica: "DMA",
   alabama: "AL",
   alaska: "AK",
   arizona: "AZ",
@@ -237,6 +242,7 @@ const UNIQUE_CITY_TO_STATE: Record<string, string> = {
   edmonton: "AB",
   winnipeg: "MB",
   halifax: "NS",
+  roseau: "DMA",
 };
 
 function normalize(s: string): string {
