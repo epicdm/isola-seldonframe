@@ -4,11 +4,11 @@ import { authorizeVoiceContext } from "../../../src/lib/agents/voice/scoped-nati
 
 const pat = {
   workspaceId: "738f1181-b540-48c3-b72f-d63f92463755",
-  agentSlug: "pat-demo-household-9d5e--default",
+  agentSlug: "default",
 };
 const quinn = {
   workspaceId: "476d8685-74a7-4539-a8f6-7778dea6a1eb",
-  agentSlug: "quinn-demo-household--default",
+  agentSlug: "default",
 };
 const env = {
   secret: "synthetic-service-secret",
