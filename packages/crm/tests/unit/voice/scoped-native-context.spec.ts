@@ -35,12 +35,30 @@ test("Pat and Quinn each resolve only their own native workspace and agent", () 
   assert.deepEqual(authorize(quinn), { ok: true, binding: quinn });
 });
 
-test("cross-wired workspace and agent pairs fail closed", () => {
-  assert.deepEqual(authorize({ ...pat, agentSlug: quinn.agentSlug }), {
+test("cross-wired or unlisted workspace and agent pairs fail closed", () => {
+  // Both customers use the database slug "default", so the workspace id is the isolation boundary:
+  // a listed workspace with any slug other than its allowlisted one is refused...
+  assert.deepEqual(authorize({ ...pat, agentSlug: "voice-receptionist" }), {
     ok: false,
     status: 404,
   });
-  assert.deepEqual(authorize({ ...quinn, agentSlug: pat.agentSlug }), {
+  assert.deepEqual(authorize({ ...quinn, agentSlug: "voice-receptionist" }), {
+    ok: false,
+    status: 404,
+  });
+  // ...and a workspace that is not on the allowlist is refused even with the valid slug (the EPIC workspace here).
+  assert.deepEqual(
+    authorize({ workspaceId: "9e0c646b-de4a-4707-946c-838ebbf6607b", agentSlug: "default" }),
+    { ok: false, status: 404 },
+  );
+});
+
+test("the public id form <org>--<agent> is not a database slug and is refused", () => {
+  assert.deepEqual(authorize({ ...pat, agentSlug: "pat-demo-household-9d5e--default" }), {
+    ok: false,
+    status: 404,
+  });
+  assert.deepEqual(authorize({ ...quinn, agentSlug: "quinn-demo-household--default" }), {
     ok: false,
     status: 404,
   });
