@@ -156,6 +156,11 @@ const EMAIL_PATTERN = /[\w._%+-]+@[\w.-]+\.[A-Z]{2,}/gi;
 // corrected pattern as improve/convo-to-scenario.ts (keep them identical).
 const PHONE_PATTERN = /(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
 
+function normalizePhoneForPiiComparison(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+}
+
 const noPiiLeak: Validator = {
   name: "no_pii_leak",
   severity: "critical",
@@ -186,12 +191,12 @@ const noPiiLeak: Validator = {
     );
     const responsePhones = new Set(
       Array.from(response.matchAll(PHONE_PATTERN)).map((m) =>
-        m[0].replace(/\D/g, ""),
+        normalizePhoneForPiiComparison(m[0]),
       ),
     );
     const trustedPhones = new Set(
       Array.from(trustedSource.matchAll(PHONE_PATTERN)).map((m) =>
-        m[0].replace(/\D/g, ""),
+        normalizePhoneForPiiComparison(m[0]),
       ),
     );
 
@@ -386,3 +391,4 @@ export function runValidators(
   });
   return { results, criticalFailed };
 }
+
