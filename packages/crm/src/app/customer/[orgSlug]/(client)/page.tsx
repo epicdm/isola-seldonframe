@@ -23,6 +23,7 @@ import { landingPages, organizations } from "@/db/schema";
 import { listPortalBookings } from "@/lib/portal/actions";
 import { requirePortalSessionForOrg } from "@/lib/portal/auth";
 import { pickCustomerCopyPack } from "@/lib/customer-portal/copy-packs";
+import { serviceLinksFromSettings } from "@/lib/portal/service-links";
 
 type Booking = Awaited<ReturnType<typeof listPortalBookings>>["upcoming"][number];
 
@@ -44,6 +45,7 @@ export default async function CustomerPortalOverview({
         id: organizations.id,
         name: organizations.name,
         soul: organizations.soul,
+        settings: organizations.settings,
       })
       .from(organizations)
       .where(eq(organizations.id, session.orgId))
@@ -60,6 +62,7 @@ export default async function CustomerPortalOverview({
   const soul = (orgRow?.soul ?? {}) as { industry?: string };
   const copy = pickCustomerCopyPack(soul.industry ?? null);
   const orgName = orgRow?.name ?? "Your business";
+  const serviceLinks = serviceLinksFromSettings(orgRow?.settings);
 
   const blueprint = (blueprintRow?.blueprint ?? null) as
     | { workspace?: { contact?: { phone?: string; email?: string } } }
@@ -93,6 +96,27 @@ export default async function CustomerPortalOverview({
           {copy.welcomeSubtext}
         </p>
       </header>
+
+      {serviceLinks.length > 0 ? (
+        <section className="space-y-2 rounded-xl border p-4" style={{ borderColor: "#e5e5e5", background: "#fff" }} aria-label="Your services">
+          <h2 className="text-[16px] font-semibold" style={{ color: "#111" }}>Your services</h2>
+          <ul className="space-y-2">
+            {serviceLinks.map((l) => (
+              <li key={l.url}>
+                <a
+                  href={l.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block rounded-md px-4 py-2 text-[14px] font-medium"
+                  style={{ background: "#111", color: "#fff" }}
+                >
+                  {l.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {next ? (
         <NextAppointmentHero

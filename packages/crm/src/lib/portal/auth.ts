@@ -15,6 +15,7 @@ import {
   sendPortalAccessCodeEmail,
   pickFromAddress as pickPortalAccessCodeFromAddress,
 } from "@/lib/emails/portal-access-code";
+import { selectPortalEmailTransport } from "@/lib/portal/email-transport";
 import { findDemoContactForOrg } from "@/lib/workspace/seed-demo-portal";
 
 function hashCode(code: string) {
@@ -186,10 +187,12 @@ export async function requestPortalAccessCodeAction(orgSlug: string, rawEmail: s
   // / brand name in the template. Falls back to SF defaults when no
   // active agency is attached or the sender hasn't verified.
   try {
-    const apiKey = process.env.RESEND_API_KEY?.trim() ?? "";
-    if (!apiKey) {
+    // EPIC 2026-10-04: SMTP2GO when its key AND a verified sender (PORTAL_EMAIL_FROM) are set, else Resend
+    // (RESEND_API_KEY, unchanged), else the code is persisted but not emailed. See lib/portal/email-transport.ts.
+    const selected = selectPortalEmailTransport(process.env);
+    if (selected.transport === "none") {
       console.warn(
-        "[portal-access-code] RESEND_API_KEY not set — code persisted but not emailed",
+        "[portal-access-code] no email transport configured (RESEND_API_KEY, or SMTP2GO_API_KEY + PORTAL_EMAIL_FROM) — code persisted but not emailed",
       );
     } else {
       const { getEffectiveBrandingForWorkspace } = await import(
@@ -213,7 +216,7 @@ export async function requestPortalAccessCodeAction(orgSlug: string, rawEmail: s
           logoUrl: branding.is_white_label ? branding.logo_url : null,
           supportUrl: branding.support_url,
         },
-        { apiKey, fromAddress },
+        { apiKey: selected.apiKey, fromAddress: selected.transport === "smtp2go" ? selected.from : fromAddress, transport: selected.transport },
       );
       if (!sendResult.ok) {
         console.error(
