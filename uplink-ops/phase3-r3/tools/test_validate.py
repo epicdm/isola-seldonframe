@@ -34,7 +34,9 @@ def substitute(d):
             "{{PYTHON_IMAGE_DIGEST_HEX}}": "b" * 64, "{{AWSCLI_VERSION}}": "1.0.0", "{{BACKUP_STORAGE_PROVIDER_ID}}": "provider-id-1"}
     for n in ("02-uplink-app.createFromSchema.json", "02p-uplink-app-production.createFromSchema.json", "01-middleware-uplink-operators.createMiddleware.json", "03-uplink-db.owner-ui-spec.json",
               "04-uplink-baseline-import-job.template.json", "05-uplink-restore-check-db.owner-ui-spec.json", "06-uplink-restore-verify-job.template.json",
-              "07-uplink-backup-audit-service.template.json", "08-uplink-backup-config.createDatabaseBackup.json"):
+              "07-uplink-backup-audit-service.template.json", "08-uplink-backup-config.createDatabaseBackup.json",
+              "03p-uplink-db-prod.owner-ui-spec.json", "04p-uplink-baseline-import-prod-job.template.json", "05p-uplink-restore-check-prod-db.owner-ui-spec.json",
+              "06p-uplink-restore-verify-prod-job.template.json", "07p-uplink-backup-audit-prod-service.template.json", "08p-uplink-backup-config-prod.createDatabaseBackup.json"):
         edit(d, n, lambda t: [t := t.replace(k, v) for k, v in subs.items()][-1])
     # env template stays a template (owner markers allowed); final mode is about the deployment JSON + contract
     c = json.load(open(os.path.join(d, "contract.json"))); c["pending_codex_keys"] = []
@@ -95,7 +97,7 @@ muts = [
  ("env: Chatwoot key prefix", ENV, lambda t: t + "CHATWOOT_TOKEN=x\n"),
  ("env: AI provider key present", ENV, lambda t: t + "ANTHROPIC_API_KEY=x\n"),
  ("env: NEON_LOCAL_HOST present", ENV, lambda t: t + "NEON_LOCAL_HOST=neon-proxy\n"),
- ("env: secret key carries a value", ENV, lambda t: t.replace("AUTH_SECRET={{OWNER_ENTERS}}", "AUTH_SECRET=Abc123Def456Ghi789")),
+ ("env: secret key carries a value", ENV, lambda t: t.replace("AUTH_SECRET={{OWNER_ENTERS_STAGING_AUTH_SECRET}}", "AUTH_SECRET=Abc123Def456Ghi789")),
  ("env: vendor branding on", ENV, lambda t: t.replace("SHOW_VENDOR_BRANDING=false", "SHOW_VENDOR_BRANDING=true")),
  ("env: beta host leaks", ENV, lambda t: t.replace("PLATFORM_HOME_URL=https://uplink.epic.dm", "PLATFORM_HOME_URL=https://front.isola.epic.dm")),
  ("env: staging NEXTAUTH_URL differs from the staging origin", ENV, lambda t: t.replace("NEXTAUTH_URL=https://build.uplink.epic.dm", "NEXTAUTH_URL=https://uplink.epic.dm")),
@@ -114,7 +116,7 @@ for label, name, fn in muts:
     d = fresh(); edit(d, name, fn); expect("negative control: " + label, 1, d, "offline")
 
 J4 = "04-uplink-baseline-import-job.template.json"; J5 = "05-uplink-restore-check-db.owner-ui-spec.json"; J6 = "06-uplink-restore-verify-job.template.json"
-J7 = "07-uplink-backup-audit-service.template.json"; J8 = "08-uplink-backup-config.createDatabaseBackup.json"; ENVJ = "job-import.env.template"
+J7 = "07-uplink-backup-audit-service.template.json"; J8 = "08-uplink-backup-config.createDatabaseBackup.json"; ENVJ = "job-import.staging.env.template"
 more = [
  ("04: host bind mount instead of file mounts", J4, lambda t: t.replace('{"type": "file", "mountPath": "/uplink/baseline.sql", "content": "{{BASELINE_SQL_CONTENT}}"}', '{"type": "bind", "hostPath": "/root", "mountPath": "/uplink/baseline.sql"}')),
  ("04: env present", J4, lambda t: t.replace('"deploy": {', '"env": "PGPASSWORD=x",\n            "deploy": {')),
@@ -129,9 +131,9 @@ more = [
  ("07: audit service given a domain", J7, lambda t: t.replace('"deploy": {', '"domains": [{"host": "audit.uplink.epic.dm", "port": 80}],\n            "deploy": {')),
  ("08: daily retention 7 instead of 14", J8, lambda t: t.replace('"retention": 14', '"retention": 7')),
  ("08: weekly retention 4 instead of 8", J8, lambda t: t.replace('"retention": 8', '"retention": 4')),
- ("08: daily and weekly share one prefix", J8, lambda t: t.replace("uplink/weekly", "uplink/daily")),
+ ("08: daily and weekly share one prefix", J8, lambda t: t.replace("uplink/staging/weekly", "uplink/staging/daily")),
  ("08: backups disabled", J8, lambda t: t.replace('"enabled": true', '"enabled": false', 1)),
- ("job env: literal password", ENVJ, lambda t: t.replace("PGPASSWORD={{OWNER_ENTERS}}", "PGPASSWORD=Abc123Def456Ghi789")),
+ ("job env: literal password", ENVJ, lambda t: t.replace("PGPASSWORD={{OWNER_ENTERS_STAGING_DB_PASSWORD}}", "PGPASSWORD=Abc123Def456Ghi789")),
  ("job env: wrong service host", ENVJ, lambda t: t.replace("PGHOST=uplink_uplink-db", "PGHOST=100.117.210.117")),
 ]
 for label, name, fn in more:
@@ -150,6 +152,44 @@ PM = [
 ]
 for label, name, fn in PM:
     d = fresh(); edit(d, name, fn); expect("negative control: " + label, 1, d, "offline")
+# ---- isolation controls (PM ruling plan v2.9): separate database, volume, credentials, ENCRYPTION_KEY, auth/session secrets, jobs, backups, fixtures ----
+DBP = "03p-uplink-db-prod.owner-ui-spec.json"; J4P = "04p-uplink-baseline-import-prod-job.template.json"; J6P = "06p-uplink-restore-verify-prod-job.template.json"
+J7P = "07p-uplink-backup-audit-prod-service.template.json"; J8P = "08p-uplink-backup-config-prod.createDatabaseBackup.json"; J5P = "05p-uplink-restore-check-prod-db.owner-ui-spec.json"
+ENVJP = "job-import.production.env.template"; ENVVP = "job-restore-verify.production.env.template"; ENVVS = "job-restore-verify.staging.env.template"
+AUDP = "audit.production.env.template"
+ISO = [
+ ("production DATABASE_URL carries the STAGING slot (shared database credentials)", ENVP, lambda t: t.replace("DATABASE_URL={{OWNER_ENTERS_PRODUCTION_DATABASE_URL}}", "DATABASE_URL={{OWNER_ENTERS_STAGING_DATABASE_URL}}")),
+ ("production ENCRYPTION_KEY carries the STAGING slot (shared ENCRYPTION_KEY)", ENVP, lambda t: t.replace("ENCRYPTION_KEY={{OWNER_ENTERS_PRODUCTION_ENCRYPTION_KEY}}", "ENCRYPTION_KEY={{OWNER_ENTERS_STAGING_ENCRYPTION_KEY}}")),
+ ("production AUTH_SECRET uses the generic shared marker (shared auth/session secret)", ENVP, lambda t: t.replace("AUTH_SECRET={{OWNER_ENTERS_PRODUCTION_AUTH_SECRET}}", "AUTH_SECRET={{OWNER_ENTERS}}")),
+ ("staging NEXTAUTH_SECRET carries the PRODUCTION slot", ENV, lambda t: t.replace("NEXTAUTH_SECRET={{OWNER_ENTERS_STAGING_NEXTAUTH_SECRET}}", "NEXTAUTH_SECRET={{OWNER_ENTERS_PRODUCTION_NEXTAUTH_SECRET}}")),
+ ("production template states the STAGING database as its target (shared DB target)", ENVP, lambda t: t.replace("host uplink_uplink-db-prod database uplink", "host uplink_uplink-db database uplink")),
+ ("staging template states the PRODUCTION database as its target", ENV, lambda t: t.replace("host uplink_uplink-db database uplink", "host uplink_uplink-db-prod database uplink")),
+ ("production template carries a fixture key (fixture promotion)", ENVP, lambda t: t + "UPLINK_FIXTURES=enabled\n"),
+ ("production template mentions demo data (demo promotion)", ENVP, lambda t: t + "# load the demo workspaces\n"),
+ ("production import job env targets the STAGING database", ENVJP, lambda t: t.replace("PGHOST=uplink_uplink-db-prod", "PGHOST=uplink_uplink-db")),
+ ("STAGING import job env targets the PRODUCTION database", ENVJ, lambda t: t.replace("PGHOST=uplink_uplink-db", "PGHOST=uplink_uplink-db-prod")),
+ ("production verify job targets the staging restore-check host", ENVVP, lambda t: t.replace("PGHOST=uplink_uplink-restore-check-prod", "PGHOST=uplink_uplink-restore-check")),
+ ("staging verify job carries the production password slot", ENVVS, lambda t: t.replace("{{OWNER_ENTERS_STAGING_RESTORE_CHECK_PASSWORD}}", "{{OWNER_ENTERS_PRODUCTION_RESTORE_CHECK_PASSWORD}}")),
+ ("production import job reuses the staging DB password slot", ENVJP, lambda t: t.replace("{{OWNER_ENTERS_PRODUCTION_DB_PASSWORD}}", "{{OWNER_ENTERS_STAGING_DB_PASSWORD}}")),
+ ("production database service has the staging service name (shared database service)", DBP, lambda t: t.replace('"serviceName": "uplink-db-prod"', '"serviceName": "uplink-db"')),
+ ("production restore-check service has the staging service name", J5P, lambda t: t.replace('"serviceName": "uplink-restore-check-prod"', '"serviceName": "uplink-restore-check"')),
+ ("production database declares a data volume (shared volume definition)", DBP, lambda t: t.replace('"dbGate"', '"mounts": [{"type": "volume", "name": "uplink-data", "mountPath": "/var/lib/postgresql/data"}],\n      "dbGate"')),
+ ("staging database declares a data volume", DB, lambda t: t.replace('"dbGate"', '"volumes": ["uplink-data:/var/lib/postgresql/data"],\n      "dbGate"')),
+ ("production import job service has the staging job name", J4P, lambda t: t.replace('"serviceName": "uplink-baseline-import-prod"', '"serviceName": "uplink-baseline-import"')),
+ ("production import job mounts a staging backup dump (staging data promotion)", J4P, lambda t: t.replace('"mounts": [', '"mounts": [\n              {"type": "file", "mountPath": "/uplink/staging.dump", "content": "x"},')),
+ ("production import job references the staging backup prefix", J4P, lambda t: t.replace('"serviceName": "uplink-baseline-import-prod",', '"serviceName": "uplink-baseline-import-prod",\n            "note": "restore from uplink/staging/daily",')),
+ ("production backups use the staging prefixes", J8P, lambda t: t.replace("uplink/production/", "uplink/staging/")),
+ ("production backups target the staging database service", J8P, lambda t: t.replace('"serviceName": "uplink-db-prod"', '"serviceName": "uplink-db"')),
+ ("staging backups target the production database service", J8, lambda t: t.replace('"serviceName": "uplink-db"', '"serviceName": "uplink-db-prod"')),
+ ("staging backups write to the production prefixes", J8, lambda t: t.replace("uplink/staging/", "uplink/production/")),
+ ("production audit env audits the staging prefixes", AUDP, lambda t: t.replace("AUDIT_ENV=production", "AUDIT_ENV=staging")),
+ ("production audit env uses the staging access slot", AUDP, lambda t: t.replace("{{OWNER_ENTERS_PRODUCTION_AUDIT_ACCESS_KEY_ID}}", "{{OWNER_ENTERS_STAGING_AUDIT_ACCESS_KEY_ID}}")),
+ ("production audit service has the staging service name", J7P, lambda t: t.replace('"serviceName": "uplink-backup-audit-prod"', '"serviceName": "uplink-backup-audit"')),
+ ("image contract allows fixtures in every environment", ICF, lambda t: t.replace('"fixture_scope": "staging-only"', '"fixture_scope": "all-environments"')),
+]
+for label, name, fn in ISO:
+    d = fresh(); edit(d, name, fn); expect("negative control (isolation): " + label, 1, d, "offline")
+# positive twin of the isolation set: each environment keeps its own entry, proven by a fully substituted package passing in final mode (above) and by the shipped package offline (above)
 # origin / image-contract controls in FINAL mode with synthetic Codex values (the positive twin proves the fixture can pass)
 def final_pair(label, want_rc, name, fn):
     d = fresh(); substitute(d); edit(d, name, fn); expect(label, want_rc, d, "final", gen(d))

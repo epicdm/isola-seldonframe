@@ -37,10 +37,13 @@ def load(name):
     except UnicodeDecodeError: fail(f"{name}: non-ASCII bytes")
     return raw.decode("utf-8", "replace")
 
+SLOT = r"re:\{\{OWNER_ENTERS_(STAGING|PRODUCTION)_[A-Z_]+\}\}"      # owner-entered secret slots are environment-specific (PM ruling plan v2.9)
+STORAGE_PH = ("{{OWNER_STORAGE_REGION}}", "{{OWNER_STORAGE_ENDPOINT}}", "{{OWNER_STORAGE_BUCKET}}", "{{SERVICE_START_DATE}}")
 def scan_placeholders(name, text, allow=()):
     for m in PLACEHOLDER.findall(text):
         pending.append(f"{name}: {m}")
-        if MODE == "final" and m not in allow: fail(f"{name}: placeholder {m} not substituted")
+        ok = m in allow or any(a.startswith("re:") and re.fullmatch(a[3:], m) for a in allow)
+        if MODE == "final" and not ok: fail(f"{name}: placeholder {m} not substituted")
 
 def typ(v, t): return isinstance(v, t) and not isinstance(v, bool) if t in (int, float) else isinstance(v, t)
 
@@ -127,34 +130,12 @@ for c in m.get("sourceRange", []):
     if not re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}/\d{1,2}", c): fail(f"01: bad CIDR {c}")
     elif c in ("0.0.0.0/0",) or int(c.split("/")[1]) < 16: fail(f"01: CIDR {c} is too broad for operator-only staging")
 
-# ---- 03 DB owner spec ----
-t = load("03-uplink-db.owner-ui-spec.json"); scan_placeholders("03-db", t)
-db = json.loads(t)["service"]["data"]
-check_keys(db, PG_ALLOWED, "03.db", ("serviceName",))
-if "password" in db: fail("03: password must not appear in any artifact")
-if db.get("serviceName") != "uplink-db": fail("03: serviceName must be uplink-db")
-img = db.get("image", "")
-if "@sha256:" not in img: fail("03: image must be pinned by digest")
-elif not PLACEHOLDER.search(img):
-    if not re.search(r"@sha256:[0-9a-f]{64}$", img): fail("03: image digest must be 64 hex chars")
-    if img != contract["postgres_image_candidate"]: fail("03: digest differs from the approved candidate in contract.json")
-if not img.startswith("postgres:16"): fail("03: PostgreSQL 16 required")
-if db.get("exposedPort"): fail("03: no published port allowed")
-check_resources(db.get("resources"), L["db"], "03.resources")
-for flag in ("dbGate", "pgWeb"):
-    if db.get(flag, {}).get("enabled"): fail(f"03: {flag} must be disabled")
-cmd = db.get("command", "")
-mc = re.search(r"max_connections=(\d+)", cmd)
-if not mc or int(mc.group(1)) < 11 + 5: fail("03: max_connections too small for DB_POOL_MAX plus admin sessions")
-sb = re.search(r"shared_buffers=(\d+)GB", cmd)
-if sb and int(sb.group(1)) * 1024 > L["db"]["memoryLimit"] * 0.3: fail("03: shared_buffers above 30 percent of the memory limit")
-
 # ---- environment templates (one per environment) vs contract ----
 host = lambda u: re.sub(r"^https?://", "", u).split("/")[0]
 O = contract["origin"]; ENVVALS = {}
 def check_env(envname):
     E = ENVS[envname]; fn = E["env_template"]
-    t = load(fn); scan_placeholders(fn, t, allow=("{{OWNER_ENTERS}}",))   # secret markers stay: the owner types those values himself
+    t = load(fn); scan_placeholders(fn, t, allow=(SLOT,))   # secret slots stay: the owner types those values himself, separately per environment
     env = {}
     for ln in t.splitlines():
         if not ln.strip() or ln.lstrip().startswith("#"): continue
@@ -169,7 +150,11 @@ def check_env(envname):
         if k not in env: fail(f"{fn}: missing owner key {k}")
     for k in contract["secret_keys"]:
         if k not in env: fail(f"{fn}: missing secret key name {k}")
-        elif env[k] != "{{OWNER_ENTERS}}": fail(f"{fn}: {k} must carry only the OWNER_ENTERS marker (a value would be a secret in a file)")
+        elif env[k] != E["secret_slots"][k]: fail(f"{fn}: {k} must carry only this environment's owner-entry slot {E['secret_slots'][k]} (a value would be a secret in a file; slots are never shared between environments)")
+    if E["database_target_comment"] not in t.splitlines(): fail(f"{fn}: must state its database target exactly: {E['database_target_comment']!r}")
+    if envname not in contract["isolation"]["fixture_environments"]:
+        for k in env:
+            if re.search(contract["isolation"]["fixture_key_pattern"], k): fail(f"{fn}: key {k} looks like fixture/seed/demo configuration; synthetic fixtures are staging-only")
     for k in env:
         if k in contract["forbidden_keys"] or any(k.startswith(p) for p in contract["forbidden_key_prefixes"]):
             fail(f"{fn}: forbidden key {k} (integration/AI/SMTP/billing must be absent)")
@@ -190,9 +175,11 @@ def check_env(envname):
 for _e in ENVS: check_env(_e)
 S_, P_ = ENVVALS.get("staging", {}), ENVVALS.get("production", {})
 if set(S_) != set(P_): fail(f"staging and production templates define different keys: {sorted(set(S_) ^ set(P_))}")
-_allowed = set(O["keys_must_equal"]) | set(O["optional_equal_keys"]) | {O["optional_host_list_key"]}
+_allowed = set(O["keys_must_equal"]) | set(O["optional_equal_keys"]) | {O["optional_host_list_key"]} | set(contract["secret_keys"])
 _diff = {k for k in S_ if k in P_ and S_[k] != P_[k]}
-if _diff - _allowed: fail(f"staging and production templates differ outside the origin keys: {sorted(_diff - _allowed)} (same inputs, different public origin only)")
+if _diff - _allowed: fail(f"staging and production templates differ outside the origin keys and the environment-specific secret slots: {sorted(_diff - _allowed)}")
+for _k in contract["secret_keys"]:
+    if S_.get(_k) is not None and S_.get(_k) == P_.get(_k): fail(f"staging and production share the same {_k} slot; each environment needs its own (database credentials, ENCRYPTION_KEY, auth/session secrets)")
 
 # ---- Codex image/receipt contract: two origin-specific images from one source commit; every Codex-owned field explicit and fail-closed ----
 IC = contract["image_contract"]
@@ -222,6 +209,7 @@ if len(res_tag) == len(ENVS) and len(set(res_tag.values())) != len(res_tag): fai
 rp = ic.get("readiness_path", "")
 if not PLACEHOLDER.search(rp) and not re.fullmatch(r"/[A-Za-z0-9_./-]*", rp): fail(f"{IC['file']}: readiness_path must be an absolute path without query or credentials")
 if not ic.get("fixture_command"): fail(f"{IC['file']}: fixture_command must be present (placeholder until the Codex receipt)")
+if ic.get("fixture_scope") != "staging-only": fail(f"{IC['file']}: fixture_scope must be 'staging-only' (synthetic fixtures are never promoted to production without separate approval)")
 for an, av in ic.get("adapters", {}).items():
     for part in ("key", "value"):
         if not av.get(part): fail(f"{IC['file']}: adapters.{an}.{part} must be present (placeholder until the Codex receipt)")
@@ -278,59 +266,134 @@ def check_job_service(name, svc, svcname, cmd, mounts_expected, generated):
             if m.get("mountPath") == "/uplink/baseline.sql" and hashlib.sha256(c.encode()).hexdigest() != contract["baseline"]["sha256"]:
                 fail(f"{name}: baseline mount content is not the approved baseline")
 
-for fname, svcname, cmd, mounts in (
-    ("04-uplink-baseline-import-job.template.json", "uplink-baseline-import", "sh /uplink/uplink_job.sh import", ("/uplink/uplink_job.sh", "/uplink/baseline.sql")),
-    ("06-uplink-restore-verify-job.template.json", "uplink-restore-verify", "sh /uplink/uplink_job.sh verify", ("/uplink/uplink_job.sh",))):
-    d = read_json(BASE, fname)
-    if d: check_job_service(fname, d["input"]["schema"]["services"][0]["data"], svcname, cmd, mounts, False)
-    if GEN:
-        g = read_json(GEN, fname.replace(".template.json", ".createFromSchema.json"))
-        if g: check_job_service("generated/" + fname, g["input"]["schema"]["services"][0]["data"], svcname, cmd, mounts, True)
-    elif MODE == "final": fail(f"{fname}: final mode requires --generated DIR with the content-bearing file")
-
-d = read_json(BASE, "05-uplink-restore-check-db.owner-ui-spec.json")
-if d:
-    db5 = d["service"]["data"]; check_keys(db5, PG_ALLOWED, "05.db", ("serviceName",))
-    if "password" in db5: fail("05: password must not appear in any artifact")
-    if db5.get("serviceName") != "uplink-restore-check": fail("05: serviceName must be uplink-restore-check")
-    check_pg_image("05", db5.get("image", ""))
-    if db5.get("exposedPort"): fail("05: no published port")
-    if "backup" in db5: fail("05: the disposable target must not have its own backups")
-
-d = read_json(BASE, "07-uplink-backup-audit-service.template.json")
-if d:
-    a7 = d["input"]["schema"]["services"][0]["data"]; check_keys(a7, APP_ALLOWED, "07.app", ("serviceName",))
-    src = a7.get("source", {})
-    if src.get("type") != "dockerfile": fail("07: source must be an EasyPanel-built inline Dockerfile")
-    elif not re.search(r"^FROM python:3\.12-slim@sha256:(\{\{PYTHON_IMAGE_DIGEST_HEX\}\}|[0-9a-f]{64})$", src.get("dockerfile", "").split("\n")[0]): fail("07: Dockerfile base image must be pinned by digest")
-    if "awscli==" not in src.get("dockerfile", ""): fail("07: awscli version must be pinned in the Dockerfile")
-    for k in ("env", "domains", "ports"):
-        if a7.get(k): fail(f"07: {k} must be absent")
-    if [m.get("mountPath") for m in a7.get("mounts", [])] != ["/uplink/backup_audit.py", "/uplink/audit_loop.sh"]: fail("07: mounts must be the two audit files")
-
-d = read_json(BASE, "08-uplink-backup-config.createDatabaseBackup.json")
-if d:
-    calls = d["calls"]
-    if [c["procedure"] for c in calls] != ["createDatabaseBackup"] * 2: fail("08: two createDatabaseBackup calls required")
-    want = {"uplink/daily": (14, "15 2 * * *"), "uplink/weekly": (8, "15 3 * * 0")}
-    got = {}
-    for c in calls:
-        i = c["input"]
-        check_keys(i, {"projectName", "serviceName", "databaseName", "enabled", "retention", "schedule", "storageProviderId", "storageProviderPath"}, "08.input", ("projectName", "serviceName", "databaseName", "enabled", "schedule", "storageProviderId", "storageProviderPath"))
-        if i.get("serviceName") != "uplink-db" or i.get("projectName") != "uplink" or i.get("databaseName") != "uplink": fail("08: target must be uplink/uplink-db database uplink")
-        if i.get("enabled") is not True: fail("08: backups must be enabled")
-        if not re.fullmatch(r"[\w\-/.]+", i.get("storageProviderPath", "")): fail("08: bad storageProviderPath")
-        got[i.get("storageProviderPath")] = (i.get("retention"), i.get("schedule"))
-    if got != want: fail(f"08: daily/weekly entries must be {want}, got {got} (separate prefixes with count retention 14 and 8)")
-
-for envf, must in (("job-import.env.template", ["PGHOST", "PGPORT", "PGUSER", "PGDATABASE", "PGPASSWORD"]), ("audit.env.template", ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION", "S3_ENDPOINT", "S3_BUCKET", "SERVICE_START"])):
-    t = load(envf); scan_placeholders(envf, t, allow=("{{OWNER_ENTERS}}", "{{OWNER_STORAGE_REGION}}", "{{OWNER_STORAGE_ENDPOINT}}", "{{OWNER_STORAGE_BUCKET}}", "{{SERVICE_START_DATE}}"))
+def kv_template(fn, must):
+    t = load(fn); scan_placeholders(fn, t, allow=(SLOT,) + STORAGE_PH)
     kv = dict(ln.split("=", 1) for ln in t.splitlines() if ln.strip() and not ln.startswith("#") and "=" in ln)
     for k in must:
-        if k not in kv: fail(f"{envf}: missing {k}")
-    for k in ("PGPASSWORD", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
-        if k in kv and kv[k] != "{{OWNER_ENTERS}}": fail(f"{envf}: {k} must carry only the OWNER_ENTERS marker")
-    if envf == "job-import.env.template" and kv.get("PGHOST") != "uplink_uplink-db": fail("job-import.env.template: PGHOST must be the EasyPanel service host uplink_uplink-db")
+        if k not in kv: fail(f"{fn}: missing {k}")
+    return kv, t
+
+def check_db_spec(fn, svcname, dbname, main, E, label):
+    d = read_json(BASE, fn)
+    if not d: return
+    db = d["service"]["data"]; check_keys(db, PG_ALLOWED, label + ".db", ("serviceName",))
+    for bad in ("mounts", "volumes", "volume"):
+        if bad in db: fail(f"{fn}: {bad} must not be declared; the data volume is created and managed by EasyPanel per database service (one volume per service, never shared)")
+    if "password" in db: fail(f"{fn}: password must not appear in any artifact")
+    if db.get("serviceName") != svcname: fail(f"{fn}: serviceName must be {svcname}")
+    check_pg_image(fn, db.get("image", ""))
+    if db.get("exposedPort"): fail(f"{fn}: no published port allowed")
+    for flag in ("dbGate", "pgWeb"):
+        if db.get(flag, {}).get("enabled"): fail(f"{fn}: {flag} must be disabled")
+    if db.get("databaseName") != dbname: fail(f"{fn}: databaseName must be {dbname}")
+    if main:
+        check_resources(db.get("resources"), L["db"], fn + ".resources")
+        cmd = db.get("command", "")
+        mc = re.search(r"max_connections=(\d+)", cmd)
+        if not mc or int(mc.group(1)) < 11 + 5: fail(f"{fn}: max_connections too small for DB_POOL_MAX plus admin sessions")
+        sb = re.search(r"shared_buffers=(\d+)GB", cmd)
+        if sb and int(sb.group(1)) * 1024 > L["db"]["memoryLimit"] * 0.3: fail(f"{fn}: shared_buffers above 30 percent of the memory limit")
+    elif "backup" in db: fail(f"{fn}: the disposable target must not have its own backups")
+
+CAP = {"ceil_cpu": 0.0, "ceil_mem": 0, "res_cpu": 0.0, "res_mem": 0}
+def cap_add(r):
+    CAP["ceil_cpu"] += r["cpuLimit"]; CAP["ceil_mem"] += r["memoryLimit"]; CAP["res_cpu"] += r["cpuReservation"]; CAP["res_mem"] += r["memoryReservation"]
+
+for envname, E in ENVS.items():
+    # database service and disposable restore target (each environment has its own; never shared)
+    check_db_spec(E["db"]["spec_file"], E["db"]["service"], E["db"]["database"], True, E, envname + "-db")
+    check_db_spec(E["restore_check"]["spec_file"], E["restore_check"]["service"], "uplink_restore", False, E, envname + "-restore-check")
+    # one-shot jobs: each targets only its own environment's database/restore target and carries only its own password slot
+    for jn, cmdword, mounts in (("import", "import", ("/uplink/uplink_job.sh", "/uplink/baseline.sql")), ("verify", "verify", ("/uplink/uplink_job.sh",))):
+        JB = E["jobs"][jn]
+        d = read_json(BASE, JB["file"])
+        if d: check_job_service(JB["file"], d["input"]["schema"]["services"][0]["data"], JB["service"], "sh /uplink/uplink_job.sh " + cmdword, mounts, False)
+        if GEN:
+            g = read_json(GEN, JB["file"].replace(".template.json", ".createFromSchema.json"))
+            if g: check_job_service("generated/" + JB["file"], g["input"]["schema"]["services"][0]["data"], JB["service"], "sh /uplink/uplink_job.sh " + cmdword, mounts, True)
+        elif MODE == "final": fail(f"{JB['file']}: final mode requires --generated DIR with the content-bearing file")
+        kv, _t = kv_template(JB["env_template"], ["PGHOST", "PGPORT", "PGUSER", "PGDATABASE", "PGPASSWORD"])
+        if kv.get("PGHOST") != JB["host"]: fail(f"{JB['env_template']}: PGHOST must be {JB['host']} (this environment's own service host only)")
+        if kv.get("PGDATABASE") != JB["database"]: fail(f"{JB['env_template']}: PGDATABASE must be {JB['database']}")
+        if kv.get("PGPASSWORD") != JB["password_slot"]: fail(f"{JB['env_template']}: PGPASSWORD must carry only this environment's slot {JB['password_slot']}")
+    # audit service (DEFERRED proposal) and its environment template
+    AU = E["audit"]
+    d = read_json(BASE, AU["file"])
+    if d:
+        a7 = d["input"]["schema"]["services"][0]["data"]; check_keys(a7, APP_ALLOWED, AU["file"] + ".app", ("serviceName",))
+        if a7.get("serviceName") != AU["service"]: fail(f"{AU['file']}: serviceName must be {AU['service']}")
+        src = a7.get("source", {})
+        if src.get("type") != "dockerfile": fail(f"{AU['file']}: source must be an EasyPanel-built inline Dockerfile")
+        elif not re.search(r"^FROM python:3\.12-slim@sha256:(\{\{PYTHON_IMAGE_DIGEST_HEX\}\}|[0-9a-f]{64})$", src.get("dockerfile", "").split("\n")[0]): fail(f"{AU['file']}: Dockerfile base image must be pinned by digest")
+        if "awscli==" not in src.get("dockerfile", ""): fail(f"{AU['file']}: awscli version must be pinned in the Dockerfile")
+        for k in ("env", "domains", "ports"):
+            if a7.get(k): fail(f"{AU['file']}: {k} must be absent")
+        if [m.get("mountPath") for m in a7.get("mounts", [])] != ["/uplink/backup_audit.py", "/uplink/audit_loop.sh"]: fail(f"{AU['file']}: mounts must be the two audit files")
+    kv, _t = kv_template(AU["env_template"], ["AUDIT_ENV", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION", "S3_ENDPOINT", "S3_BUCKET", "SERVICE_START"])
+    if kv.get("AUDIT_ENV") != AU["audit_env"]: fail(f"{AU['env_template']}: AUDIT_ENV must be {AU['audit_env']} (a service audits only its own prefixes)")
+    for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        if not re.fullmatch(r"\{\{OWNER_ENTERS_%s_[A-Z_]+\}\}" % envname.upper(), kv.get(k, "")): fail(f"{AU['env_template']}: {k} must carry only this environment's owner-entry slot")
+    # backups: this environment's database only, environment-specific prefixes, count retention 14 daily / 8 weekly
+    BK = E["backup"]
+    d = read_json(BASE, BK["file"])
+    if d:
+        calls = d["calls"]
+        if [c["procedure"] for c in calls] != ["createDatabaseBackup"] * 2: fail(f"{BK['file']}: two createDatabaseBackup calls required")
+        want = {BK["daily_path"]: (14, "15 2 * * *"), BK["weekly_path"]: (8, "15 3 * * 0")}
+        got = {}
+        for c in calls:
+            i = c["input"]
+            check_keys(i, {"projectName", "serviceName", "databaseName", "enabled", "retention", "schedule", "storageProviderId", "storageProviderPath"}, BK["file"] + ".input", ("projectName", "serviceName", "databaseName", "enabled", "schedule", "storageProviderId", "storageProviderPath"))
+            if i.get("serviceName") != E["db"]["service"] or i.get("projectName") != "uplink" or i.get("databaseName") != E["db"]["database"]: fail(f"{BK['file']}: target must be uplink/{E['db']['service']} database {E['db']['database']} (this environment's database only)")
+            if i.get("enabled") is not True: fail(f"{BK['file']}: backups must be enabled")
+            if not re.fullmatch(r"[\w\-/.]+", i.get("storageProviderPath", "")): fail(f"{BK['file']}: bad storageProviderPath")
+            got[i.get("storageProviderPath")] = (i.get("retention"), i.get("schedule"))
+        if got != want: fail(f"{BK['file']}: daily/weekly entries must be {want}, got {got} (environment-specific prefixes with count retention 14 and 8)")
+
+# ---- isolation (PM ruling plan v2.9): configuration ownership; NOT a network-isolation claim, and no secret value is ever read or compared ----
+names = []
+for envname, E in ENVS.items():
+    names += [E["service"], E["db"]["service"], E["restore_check"]["service"], E["jobs"]["import"]["service"], E["jobs"]["verify"]["service"], E["audit"]["service"]]
+if len(set(names)) != len(names): fail(f"isolation: EasyPanel service names must be unique across environments (no shared service): {sorted(n for n in set(names) if names.count(n) > 1)}")
+def env_files(E):
+    return [E["app_json"], E["env_template"], E["db"]["spec_file"], E["restore_check"]["spec_file"], E["jobs"]["import"]["file"], E["jobs"]["import"]["env_template"],
+            E["jobs"]["verify"]["file"], E["jobs"]["verify"]["env_template"], E["backup"]["file"], E["audit"]["file"], E["audit"]["env_template"]]
+slot_sets = {}
+for envname, E in ENVS.items():
+    slot_sets[envname] = set()
+    for fn in env_files(E):
+        p = os.path.join(BASE, fn)
+        if not os.path.exists(p): continue
+        txt = open(p, encoding="ascii", errors="replace").read()
+        for tok in E["foreign_tokens"]:
+            if re.search(tok, txt): fail(f"isolation: {fn} (environment {envname}) references another environment's identifier ({tok})")
+        if re.search(r"\{\{OWNER_ENTERS\}\}", txt): fail(f"isolation: {fn} uses the generic OWNER_ENTERS marker; every owner-entry slot must be environment-specific")
+        for m in re.findall(r"\{\{OWNER_ENTERS_[A-Z_]+\}\}", txt):
+            slot_sets[envname].add(m)
+            if not m.startswith("{{OWNER_ENTERS_%s_" % envname.upper()): fail(f"isolation: {fn} carries {m}, which belongs to another environment")
+        if envname not in contract["isolation"]["fixture_environments"] and re.search(r"(?i)fixture|seed|demo", txt):
+            fail(f"isolation: {fn} (environment {envname}) mentions fixture/seed/demo; synthetic fixtures and demo data are staging-only")
+if slot_sets.get("staging", set()) & slot_sets.get("production", set()): fail("isolation: staging and production share an owner-entry slot")
+dbs = {E["db"]["service"] for E in ENVS.values()}
+if len(dbs) != len(ENVS): fail("isolation: each environment needs its own database service")
+_all_jobs = [(e, j, E["jobs"][j]["host"]) for e, E in ENVS.items() for j in ("import", "verify")]
+for _e, _j, _h in _all_jobs:
+    for _o, _OE in ENVS.items():
+        if _o != _e and _h in (_OE["db"]["host"], _OE["restore_check"]["host"]): fail(f"isolation: the {_e} {_j} job targets the {_o} environment ({_h})")
+for _e, _E in ENVS.items():
+    if _E["jobs"]["import"]["host"] != _E["db"]["host"]: fail(f"isolation: {_e} import job host must be its own database host {_E['db']['host']}")
+    if _E["jobs"]["verify"]["host"] != _E["restore_check"]["host"]: fail(f"isolation: {_e} verify job must target its own restore-check host {_E['restore_check']['host']}")
+for _e, _E in ENVS.items():
+    for _fn in (_E["app_json"], _E["db"]["spec_file"], _E["restore_check"]["spec_file"]):
+        _p = os.path.join(BASE, _fn)
+        if os.path.exists(_p):
+            _d = json.loads(open(_p, encoding="ascii").read()); _res = None
+            try:
+                _svc = _d["input"]["schema"]["services"][0]["data"] if "input" in _d else _d["service"]["data"]
+                _res = _svc.get("resources")
+                if _res and all(k in _res for k in RES) and _fn in (_E["app_json"], _E["db"]["spec_file"]): cap_add(_res)
+            except Exception: pass
+print(f"INFO steady-state configured ceilings for both environments (apps+databases): cpu={CAP['ceil_cpu']:g} memory={CAP['ceil_mem']} MiB; reservations: cpu={CAP['res_cpu']:g} memory={CAP['res_mem']} MiB (ceilings and reservations are not measured use; see CAPACITY-RECHECK.md)")
 
 # ---- secret hygiene: no long random-looking tokens, passwords or keys anywhere in the package ----
 for fn in sorted(os.listdir(BASE)):

@@ -1,5 +1,5 @@
 {
-  "_status": "Fill ONLY from the Codex Phase 1 receipt and its CI image jobs. Every {{...}} is unresolved and fails final-mode validation; nothing here is invented. Plan v2.8: two origin-specific images from the SAME accepted source commit; unique origin-specific tags and digests are recorded because the current workflow tag (uplink-phase1-<sha>) does not include the origin and a second build would overwrite it.",
+  "_status": "Fill ONLY from the Codex Phase 1 receipt and its CI image jobs. Every {{...}} is unresolved and fails final-mode validation; nothing here is invented. Plan v2.8: two origin-specific images from the SAME accepted source commit; unique origin-specific tags and digests are recorded because the current workflow tag (uplink-phase1-<sha>) does not include the origin and a second build would overwrite it. Synthetic fixtures are staging-only (PM ruling v2.9); production starts from the approved schema-only baseline with no fixture data.",
   "source_commit": "{{CODEX_SOURCE_COMMIT}}",
   "workflow_run_urls": {
     "staging": "{{CODEX_STAGING_RUN_URL}}",
@@ -34,5 +34,6 @@
       "key": "{{CODEX_VOICE_FLAG_KEY}}",
       "value": "{{CODEX_VOICE_FLAG_VALUE}}"
     }
-  }
+  },
+  "fixture_scope": "staging-only"
 }

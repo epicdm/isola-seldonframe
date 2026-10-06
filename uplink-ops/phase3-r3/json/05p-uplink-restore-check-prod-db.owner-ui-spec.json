@@ -1,0 +1,16 @@
+{
+  "_purpose": "PRODUCTION-side (Phase 5, gated) disposable EasyPanel-managed Postgres used ONLY for the restore rehearsal. Created by the OWNER in the EasyPanel UI (the create call would print its password). Deleted through the portal after the rehearsal, with approval. Shape matches the createFromSchema postgres data block, minus password.",
+  "project": "uplink",
+  "service": {
+    "type": "postgres",
+    "data": {
+      "serviceName": "uplink-restore-check-prod",
+      "databaseName": "uplink_restore",
+      "user": "uplink",
+      "image": "postgres:16.15@sha256:{{PG_IMAGE_DIGEST_HEX}}",
+      "resources": {"cpuLimit": 1, "cpuReservation": 0.1, "memoryLimit": 1024, "memoryReservation": 256},
+      "dbGate": {"enabled": false},
+      "pgWeb": {"enabled": false}
+    }
+  }
+}

@@ -4,9 +4,9 @@
 A 14-day/56-day expiry rule does not prove 14 daily and 8 weekly successful restore points. After any outage longer than the window, an age-only expiry deletes every older good backup and leaves ZERO restore points (tools/backup_audit.py --selftest reproduces this: after a 20-day outage a 14-day TTL leaves 0 daily points). Retention must be a COUNT of successful points, expiry only a safe backstop, and a missing job must be visible.
 
 ## Policy
-1. Separate EasyPanel backup entries on uplink-db (08-uplink-backup-config.createDatabaseBackup.json):
-   - daily: schedule `15 2 * * *`, storageProviderPath `uplink/daily`, retention 14;
-   - weekly: schedule `15 3 * * 0`, storageProviderPath `uplink/weekly`, retention 8.
+1. Separate EasyPanel backup entries PER ENVIRONMENT (r3.3, PM ruling v2.9: no shared database, no shared prefix). Staging: uplink-db via 08-uplink-backup-config.createDatabaseBackup.json; production (Phase 5): uplink-db-prod via 08p-uplink-backup-config-prod.createDatabaseBackup.json. Each environment has:
+   - daily: schedule `15 2 * * *`, storageProviderPath `uplink/<environment>/daily` (uplink/staging/daily or uplink/production/daily), retention 14;
+   - weekly: schedule `15 3 * * 0`, storageProviderPath `uplink/<environment>/weekly`, retention 8. The audit counts each environment's prefixes separately (AUDIT_ENV); a production database is never restored from, or audited against, the staging prefixes, and production is bootstrapped from the approved schema-only baseline, not from a backup.
    `retention` is EasyPanel's native count of backups kept per entry. Whether EasyPanel counts only successful runs is UNPROVEN; the policy does not rely on it.
 2. A restore point is an object under its prefix with size >= 20,000 bytes (the approved baseline dump is ~331 KB). Zero/tiny objects are failed backups and are not counted.
 3. Successful-backup counting: tools/backup_audit.py counts distinct UTC days (daily) and ISO weeks (weekly) of good objects. Required counts are min(14, days since service start) and min(8, weeks since start) so a young system is not falsely failed; once old enough it must show 14 and 8.

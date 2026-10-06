@@ -1,30 +1,30 @@
 {
-  "_purpose": "STAGING (uplink-db) EasyPanel-native backup schedules, prefixes uplink/staging/daily and uplink/staging/weekly: separate daily and weekly entries with COUNT retention (retention = number of backups kept). Whether EasyPanel counts only successful runs is unproven: the backup audit service/offline audit measures real restore points independently.",
+  "_purpose": "PRODUCTION (uplink-db-prod, Phase 5 gated) EasyPanel-native backup schedules, prefixes uplink/production/daily and uplink/production/weekly: separate daily and weekly entries with COUNT retention (retention = number of backups kept). Whether EasyPanel counts only successful runs is unproven: the backup audit service/offline audit measures real restore points independently.",
   "calls": [
     {
       "procedure": "createDatabaseBackup",
       "input": {
         "projectName": "uplink",
-        "serviceName": "uplink-db",
+        "serviceName": "uplink-db-prod",
         "databaseName": "uplink",
         "enabled": true,
         "retention": 14,
         "schedule": "15 2 * * *",
         "storageProviderId": "{{BACKUP_STORAGE_PROVIDER_ID}}",
-        "storageProviderPath": "uplink/staging/daily"
+        "storageProviderPath": "uplink/production/daily"
       }
     },
     {
       "procedure": "createDatabaseBackup",
       "input": {
         "projectName": "uplink",
-        "serviceName": "uplink-db",
+        "serviceName": "uplink-db-prod",
         "databaseName": "uplink",
         "enabled": true,
         "retention": 8,
         "schedule": "15 3 * * 0",
         "storageProviderId": "{{BACKUP_STORAGE_PROVIDER_ID}}",
-        "storageProviderPath": "uplink/staging/weekly"
+        "storageProviderPath": "uplink/production/weekly"
       }
     }
   ]

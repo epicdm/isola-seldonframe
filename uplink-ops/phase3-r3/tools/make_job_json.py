@@ -2,8 +2,8 @@
 """Generate the content-bearing EasyPanel job JSON files from the templates (r3). Deterministic; no network.
 
 usage: make_job_json.py --baseline PATH_TO_BASELINE.sql --out DIR
-Writes DIR/04-uplink-baseline-import-job.createFromSchema.json, 06-uplink-restore-verify-job.createFromSchema.json and
-07-uplink-backup-audit-service.createFromSchema.json by substituting ONLY these placeholders with the exact bytes of repository files:
+Writes DIR/04-uplink-baseline-import-job.createFromSchema.json, 06-uplink-restore-verify-job.createFromSchema.json,
+07-uplink-backup-audit-service.createFromSchema.json and the production twins 04p/06p/07p (separate services, r3.3) by substituting ONLY these placeholders with the exact bytes of repository files:
   {{JOB_SCRIPT_CONTENT}} <- tools/uplink_job.sh        {{BASELINE_SQL_CONTENT}} <- the approved baseline (sha256 verified against contract.json)
   {{AUDIT_SCRIPT_CONTENT}} <- tools/backup_audit.py    {{AUDIT_LOOP_CONTENT}} <- tools/audit_loop.sh
 Digest and owner placeholders stay in place (validate_package.py --mode final rejects them).
@@ -26,7 +26,10 @@ def walk(o):
 os.makedirs(a.out, exist_ok=True)
 for tpl, out in (("04-uplink-baseline-import-job.template.json", "04-uplink-baseline-import-job.createFromSchema.json"),
                  ("06-uplink-restore-verify-job.template.json", "06-uplink-restore-verify-job.createFromSchema.json"),
-                 ("07-uplink-backup-audit-service.template.json", "07-uplink-backup-audit-service.createFromSchema.json")):
+                 ("07-uplink-backup-audit-service.template.json", "07-uplink-backup-audit-service.createFromSchema.json"),
+                 ("04p-uplink-baseline-import-prod-job.template.json", "04p-uplink-baseline-import-prod-job.createFromSchema.json"),
+                 ("06p-uplink-restore-verify-prod-job.template.json", "06p-uplink-restore-verify-prod-job.createFromSchema.json"),
+                 ("07p-uplink-backup-audit-prod-service.template.json", "07p-uplink-backup-audit-prod-service.createFromSchema.json")):
     d = walk(json.load(open(os.path.join(JS, tpl))))
     d.pop("_generated_by", None)
     txt = json.dumps(d, indent=2, ensure_ascii=True) + "\n"

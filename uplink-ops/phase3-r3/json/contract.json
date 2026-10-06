@@ -1,6 +1,6 @@
 {
-  "_comment": "Uplink deployment contract r3.2. Single source for validate_package.py. Keys in section 'plan' come from master plan section 3; nothing here is invented. Keys the Codex Phase 1 contract will define are listed under pending_codex_keys and make final-mode validation FAIL until filled. r3.2 follows the PM ruling (plan v2.8): separate staging and production images and templates. r3.1 replaced the r3 split-origin assumption (production-baked NEXT_PUBLIC_APP_URL with staging runtime URLs), which the Codex source rejects at runtime.",
-  "plan_version": "2.8",
+  "_comment": "Uplink deployment contract r3.2. Single source for validate_package.py. Keys in section 'plan' come from master plan section 3; nothing here is invented. Keys the Codex Phase 1 contract will define are listed under pending_codex_keys and make final-mode validation FAIL until filled. r3.3 follows the PM isolation ruling (plan v2.9): separate database service, volume, credentials, ENCRYPTION_KEY and auth/session secrets per environment. r3.2 followed the PM ruling (plan v2.8): separate staging and production images and templates. r3.1 replaced the r3 split-origin assumption (production-baked NEXT_PUBLIC_APP_URL with staging runtime URLs), which the Codex source rejects at runtime.",
+  "plan_version": "2.9",
   "limits": {
     "app": {
       "cpuLimit": 2,
@@ -124,7 +124,64 @@
       "operator_only": true,
       "env_template": "uplink-app.staging.env.template",
       "image_digest_placeholder": "{{UPLINK_STAGING_IMAGE_DIGEST_HEX}}",
-      "phase": "3 staging"
+      "phase": "3 staging",
+      "db": {
+        "service": "uplink-db",
+        "database": "uplink",
+        "host": "uplink_uplink-db",
+        "spec_file": "03-uplink-db.owner-ui-spec.json"
+      },
+      "restore_check": {
+        "service": "uplink-restore-check",
+        "host": "uplink_uplink-restore-check",
+        "spec_file": "05-uplink-restore-check-db.owner-ui-spec.json"
+      },
+      "jobs": {
+        "import": {
+          "file": "04-uplink-baseline-import-job.template.json",
+          "service": "uplink-baseline-import",
+          "env_template": "job-import.staging.env.template",
+          "password_slot": "{{OWNER_ENTERS_STAGING_DB_PASSWORD}}",
+          "host": "uplink_uplink-db",
+          "database": "uplink"
+        },
+        "verify": {
+          "file": "06-uplink-restore-verify-job.template.json",
+          "service": "uplink-restore-verify",
+          "env_template": "job-restore-verify.staging.env.template",
+          "password_slot": "{{OWNER_ENTERS_STAGING_RESTORE_CHECK_PASSWORD}}",
+          "host": "uplink_uplink-restore-check",
+          "database": "uplink_restore"
+        }
+      },
+      "backup": {
+        "file": "08-uplink-backup-config.createDatabaseBackup.json",
+        "daily_path": "uplink/staging/daily",
+        "weekly_path": "uplink/staging/weekly"
+      },
+      "audit": {
+        "file": "07-uplink-backup-audit-service.template.json",
+        "service": "uplink-backup-audit",
+        "env_template": "audit.staging.env.template",
+        "audit_env": "staging"
+      },
+      "secret_slots": {
+        "DATABASE_URL": "{{OWNER_ENTERS_STAGING_DATABASE_URL}}",
+        "AUTH_SECRET": "{{OWNER_ENTERS_STAGING_AUTH_SECRET}}",
+        "NEXTAUTH_SECRET": "{{OWNER_ENTERS_STAGING_NEXTAUTH_SECRET}}",
+        "ENCRYPTION_KEY": "{{OWNER_ENTERS_STAGING_ENCRYPTION_KEY}}"
+      },
+      "database_target_comment": "# DATABASE_URL target: host uplink_uplink-db database uplink",
+      "foreign_tokens": [
+        "uplink-db-prod",
+        "uplink-app-prod",
+        "uplink-baseline-import-prod",
+        "uplink-restore-check-prod",
+        "uplink-restore-verify-prod",
+        "uplink-backup-audit-prod",
+        "uplink/production",
+        "OWNER_ENTERS_PRODUCTION"
+      ]
     },
     "production": {
       "origin": "https://uplink.epic.dm",
@@ -134,7 +191,67 @@
       "operator_only": false,
       "env_template": "uplink-app.production.env.template",
       "image_digest_placeholder": "{{UPLINK_PRODUCTION_IMAGE_DIGEST_HEX}}",
-      "phase": "5 cutover (gated)"
+      "phase": "5 cutover (gated)",
+      "db": {
+        "service": "uplink-db-prod",
+        "database": "uplink",
+        "host": "uplink_uplink-db-prod",
+        "spec_file": "03p-uplink-db-prod.owner-ui-spec.json"
+      },
+      "restore_check": {
+        "service": "uplink-restore-check-prod",
+        "host": "uplink_uplink-restore-check-prod",
+        "spec_file": "05p-uplink-restore-check-prod-db.owner-ui-spec.json"
+      },
+      "jobs": {
+        "import": {
+          "file": "04p-uplink-baseline-import-prod-job.template.json",
+          "service": "uplink-baseline-import-prod",
+          "env_template": "job-import.production.env.template",
+          "password_slot": "{{OWNER_ENTERS_PRODUCTION_DB_PASSWORD}}",
+          "host": "uplink_uplink-db-prod",
+          "database": "uplink"
+        },
+        "verify": {
+          "file": "06p-uplink-restore-verify-prod-job.template.json",
+          "service": "uplink-restore-verify-prod",
+          "env_template": "job-restore-verify.production.env.template",
+          "password_slot": "{{OWNER_ENTERS_PRODUCTION_RESTORE_CHECK_PASSWORD}}",
+          "host": "uplink_uplink-restore-check-prod",
+          "database": "uplink_restore"
+        }
+      },
+      "backup": {
+        "file": "08p-uplink-backup-config-prod.createDatabaseBackup.json",
+        "daily_path": "uplink/production/daily",
+        "weekly_path": "uplink/production/weekly"
+      },
+      "audit": {
+        "file": "07p-uplink-backup-audit-prod-service.template.json",
+        "service": "uplink-backup-audit-prod",
+        "env_template": "audit.production.env.template",
+        "audit_env": "production"
+      },
+      "secret_slots": {
+        "DATABASE_URL": "{{OWNER_ENTERS_PRODUCTION_DATABASE_URL}}",
+        "AUTH_SECRET": "{{OWNER_ENTERS_PRODUCTION_AUTH_SECRET}}",
+        "NEXTAUTH_SECRET": "{{OWNER_ENTERS_PRODUCTION_NEXTAUTH_SECRET}}",
+        "ENCRYPTION_KEY": "{{OWNER_ENTERS_PRODUCTION_ENCRYPTION_KEY}}"
+      },
+      "database_target_comment": "# DATABASE_URL target: host uplink_uplink-db-prod database uplink",
+      "foreign_tokens": [
+        "(?<![\\w-])uplink-db(?![\\w-])",
+        "(?<![\\w-])uplink-app(?![\\w-])",
+        "(?<![\\w-])uplink-baseline-import(?![\\w-])",
+        "(?<![\\w-])uplink-restore-check(?![\\w-])",
+        "(?<![\\w-])uplink-restore-verify(?![\\w-])",
+        "(?<![\\w-])uplink-backup-audit(?![\\w-])",
+        "uplink_uplink-db(?![\\w-])",
+        "uplink_uplink-restore-check(?![\\w-])",
+        "uplink/staging",
+        "OWNER_ENTERS_STAGING",
+        "build\\.uplink\\.epic\\.dm"
+      ]
     }
   },
   "image_contract": {
@@ -143,5 +260,23 @@
     "digests_must_differ": true,
     "tags_must_differ": true,
     "repository": "ghcr.io/epicdm/isola-seldonframe"
+  },
+  "isolation": {
+    "ruling": "plan v2.9 2026-10-06T15:20:01Z: no shared database or secrets between staging and production; separate EasyPanel database services with separate persistent volumes, distinct DB credentials, distinct ENCRYPTION_KEY and auth/session secrets; DATABASE_URL points only to the matching database; production bootstraps from the same approved schema-only baseline, never from staging rows or a staging backup; synthetic fixtures staging-only",
+    "database_name_per_environment": "uplink",
+    "fixture_environments": [
+      "staging"
+    ],
+    "fixture_key_pattern": "(?i)fixture|seed|demo",
+    "separate_secret_slots": true,
+    "no_volume_fields_in_db_specs": true,
+    "note": "Distinct service names and slot markers are configuration ownership, not a network-isolation claim; roles/grants and network isolation are verified by QA."
+  },
+  "capacity": {
+    "note": "ceilings, reservations and measured use are different quantities; see CAPACITY-RECHECK.md",
+    "per_environment_ceilings": {
+      "app": "2 CPU / 3 GiB",
+      "db": "2 CPU / 4 GiB"
+    }
   }
 }
