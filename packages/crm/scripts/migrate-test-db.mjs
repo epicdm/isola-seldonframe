@@ -19,7 +19,10 @@ if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(host)) {
   process.exit(2);
 }
 const pool = new pg.Pool({ connectionString: url });
-const folder = resolve(dirname(fileURLToPath(import.meta.url)), "../drizzle");
+// MIGRATIONS_FOLDER lets a scratch run use a patched copy: 0001_solid_gateway.sql
+// casts accounts.expires_at timestamp->integer without USING, which only works
+// on prod where that was applied out-of-band, so a from-zero replay fails there.
+const folder = process.env.MIGRATIONS_FOLDER ?? resolve(dirname(fileURLToPath(import.meta.url)), "../drizzle");
 await migrate(drizzle(pool), { migrationsFolder: folder });
 console.log("migrations applied");
 await pool.end();
