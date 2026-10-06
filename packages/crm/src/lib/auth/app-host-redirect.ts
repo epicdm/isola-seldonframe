@@ -53,7 +53,7 @@ export async function redirectToAppHostIfNeeded(path: string, search: string) {
   const requestHost = (await headers()).get("host") ?? "";
   const target = resolveAppHostRedirectTarget({
     requestHost,
-    appOrigin: resolveAppOrigin(process.env.NEXT_PUBLIC_APP_URL),
+    appOrigin: canonicalAppOrigin(),
     path,
     search,
   });
