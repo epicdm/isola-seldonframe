@@ -172,10 +172,10 @@ async function main() {
           : "unknown";
       const errorCode = /^[A-Z0-9_]{1,40}$/.test(rawCode) ? rawCode : "unknown";
       const safeMessage = (err instanceof Error ? err.message : "unknown")
-        .replace(/(?:postgres(?:ql)?|mysql):\\/\\/[^\\s"'\x60]+/gi, "[redacted-url]")
-        .replace(/\\b(password|passwd|secret|token|api[_-]?key)\\b\\s*[:=]\\s*[^,\\s;]+/gi, "$1=[redacted]")
-        .replace(/[\\r\\n\\t]+/g, " ")
-        .slice(0, 160);
+        .replace(/(?:postgres(?:ql)?|mysql):\/\/[^\s"']+/gi, "[redacted-url]")
+        .replace(/\b(password|passwd|secret|token|api[_-]?key)\b\s*[:=]\s*[^,\s;]+/gi, "$1=[redacted]")
+        .replace(/[\r\n\t]+/g, " ")
+        .slice(0, 160);0, 160);
       console.error(
         `[assert-schema-drift] FATAL: could not query the database with the selected driver (error=${errorName}, code=${errorCode}, detail=${safeMessage})`,
       );
