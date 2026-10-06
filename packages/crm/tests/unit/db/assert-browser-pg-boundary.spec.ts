@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findNodePgBrowserMarkers } from "../../scripts/assert-browser-pg-boundary.mjs";
+import { findNodePgBrowserMarkers } from "../../../scripts/assert-browser-pg-boundary.mjs";
 
 test("browser bundle guard accepts ordinary client code and the fail-closed stub", () => {
   assert.deepEqual(findNodePgBrowserMarkers([
