@@ -5,7 +5,6 @@ on:
   workflow_dispatch:
     inputs:
       public_url:
-        description: Public base URL baked into the client bundle
         description: Uplink production origin, validated before build
         default: https://uplink.epic.dm
 permissions:
