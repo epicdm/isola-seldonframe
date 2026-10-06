@@ -109,17 +109,19 @@ async function fetchLiveColumns(sql, required) {
   return new Set(rows.map((r) => `${r.table_name}.${r.column_name}`));
 }
 
-export function resolveDriftDriver(env: { DB_DRIVER?: string } = process.env) {
+/** @param {{ DB_DRIVER?: string }} [env=process.env] */
+export function resolveDriftDriver(env = process.env) {
   const driver = env.DB_DRIVER?.trim();
   if (!driver || driver === "neon") return "neon";
   if (driver === "pg") return "pg";
   throw new Error(`Unsupported DB_DRIVER: ${driver}`);
 }
 
-export async function fetchLiveColumnsPg(
-  query: (sql: string, params: unknown[]) => Promise<{ rows: { table_name: string; column_name: string }[] }>,
-  required: { table: string; column: string }[],
-) {
+/**
+ * @param {(sql: string, params: unknown[]) => Promise<{ rows: { table_name: string; column_name: string }[] }>} query
+ * @param {{ table: string; column: string }[]} required
+ */
+export async function fetchLiveColumnsPg(query, required) {
   const tables = [...new Set(required.map((r) => r.table))];
   const columns = [...new Set(required.map((r) => r.column))];
   const { rows } = await query(
