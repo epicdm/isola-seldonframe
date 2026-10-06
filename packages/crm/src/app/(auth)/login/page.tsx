@@ -6,6 +6,7 @@ import { toInternalRedirectPath } from "@/lib/auth/signup-redirect";
 import { isGoogleAuthEnabled } from "@/lib/auth/google-enabled";
 import { isDemoReadonly } from "@/lib/demo/server";
 import { resolveAppOrigin } from "@/lib/marketplace/buy-box-auth";
+import { extraAppHosts } from "@/lib/http/app-hosts";
 
 // 2026-07-04 — Prod incident: Google OAuth failed with
 // `InvalidCheck: pkceCodeVerifier value could not be parsed` because sign-in
@@ -29,7 +30,8 @@ function isExemptHost(host: string) {
     host === "" ||
     host === "localhost" ||
     host === "127.0.0.1" ||
-    host.endsWith(".vercel.app")
+    host.endsWith(".vercel.app") ||
+    extraAppHosts().includes(host)
   );
 }
 
