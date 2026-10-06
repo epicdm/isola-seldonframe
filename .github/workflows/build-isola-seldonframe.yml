@@ -56,5 +56,5 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: NEXT_PUBLIC_APP_URL=${{ inputs.public_url }}
-          tags: ghcr.io/${{ github.repository_owner }}/isola-seldonframe:launch-2026-10-04
+          tags: ghcr.io/${{ github.repository_owner }}/isola-seldonframe:pgpool-2026-10-06
       - run: echo "image digest ${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
