@@ -11,6 +11,9 @@ export function assertUplinkFixtureTarget(env: Record<string, string | undefined
   if (env.UPLINK_FIXTURES !== "enabled") {
     throw new Error("Set UPLINK_FIXTURES=enabled to create synthetic Uplink fixtures");
   }
+  if (env.DB_DRIVER?.trim().toLowerCase() !== "pg") {
+    throw new Error("DB_DRIVER=pg is required for transaction-based Uplink fixture seeding");
+  }
   if (!env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 
   let databaseHost: string;
