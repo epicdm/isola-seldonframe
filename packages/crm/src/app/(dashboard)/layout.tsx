@@ -24,7 +24,7 @@ import { isDraftApprovalsOn } from "@/lib/agent-drafts/policy";
 import { readEnabledModules } from "@/lib/workspace/surface";
 import { hasLiveSms } from "@/lib/telephony/config";
 import { buildWorkspaceUrls } from "@/lib/billing/anonymous-workspace";
-import { canonicalAppOrigin } from "@/lib/http/app-hosts";
+import { workspaceBaseDomain } from "@/lib/http/app-hosts";
 import { registerCrmEventListeners } from "@/lib/events/listeners";
 import { getAllBlocksForOrg } from "@/lib/blocks/registry";
 import { canSeldonIt, resolvePlanFromPlanId } from "@/lib/billing/entitlements";
@@ -41,7 +41,7 @@ import Link from "next/link";
 // Mirrors dashboard/page.tsx's WORKSPACE_BASE_DOMAIN — the public workspace
 // host used to build the SeldonChat live-preview iframe URL.
 const WORKSPACE_BASE_DOMAIN =
-  process.env.WORKSPACE_BASE_DOMAIN?.trim() || new URL(canonicalAppOrigin()).hostname;
+  workspaceBaseDomain();
 
 /*
   Square UI class reference (source of truth):
