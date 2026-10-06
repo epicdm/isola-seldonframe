@@ -32,6 +32,7 @@ ENV DATABASE_URL=postgres://build:build@127.0.0.1:5432/build \
     ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 \
     NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
 RUN pnpm --filter @seldonframe/crm build
+RUN node packages/crm/scripts/assert-browser-pg-boundary.mjs
 
 # ---------- runner ----------
 FROM node:22-bookworm-slim AS runner
