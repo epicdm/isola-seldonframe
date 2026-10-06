@@ -55,7 +55,7 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/seldon_test
       - name: Schema drift check
-        run: pnpm db:assert-drift
+        run: pnpm --filter @seldonframe/crm db:assert-drift
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/seldon_test
       - name: BLOCK.md emit drift detector
