@@ -19,7 +19,7 @@ import {
   type MarkdownFetchMode,
 } from "@/lib/marketplace/md-analytics";
 import { toInternalRedirectPath } from "@/lib/auth/signup-redirect";
-import { buildWorkspaceAdminRedirectUrl, extraAppHosts, primaryAppHost } from "@/lib/http/app-hosts";
+import { buildWorkspaceAdminRedirectUrl, extraAppHosts, primaryAppHost, workspaceBaseDomain } from "@/lib/http/app-hosts";
 
 const protectedPrefixes = ["/hub", "/dashboard", "/welcome", "/orgs", "/contacts", "/deals", "/activities", "/forms", "/settings", "/api/v1"];
 const publicPrefixes = ["/api/v1", "/api/auth"];
@@ -45,15 +45,15 @@ function getRequestHost(request: NextRequest) {
 }
 
 function resolveWorkspaceSlugFromHost(host: string) {
-  const workspaceBaseDomain = (process.env.WORKSPACE_BASE_DOMAIN?.trim().toLowerCase() || "app.seldonframe.com")
+  const baseDomain = workspaceBaseDomain().trim().toLowerCase()
     .replace(/^\.+/, "")
     .replace(/\.+$/, "");
 
-  if (!workspaceBaseDomain || host === workspaceBaseDomain) {
+  if (!baseDomain || host === baseDomain) {
     return null;
   }
 
-  const suffix = `.${workspaceBaseDomain}`;
+  const suffix = `.${baseDomain}`;
   if (!host.endsWith(suffix)) {
     return null;
   }
