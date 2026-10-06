@@ -37,7 +37,7 @@ describe("pooled PostgreSQL generalization transactions", { skip }, () => {
         builderOrgId: orgId,
         agentTemplateId: template.id,
         clientName: `client-${index}`,
-        customization: { original: index },
+        customization: { script: `original-${index}` },
       }).returning({ id: deployments.id });
       deploymentIds.push(deployment.id);
     }
@@ -77,12 +77,12 @@ describe("pooled PostgreSQL generalization transactions", { skip }, () => {
       nextBlueprint: generalized,
       deploymentUpdates: deploymentIds.map((id, index) => ({
         id,
-        customization: { updated: index },
+        customization: { script: `updated-${index}` },
       })),
     });
     const result = await snapshot(templateId, deploymentIds);
     assert.deepEqual(result.template.blueprint, generalized);
-    result.rows.forEach((row, index) => assert.deepEqual(row.customization, { updated: index }));
+    result.rows.forEach((row, index) => assert.deepEqual(row.customization, { script: `updated-${index}` }));
   });
 
   test("failure in the final operation rolls back all earlier writes", async () => {
@@ -93,9 +93,9 @@ describe("pooled PostgreSQL generalization transactions", { skip }, () => {
         templateId,
         nextBlueprint: generalized,
         deploymentUpdates: [
-          { id: deploymentIds[0], customization: { changed: 0 } },
-          { id: deploymentIds[1], customization: { changed: 1 } },
-          { id: "not-a-uuid", customization: { changed: 2 } },
+          { id: deploymentIds[0], customization: { script: "changed-0" } },
+          { id: deploymentIds[1], customization: { script: "changed-1" } },
+          { id: "not-a-uuid", customization: { script: "changed-2" } },
         ],
       }),
       (error: unknown) => {
@@ -127,11 +127,11 @@ describe("pooled PostgreSQL generalization transactions", { skip }, () => {
     await persistPgGeneralization(db, {
       templateId,
       nextBlueprint: generalized,
-      deploymentUpdates: [{ id: deploymentIds[0], customization: { recovered: true } }],
+      deploymentUpdates: [{ id: deploymentIds[0], customization: { script: "recovered" } }],
     });
     const result = await snapshot(templateId, deploymentIds);
     assert.deepEqual(result.template.blueprint, generalized);
-    assert.deepEqual(result.rows[0].customization, { recovered: true });
+    assert.deepEqual(result.rows[0].customization, { script: "recovered" });
   });
 
   test("an idle one-shot pg query process exits without explicit pool.end()", { timeout: 12_000 }, () => {
