@@ -38,10 +38,12 @@ function createDb() {
     const g = globalThis as GlobalWithPool;
     // Singleton across Next.js dev reloads / module re-evaluation so the pool
     // (and its connections) is never duplicated within one process.
-    g.__sfPgPool ??= new Pool({ connectionString: databaseUrl, ...poolConfig });
-    g.__sfPgPool.on("error", (err) => {
-      console.error("[db] idle pool client error", err.message);
-    });
+    if (!g.__sfPgPool) {
+      g.__sfPgPool = new Pool({ connectionString: databaseUrl, ...poolConfig });
+      g.__sfPgPool.on("error", (err) => {
+        console.error("[db] idle pool client error", err.message);
+      });
+    }
     return drizzlePg(g.__sfPgPool, { schema, casing: "snake_case" }) as unknown as NeonDb;
   }
   return drizzle(neon(databaseUrl), { schema, casing: "snake_case" });
