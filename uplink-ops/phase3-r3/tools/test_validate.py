@@ -122,6 +122,6 @@ tamper("job script content differs from tools/uplink_job.sh", "04-uplink-baselin
 tamper("verify job script content differs", "06-uplink-restore-verify-job.createFromSchema.json", lambda t: t.replace("verify complete", "done", 1))
 # CRLF and non-ASCII
 d = fresh(); edit(d, ENV, lambda t: t.replace("\n", "\r\n")); expect("negative control: CRLF line endings", 1, d, "offline")
-d = fresh(); edit(d, ENV, lambda t: t + "# café\n"); expect("negative control: non-ASCII byte", 1, d, "offline")
+d = fresh(); edit(d, ENV, lambda t: t + "# caf\u00e9\n"); expect("negative control: non-ASCII byte", 1, d, "offline")
 print(f"SUMMARY controls={total} failed={fails}")
 sys.exit(1 if fails else 0)
