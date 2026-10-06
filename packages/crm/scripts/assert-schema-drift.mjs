@@ -164,7 +164,16 @@ async function main() {
     if (err instanceof Error && err.message.startsWith("Unsupported DB_DRIVER:")) {
       console.error(`[assert-schema-drift] FATAL: ${err.message}`);
     } else {
-      console.error("[assert-schema-drift] FATAL: could not query the database with the selected driver");
+      const rawName = err instanceof Error ? err.name : "Error";
+      const errorName = /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(rawName) ? rawName : "Error";
+      const rawCode =
+        err && typeof err === "object" && "code" in err && typeof err.code === "string"
+          ? err.code
+          : "unknown";
+      const errorCode = /^[A-Z0-9_]{1,40}$/.test(rawCode) ? rawCode : "unknown";
+      console.error(
+        `[assert-schema-drift] FATAL: could not query the database with the selected driver (error=${errorName}, code=${errorCode})`,
+      );
     }
     return 1;
   } finally {
