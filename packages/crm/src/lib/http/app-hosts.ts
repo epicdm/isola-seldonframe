@@ -52,3 +52,16 @@ export function canonicalAppOrigin(env: Record<string, string | undefined> = pro
 export function primaryAppHost(env: Record<string, string | undefined> = process.env): string {
   return new URL(canonicalAppOrigin(env)).host.toLowerCase();
 }
+
+export function buildWorkspaceAdminRedirectUrl(
+  orgId: string,
+  pathname: string,
+  search: string,
+  env: Record<string, string | undefined> = process.env,
+): URL | null {
+  if (!orgId) return null;
+  const target = new URL("/switch-workspace", canonicalAppOrigin(env));
+  target.searchParams.set("to", orgId);
+  target.searchParams.set("next", `${pathname}${search}`);
+  return target;
+}
