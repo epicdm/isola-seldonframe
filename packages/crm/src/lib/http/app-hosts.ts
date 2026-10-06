@@ -34,7 +34,8 @@ export function canonicalAppOrigin(env: Record<string, string | undefined> = pro
   const configured: Array<[string, string | undefined]> = [
     ["PLATFORM_APP_URL", env.PLATFORM_APP_URL?.trim()],
     ["NEXT_PUBLIC_APP_URL", env.NEXT_PUBLIC_APP_URL?.trim()],
-    ["AUTH_URL", (env.AUTH_URL ?? env.NEXTAUTH_URL)?.trim()],
+    ["AUTH_URL", env.AUTH_URL?.trim()],
+    ["NEXTAUTH_URL", env.NEXTAUTH_URL?.trim()],
   ];
   const configuredOrigins: Array<[string, string]> = [];
   for (const [key, value] of configured) {
@@ -45,7 +46,7 @@ export function canonicalAppOrigin(env: Record<string, string | undefined> = pro
   }
   const canonical = configuredOrigins[0]?.[1] ?? DEFAULT_VENDOR_APP_ORIGIN;
   if (configuredOrigins.some(([, origin]) => origin !== canonical)) {
-    throw new Error("PLATFORM_APP_URL, AUTH_URL, and NEXT_PUBLIC_APP_URL must use the same canonical origin");
+    throw new Error("PLATFORM_APP_URL, NEXT_PUBLIC_APP_URL, AUTH_URL, and NEXTAUTH_URL must use the same canonical origin");
   }
   return canonical;
 }
