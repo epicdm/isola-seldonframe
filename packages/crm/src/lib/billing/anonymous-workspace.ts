@@ -17,7 +17,7 @@ import { captureServerEvent } from "@/lib/analytics/capture";
 import { classifyBusinessTypeFromSoul } from "@/lib/page-schema/classify-business";
 import { selectCRMPersonality } from "@/lib/crm/personality";
 import { inferTimezone } from "@/lib/workspace/infer-timezone";
-import { primaryAppHost } from "@/lib/http/app-hosts";
+import { canonicalAppOrigin } from "@/lib/http/app-hosts";
 
 const DEFAULT_ENABLED_BLOCKS = [
   "crm",
@@ -673,7 +673,7 @@ function buildSeedSoul(
   return soul;
 }
 
-const APP_HOST = primaryAppHost();
+const APP_ORIGIN = canonicalAppOrigin();
 
 export function buildWorkspaceUrls(
   slug: string,
@@ -681,7 +681,7 @@ export function buildWorkspaceUrls(
   orgId: string
 ) {
   const publicOrigin = `https://${slug}.${baseDomain}`;
-  const adminOrigin = `https://${APP_HOST}`;
+  const adminOrigin = APP_ORIGIN;
   const sw = (next: string) =>
     `${adminOrigin}/switch-workspace?to=${encodeURIComponent(orgId)}&next=${encodeURIComponent(next)}`;
   return {
