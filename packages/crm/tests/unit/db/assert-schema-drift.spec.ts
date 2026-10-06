@@ -11,8 +11,8 @@ test("schema drift defaults to Neon unless pg is explicitly selected", () => {
 });
 
 test("PostgreSQL drift query is parameterized and returns public column names", async () => {
-  let captured;
-  const columns = await fetchLiveColumnsPg(async (sql, params) => {
+  let captured: { sql: string; params: unknown[] } = { sql: "", params: [] };
+  const columns = await fetchLiveColumnsPg(async (sql: string, params: unknown[]) => {
     captured = { sql, params };
     return { rows: [{ table_name: "users", column_name: "agency_profile" }] };
   }, [
