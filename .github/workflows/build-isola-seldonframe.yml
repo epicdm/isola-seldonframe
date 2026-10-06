@@ -1,3 +1,4 @@
+# Uplink native bring-up build (Lane A): the exact working revision fd070e572f5653816cf77eebd1c6bdeb8a79128a with ONLY the public origin default and the image tag changed (no source change).
 # Isola build of SeldonFrame (see ISOLA-BUILD.md). Manual run only. Verifies, then builds one amd64 image.
 # Action versions and Node/pnpm versions match upstream's own CI (.github/workflows/ci.yml, kept unchanged in this fork).
 name: build-isola-seldonframe
@@ -6,13 +7,13 @@ on:
     inputs:
       public_url:
         description: Public base URL baked into the client bundle
-        default: https://front.isola.epic.dm
+        default: https://uplink.epic.dm
 permissions:
   contents: read
   packages: write
 concurrency:
-  group: build-isola-seldonframe
-  cancel-in-progress: true
+  group: build-isola-seldonframe-uplink-native
+  cancel-in-progress: false
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -56,5 +57,5 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: NEXT_PUBLIC_APP_URL=${{ inputs.public_url }}
-          tags: ghcr.io/${{ github.repository_owner }}/isola-seldonframe:origin-2026-10-06
+          tags: ghcr.io/${{ github.repository_owner }}/isola-seldonframe:uplink-native-${{ github.sha }}
       - run: echo "image digest ${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
