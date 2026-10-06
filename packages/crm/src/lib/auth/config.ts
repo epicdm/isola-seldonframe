@@ -5,17 +5,30 @@ import { db } from "@/db";
 import { accounts, organizations, users } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { sendNewSignupAlert } from "@/lib/notifications/ops-notifications";
+import { getPlatformBranding } from "@/lib/platform/branding";
+import { canonicalAppOrigin } from "@/lib/http/app-hosts";
 // funnel.ts (posthog-node) is imported lazily below, not statically here —
 // config.ts sits in the proxy/middleware module graph (config -> auth ->
 // src/proxy.ts), and a static import would pull posthog-node into that
 // bundle for every request, not just the rare createUser event.
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+  })[char] ?? char);
+}
 
 const BILLING_STATUSES = ["trialing", "active", "past_due", "canceled", "unpaid"] as const;
 const BILLING_PERIODS = ["monthly", "yearly"] as const;
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
 const resendApiKey = (process.env.AUTH_RESEND_KEY ?? process.env.RESEND_API_KEY)?.trim();
-const resendFrom = (process.env.AUTH_RESEND_FROM ?? process.env.DEFAULT_FROM_EMAIL ?? "hello@seldonframe.local").trim();
+const platformBranding = getPlatformBranding();
+const resendFromRaw = (process.env.AUTH_RESEND_FROM ?? process.env.DEFAULT_FROM_EMAIL ?? "hello@seldonframe.local").trim();
+const resendAddress = /<([^<>]+)>/.exec(resendFromRaw)?.[1] ?? resendFromRaw;
+const resendFrom = platformBranding.emailFromName
+  ? `${platformBranding.emailFromName} <${resendAddress}>`
+  : resendFromRaw;
 
 function normalizeBillingStatus(value: string | null | undefined): (typeof BILLING_STATUSES)[number] {
   return BILLING_STATUSES.includes(value as (typeof BILLING_STATUSES)[number])
@@ -64,20 +77,25 @@ if (googleClientId && googleClientSecret) {
  * Wordmark URL points at the production public asset. NEXTAUTH_URL gives us
  * the right host (app.seldonframe.com in prod, localhost in dev).
  */
-function renderSeldonFrameSignInEmail({
+function renderPlatformSignInEmail({
   url,
   baseUrl,
 }: {
   url: string;
   baseUrl: string;
 }): { subject: string; html: string; text: string } {
-  const wordmark = `${baseUrl}/brand/seldonframe-wordmark.svg`;
+  const brand = getPlatformBranding();
+  const safeName = escapeHtml(brand.name);
+  const homeUrl = escapeHtml(brand.homeUrl);
+  const logoMarkup = brand.logoUrl
+    ? `<img src="${escapeHtml(new URL(brand.logoUrl, baseUrl).toString())}" alt="${safeName}" width="220" style="max-width:220px;height:auto;" />`
+    : `<strong style="font-size:20px;">${safeName}</strong>`;
   const primary = "#059669"; // matches --primary teal in the design system
   const ink = "#0a0e1a";
   const bg = "#f6f7f9";
   const muted = "#6b7280";
 
-  const subject = "Your SeldonFrame sign-in link";
+  const subject = `Your ${safeName} sign-in link`;
 
   const html = `<!doctype html>
 <html lang="en">
@@ -93,24 +111,12 @@ function renderSeldonFrameSignInEmail({
         <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border-radius:16px;border:1px solid #e5e7eb;overflow:hidden;">
           <tr>
             <td style="padding:32px 32px 16px 32px;text-align:center;">
-              <!-- Inline brand wordmark — Gmail/Outlook reliably strip external SVGs
-                   or render them at their native width which can break our layout.
-                   Inline SVG with explicit width + viewBox renders correctly across
-                   Gmail web/mobile + Apple Mail + Outlook. The wordmark text is part
-                   of the SVG, not an external font, so no font-loading issues. -->
-              <svg xmlns="http://www.w3.org/2000/svg" width="220" height="36" viewBox="0 0 240 40" style="display:inline-block;max-width:220px;height:36px;" role="img" aria-label="SeldonFrame">
-                <g fill="none">
-                  <!-- Mark: square outline + dot, matching brand/seldonframe-wordmark.svg -->
-                  <rect x="6" y="8" width="24" height="24" rx="3" stroke="${primary}" stroke-width="2" />
-                  <circle cx="32" cy="8" r="3" fill="${primary}" />
-                </g>
-                <text x="44" y="27" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" font-size="20" font-weight="600" fill="${ink}" letter-spacing="-0.5">SeldonFrame</text>
-              </svg>
+              ${logoMarkup}
             </td>
           </tr>
           <tr>
             <td style="padding:8px 32px 0 32px;text-align:center;">
-              <h1 style="margin:0;font-size:24px;line-height:1.3;font-weight:600;color:${ink};letter-spacing:-0.01em;">Sign in to SeldonFrame</h1>
+              <h1 style="margin:0;font-size:24px;line-height:1.3;font-weight:600;color:${ink};letter-spacing:-0.01em;">Sign in to ${safeName}</h1>
               <p style="margin:12px 0 0 0;font-size:15px;line-height:1.5;color:${muted};">
                 Click the button below to sign in. This link is valid for 15 minutes and works once.
               </p>
@@ -119,7 +125,7 @@ function renderSeldonFrameSignInEmail({
           <tr>
             <td style="padding:28px 32px 8px 32px;text-align:center;">
               <a href="${url}" style="display:inline-block;background:${primary};color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 32px;border-radius:10px;line-height:1;">
-                Sign in to SeldonFrame
+                Sign in to ${safeName}
               </a>
             </td>
           </tr>
@@ -137,10 +143,10 @@ function renderSeldonFrameSignInEmail({
             <td style="padding:24px 32px 32px 32px;border-top:1px solid #f1f3f5;margin-top:24px;text-align:center;">
               <p style="margin:24px 0 0 0;font-size:12px;line-height:1.5;color:${muted};">
                 If you didn't request this email, you can safely ignore it.<br />
-                Questions? Reply to this email or visit <a href="${baseUrl.replace("app.", "")}" style="color:${primary};text-decoration:underline;">seldonframe.com</a>.
+                Questions? ${brand.supportEmail ? `Email <a href="mailto:${escapeHtml(brand.supportEmail)}" style="color:${primary};text-decoration:underline;">${escapeHtml(brand.supportEmail)}</a> or visit` : "Visit"} <a href="${homeUrl}" style="color:${primary};text-decoration:underline;">${escapeHtml(brand.homeUrl)}</a>.
               </p>
               <p style="margin:16px 0 0 0;font-size:11px;color:${muted};">
-                The open-source Business OS your agency builds for clients in 60 seconds.
+                ${escapeHtml(brand.emailFooter)}
               </p>
             </td>
           </tr>
@@ -151,7 +157,7 @@ function renderSeldonFrameSignInEmail({
 </body>
 </html>`;
 
-  const text = `Sign in to SeldonFrame
+  const text = `Sign in to ${safeName}
 
 Click this link to sign in (valid for 15 minutes, single use):
 
@@ -159,8 +165,8 @@ ${url}
 
 If you didn't request this email, you can safely ignore it.
 
-— The SeldonFrame team
-seldonframe.com`;
+— ${brand.emailFooter}
+${brand.homeUrl}`;
 
   return { subject, html, text };
 }
@@ -176,10 +182,8 @@ if (resendApiKey) {
       // domain they may not recognize, which trips spam filters and erodes
       // trust on the very first touchpoint.
       async sendVerificationRequest({ identifier, url, provider }) {
-        const baseUrl = (
-          process.env.NEXTAUTH_URL?.trim() || "https://app.seldonframe.com"
-        ).replace(/\/+$/, "");
-        const { subject, html, text } = renderSeldonFrameSignInEmail({ url, baseUrl });
+        const baseUrl = canonicalAppOrigin().replace(/\/+$/, "");
+        const { subject, html, text } = renderPlatformSignInEmail({ url, baseUrl });
 
         const response = await fetch("https://api.resend.com/emails", {
           method: "POST",
