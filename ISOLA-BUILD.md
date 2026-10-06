@@ -34,10 +34,10 @@ for that service (AGPL-3.0 section 13).
     docker build --build-arg NEXT_PUBLIC_APP_URL=https://<public host> -t isola-seldonframe .
 
 or run the `build-isola-seldonframe` workflow (Actions tab), which type-checks, runs the three specs and pushes
-`ghcr.io/<owner>/isola-seldonframe:launch-2026-10-04`. The values in the Dockerfile's build stage
+`ghcr.io/<owner>/isola-seldonframe:pgpool-2026-10-06` (resolve the workflow output to an immutable digest before deployment). The values in the Dockerfile's build stage
 (`DATABASE_URL`, `AUTH_SECRET`, ...) are upstream's throwaway build placeholders, not real credentials.
 
 ## Runtime environment (names only)
 
-`DATABASE_URL`, `AUTH_SECRET`, `AUTH_URL`, `ENCRYPTION_KEY`, `NEXT_PUBLIC_APP_URL`, and optionally
+`DATABASE_URL`, optional `DB_DRIVER=pg`, `DB_POOL_MAX`, `DB_POOL_IDLE_MS`, `DB_POOL_CONNECT_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`, `AUTH_SECRET`, `AUTH_URL`, `ENCRYPTION_KEY`, `NEXT_PUBLIC_APP_URL`, and optionally
 `SMTP2GO_API_KEY` + `PORTAL_EMAIL_FROM` (portal sign-in email) and `FOLLOW_UP_RESPONDER_EMAIL` (who receives enquiry follow-ups). See `.env.docker.example` for the full list.
