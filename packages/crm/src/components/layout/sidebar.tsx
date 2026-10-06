@@ -66,6 +66,9 @@ export function Sidebar(props: {
    *  place of the SeldonFrame icon when set. Per-workspace; the
    *  layout fetches it from the active org and threads it through. */
   workspaceLogoUrl?: string | null;
+  platformName?: string;
+  platformLogoUrl?: string | null;
+  showVendorBranding?: boolean;
   /** 2026-05-18 (later) — agency-level white-label logo. When an
    *  active partner agency owns this workspace (is_white_label), this
    *  is the agency's logoUrl from partner_agencies.logoUrl. Threaded
@@ -96,6 +99,9 @@ export function Sidebar(props: {
     hiddenBlocks = [],
     workspaceName,
     workspaceLogoUrl = null,
+    platformName = "SeldonFrame",
+    platformLogoUrl = null,
+    showVendorBranding = true,
     agencyLogoUrl = null,
     activeWorkspaceId,
     workspaceOptions,
@@ -186,8 +192,13 @@ export function Sidebar(props: {
                   alt={agencyBrandName ? `${agencyBrandName} logo` : "Brand logo"}
                   className="h-full w-full object-contain"
                 />
-              ) : (
+              ) : platformLogoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={platformLogoUrl} alt={`${platformName} logo`} className="h-full w-full object-contain" />
+              ) : showVendorBranding ? (
                 <Image src="/brand/seldonframe-icon.svg" alt="SeldonFrame" width={20} height={20} />
+              ) : (
+                <span aria-label={platformName} className="text-xs font-bold">{platformName.slice(0, 1)}</span>
               )}
             </div>
             <div className="min-w-0">
@@ -198,7 +209,7 @@ export function Sidebar(props: {
                   AND the agency operator looking at their own dashboard
                   see the agency identity instead of "SeldonFrame". */}
               <p className="text-sm font-semibold tracking-tight text-foreground">
-                {agencyBrandName ?? "SeldonFrame"}
+                {agencyBrandName ?? platformName}
               </p>
               <p className="text-[11px] text-muted-foreground">
                 {agencyBrandName
@@ -207,7 +218,9 @@ export function Sidebar(props: {
                     : isInsideClientWorkspace
                       ? `${workspaceName} workspace`
                       : "Agency dashboard"
-                  : "Operating system for modern teams"}
+                  : showVendorBranding
+                    ? "Operating system for modern teams"
+                    : "Your communications and AI front office"}
               </p>
             </div>
           </div>
