@@ -13,8 +13,8 @@ permissions:
   contents: read
   packages: write
 concurrency:
-  group: build-isola-seldonframe
-  cancel-in-progress: true
+  group: build-isola-seldonframe-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   verify:
     runs-on: ubuntu-latest
