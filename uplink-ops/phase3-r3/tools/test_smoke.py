@@ -16,7 +16,7 @@ def serve(kind):
                 self.send_response(307); self.send_header("Location", "/login"); self.end_headers(); return
             if p == "/login" or p == "/":
                 if kind == "redirect-localhost" and p == "/": self.send_response(302); self.send_header("Location", "http://localhost:3000/login"); self.end_headers(); return
-                body = BRANDED if kind == "branded" else CLEAN
+                body = BRANDED if kind == "branded" else (CLEAN.replace(b"</body>", b"<script>var pkg='@seldonframe/crm';</script></body>") if kind == "inline-script" else CLEAN)
                 self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(body); return
             if p == "/a.css":
                 self.send_response(200); self.end_headers(); self.wfile.write(b"body{} /* app.seldonframe.com */" if kind == "branded-asset" else b"body{}"); return
@@ -66,6 +66,7 @@ expect2("negative control: redirect to localhost FAILS", "redirect-localhost", 1
 expect2("negative control: unauthenticated /dashboard that is served FAILS fail-closed", "open", 1, must="FAIL fail-closed")
 expect2("negative control: readiness body that leaks DATABASE_URL FAILS", "leaky", 1, ("--readiness-path", "/ready"), must="FAIL readiness body leaks no configuration")
 expect2("without a readiness path the check is SKIPPED not passed", "clean", 0, must="SKIPPED readiness endpoint")
+expect2("positive control: a package name inside an inline script is not customer-visible branding", "inline-script", 0, must="PASS page / contains no 'seldonframe'")
 rc, out = run("forbidden", "--expect-forbidden"); good = rc == 0 and "403" in out
 print(("PASS" if good else "FAIL"), "operator-only mode: 403 host passes the --expect-forbidden control", f"(rc={rc})"); fails += 0 if good else 1
 rc, out = run("clean", "--expect-forbidden"); good = rc == 1

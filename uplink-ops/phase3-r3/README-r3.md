@@ -18,7 +18,7 @@ tools/validate_package.py + test_validate.py             static validator (offli
 tools/uplink_job.sh                                      script the EasyPanel job runs (import|verify)
 tools/make_job_json.py                                   builds the content-bearing job JSON from the templates + approved baseline
 tools/backup_audit.py (+ --selftest), audit_loop.sh      restore-point counting audit
-tools/acceptance_smoke.py + test_smoke.py                HTTP/branding/origin/fail-closed checks and 18 controls
+tools/acceptance_smoke.py + test_smoke.py                HTTP/branding/origin/fail-closed checks and 19 controls
 tools/uplink_db_tools.sh, rehearse_baseline.sh           OFFLINE evidence tooling (disposable local Postgres; never run on host03)
 RUNBOOK-r3.md, EASYPANEL-ONLY-AUDIT.md, BACKUP-POLICY.md, OWNER-SETUP-SHEET.md, CHATWOOT-REUSE-EVIDENCE.md
 evidence/rehearsal-5.log                                 sanitized log of the disposable rehearsal (54 PASS, 0 FAIL)
@@ -31,7 +31,7 @@ Each Port evidence entity ev-lane-a-uplink-pkg-r3-* holds files as blocks:
 python tools/validate_package.py --mode offline            # placeholders reported as PENDING
 python tools/test_validate.py                              # 54 controls
 python tools/backup_audit.py --selftest                    # 10 controls
-python tools/test_smoke.py                                 # 18 controls (local fixtures only)
+python tools/test_smoke.py                                 # 19 controls (local fixtures only)
 python tools/make_job_json.py --baseline <baseline.sql> --out <dir>; python tools/validate_package.py --mode offline --generated <dir>
 bash tools/rehearse_baseline.sh <baseline.sql> 8f9922e3ead013557a21427468f8392d20784d6d78bec839ae1e4cdb43dba8b8   # needs Docker; run on a scratch host, NOT host03
 `--mode final` fails while any {{PLACEHOLDER}} remains (digests, CIDR, owner values, Codex keys) and requires --generated.

@@ -70,7 +70,7 @@ def main():
                 elif uh and uh not in allowed and not u.startswith(("mailto:", "tel:")): bodies.setdefault("_offhost", set()).add(uh)
     for p, t in list(bodies.items()):
         if p == "_offhost": continue
-        low = re.sub(r"<(script|style).*?</>", " ", t, flags=re.S | re.I).lower()   # customer-visible markup only
+        low = re.sub(r"<(script|style)\b.*?</\1>", " ", t, flags=re.S | re.I).lower()   # customer-visible markup only
         for bad_s in FORBIDDEN_STRINGS: rec(f"page {p} contains no '{bad_s}'", bad_s not in low)
         if a.expect_title:
             m = re.search(r"<title>(.*?)</title>", t, re.S | re.I); rec(f"page {p} title contains '{a.expect_title}'", bool(m) and a.expect_title.lower() in m.group(1).lower(), (m.group(1).strip()[:60] if m else "no title"))
