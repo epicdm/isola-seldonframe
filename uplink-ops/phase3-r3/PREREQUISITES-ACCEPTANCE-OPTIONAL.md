@@ -9,7 +9,7 @@ Readiness here is CANDIDATE evidence. It is not independent approval and nothing
 | P2 | Owner secret entry in the EasyPanel UI (DB password via the UI-created uplink-db, AUTH_SECRET, NEXTAUTH_SECRET, ENCRYPTION_KEY with offline custody) and acknowledgement of the exposure profile | Owner | owner confirms in chat; Lane A reads key NAMES only |
 | P3 | Confirmed operator access: the CIDR(s) allowed to reach staging (66.118.37.10/32 is a candidate only) | Owner | owner answer; middleware readback |
 | P4 | Authorized, encrypted off-host backup destination: encryption at rest on, EPIC authorizes the uplink/daily and uplink/weekly prefixes | Owner (provider console) | owner answers; until then "encrypted off-host backup" is not claimed |
-Internal gates (not owner asks): the canonical-origin decision in ORIGIN-CONTRACT-RECONCILIATION.md; substituting the Codex configuration keys, digests and CIDR so make_job_json + validate_package --mode final exit 0; PM advancement after Phase 2.
+P1 now means TWO origin-specific images from the same accepted source commit (staging public_url=https://build.uplink.epic.dm, production public_url=https://uplink.epic.dm), each with its own recorded tag and digest, both reviewed for provenance (PM ruling plan v2.8). Internal gates (not owner asks): filling json/codex-image-contract.template.json ONLY from the Codex receipt (see UNRESOLVED-DEPENDENCIES.md); substituting digests and CIDR so make_job_json + validate_package --mode final exit 0; PM advancement after Phase 2. The origin question is closed (separate builds).
 
 ## 2. Staging acceptance tests (run in Phase 3/4, evidence-producing; none needs a separate approval)
 | Test | Pass condition | Where defined |

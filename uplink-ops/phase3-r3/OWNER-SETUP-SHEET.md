@@ -1,12 +1,12 @@
-# Uplink owner sheet (r3.1): the minimum owner actions, EasyPanel UI only
+# Uplink owner sheet (r3.2): the minimum owner actions, EasyPanel UI only
 
-Nothing here asks for a live AI, Chatwoot or voice decision, a beta sign-in or any agents.epic.dm action. Production is https://uplink.epic.dm; staging is https://build.uplink.epic.dm (see ORIGIN-CONTRACT-RECONCILIATION.md for which one the app uses as its canonical origin; that is an engineering/PM decision, not yours).
+Nothing here asks for a live AI, Chatwoot or voice decision, a beta sign-in or any agents.epic.dm action. Production is https://uplink.epic.dm; staging is https://build.uplink.epic.dm. They are separate builds (PM ruling): the staging app uses the staging template and image, production uses its own template and image later; you never choose an origin.
 You type secrets only into EasyPanel. Never paste a secret into chat, Port, GitHub or a file. Lane A will not read them. Each item blocks ONLY its dependent step; nothing is needed before Phase 2 approval except answering O2 and O3 early so they do not delay staging.
 
 ## O1. Secret entry (needed at Phase 3 steps S3, S4, S6; do it only when Lane A says Phase 2 is approved)
 1. Create the database service. EasyPanel: project `uplink` > + Service > Postgres. Service name `uplink-db`; Database `uplink`; User `uplink`; Password = leave the generated one; Image `postgres:16.15@sha256:<DIGEST>` (Lane A gives the approved digest); Command `postgres -c max_connections=100 -c shared_buffers=1GB -c effective_cache_size=2GB -c work_mem=8MB -c maintenance_work_mem=128MB -c password_encryption=scram-sha-256 -c log_min_duration_statement=500 -c log_connections=on -c log_disconnections=on -c idle_in_transaction_session_timeout=60000`; CPU limit 2 / reservation 0.5; memory limit 4096 MB / reservation 1024 MB; no exposed port; pgWeb/dbGate OFF.
 2. Generate the secrets on your own machine: `openssl rand -hex 32` for ENCRYPTION_KEY, and `openssl rand -base64 48` (two different values) for AUTH_SECRET and NEXTAUTH_SECRET. Do not paste outputs anywhere shared. Keep ENCRYPTION_KEY in your password manager AND one offline copy: losing it makes stored third-party credentials unrecoverable, and changing it later needs a re-encrypt procedure.
-3. App environment: uplink > uplink-app > Environment. Paste `uplink-app.env.template`, replace every `{{...}}`: the canonical origin (Lane A tells you the single value), DATABASE_URL = `postgresql://uplink:<DB PASSWORD>@uplink_uplink-db:5432/uplink`, the three secrets, and the Codex keys Lane A hands you. Save, then Deploy with "Force rebuild" ON. After this only YOU edit this tab.
+3. Staging app environment: uplink > uplink-app > Environment. Paste `uplink-app.staging.env.template` (its origin keys are already https://build.uplink.epic.dm), replace every `{{...}}`: DATABASE_URL = `postgresql://uplink:<DB PASSWORD>@uplink_uplink-db:5432/uplink`, the three secrets, and the Codex keys Lane A hands you. Save, then Deploy with "Force rebuild" ON. After this only YOU edit this tab.
 4. Import job: uplink > uplink-baseline-import > Environment: paste `job-import.env.template`, set PGPASSWORD to the database password, Deploy; delete the service when its logs show `RESULT PASS import job complete`.
 5. Exposure acknowledgement: look at the Environment tab and tell Overall PM whether values display masked or in clear text (not the values). You accept that anyone with EasyPanel access can read env values if clear.
 
@@ -19,7 +19,8 @@ In the provider console for the destination EasyPanel lists as "DO Spaces (isola
 ## Optional (never blocks)
 Support email, logo URL, favicon URL (empty = text branding "Uplink" and no contact shown).
 
-## Later (Uplink Phase 4/5 only)
+## Later (Uplink Phase 4/5 only; nothing now)
+Phase 5 production service: only after the PM's explicit cutover instruction, you paste `uplink-app.production.env.template` into the new `uplink-app-prod` service and enter the secrets the same way as O1 (use the SAME ENCRYPTION_KEY as staging because both services use one database; AUTH_SECRET and NEXTAUTH_SECRET are your choice, default reuse). Lane A tells you when; nothing about it is needed before then.
 Name the one administrator email for the first Uplink operator account; enter the email-provider secret in EasyPanel the same way as O1 when Phase 4 asks. Until then SMTP and sign-in stay disabled and staging is operator-only.
 
 ## Separate security cleanup (does not block Uplink; owner-only)

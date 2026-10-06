@@ -1,24 +1,25 @@
 {
+  "_status": "PHASE 5 ONLY. Production runtime deployment is gated by Phase 4 APPROVE and explicit Overall PM cutover instruction; this file is never run in Phase 3. Separate production image (public_url=https://uplink.epic.dm) from the same accepted source commit.",
   "procedure": "createFromSchema",
   "input": {
     "projectName": "uplink",
-    "name": "uplink-staging-app-r3",
+    "name": "uplink-production-app-r3",
     "schema": {
       "services": [
         {
           "type": "app",
           "data": {
-            "serviceName": "uplink-app",
+            "serviceName": "uplink-app-prod",
             "source": {
               "type": "image",
-              "image": "ghcr.io/epicdm/isola-seldonframe@sha256:{{UPLINK_STAGING_IMAGE_DIGEST_HEX}}"
+              "image": "ghcr.io/epicdm/isola-seldonframe@sha256:{{UPLINK_PRODUCTION_IMAGE_DIGEST_HEX}}"
             },
             "domains": [
               {
-                "host": "build.uplink.epic.dm",
+                "host": "uplink.epic.dm",
                 "port": 3000,
                 "https": true,
-                "middlewares": ["uplink-operators"]
+                "middlewares": []
               }
             ],
             "resources": {

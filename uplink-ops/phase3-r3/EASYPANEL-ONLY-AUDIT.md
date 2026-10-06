@@ -17,6 +17,7 @@
 |---|---|---|---|---|
 | uplink-db | project uplink > Postgres service | portal logs, getDockerTaskStats, getMonitorTableData | portal Advanced/Resources/Backups tabs; MCP createDatabaseBackup/updateDatabaseBackup/restoreDatabaseBackup | EasyPanel stored spec + dedicated bind data dir |
 | uplink-app | project uplink > App service | portal logs, status | portal Source/Environment/Domains/Resources/Deploy; MCP updateAppSourceImage, deployAppService, updateAppDeploy | stored env block re-applied on every deploy; image digest in source; mounts/resources/domains in stored spec |
+| uplink-app-prod (Phase 5 only, gated) | project uplink > App service | portal logs, status | portal Source/Environment/Domains/Deploy; MCP updateAppSourceImage, deployAppService | same mechanisms as uplink-app; its own production image and env block |
 | uplink-operators middleware | Traefik middleware list | n/a | portal/MCP createMiddleware | stored in EasyPanel proxy config |
 | daily/weekly backup entries | uplink-db > Backups | portal backup list, destination objects | MCP create/update/deleteDatabaseBackup, runDatabaseBackup | stored backup configuration |
 | uplink-baseline-import (temporary) | App service | portal logs, state completed | create/delete in portal | n/a (deleted after success) |

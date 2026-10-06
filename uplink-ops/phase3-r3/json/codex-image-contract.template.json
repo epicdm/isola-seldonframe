@@ -1,0 +1,38 @@
+{
+  "_status": "Fill ONLY from the Codex Phase 1 receipt and its CI image jobs. Every {{...}} is unresolved and fails final-mode validation; nothing here is invented. Plan v2.8: two origin-specific images from the SAME accepted source commit; unique origin-specific tags and digests are recorded because the current workflow tag (uplink-phase1-<sha>) does not include the origin and a second build would overwrite it.",
+  "source_commit": "{{CODEX_SOURCE_COMMIT}}",
+  "workflow_run_urls": {
+    "staging": "{{CODEX_STAGING_RUN_URL}}",
+    "production": "{{CODEX_PRODUCTION_RUN_URL}}"
+  },
+  "images": {
+    "staging": {
+      "repository": "ghcr.io/epicdm/isola-seldonframe",
+      "tag": "{{CODEX_STAGING_IMAGE_TAG}}",
+      "digest": "sha256:{{UPLINK_STAGING_IMAGE_DIGEST_HEX}}",
+      "public_url": "https://build.uplink.epic.dm"
+    },
+    "production": {
+      "repository": "ghcr.io/epicdm/isola-seldonframe",
+      "tag": "{{CODEX_PRODUCTION_IMAGE_TAG}}",
+      "digest": "sha256:{{UPLINK_PRODUCTION_IMAGE_DIGEST_HEX}}",
+      "public_url": "https://uplink.epic.dm"
+    }
+  },
+  "readiness_path": "{{CODEX_READINESS_PATH}}",
+  "fixture_command": "{{CODEX_FIXTURE_COMMAND}}",
+  "adapters": {
+    "ai_mode": {
+      "key": "{{CODEX_AI_MODE_KEY}}",
+      "value": "{{CODEX_AI_MODE_VALUE}}"
+    },
+    "chatwoot_flag": {
+      "key": "{{CODEX_CHATWOOT_FLAG_KEY}}",
+      "value": "{{CODEX_CHATWOOT_FLAG_VALUE}}"
+    },
+    "voice_flag": {
+      "key": "{{CODEX_VOICE_FLAG_KEY}}",
+      "value": "{{CODEX_VOICE_FLAG_VALUE}}"
+    }
+  }
+}

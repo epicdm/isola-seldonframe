@@ -72,38 +72,50 @@ def check_resources(r, expect, where):
 contract = json.loads(load("contract.json"))
 L = contract["limits"]
 
-# ---- 02 app createFromSchema ----
-t = load("02-uplink-app.createFromSchema.json"); scan_placeholders("02-app", t)
-d = json.loads(t)
-inp = d.get("input", {})
-check_keys(inp, {"projectName", "name", "schema"}, "02.input", ("projectName", "schema"))
-if inp.get("projectName") != "uplink": fail("02: projectName must be 'uplink'")
-svcs = inp.get("schema", {}).get("services", [])
-if len(svcs) != 1 or svcs[0].get("type") != "app": fail("02: exactly one app service expected")
-else:
+# ---- app createFromSchema: staging (02) and production (02p), r3.2 (PM ruling plan v2.8: separate images per origin) ----
+ENVS = contract["environments"]
+ROUTED, APP_DIGEST = {}, {}
+def check_app(envname):
+    E = ENVS[envname]; fname = E["app_json"]; w = fname
+    t = load(fname); scan_placeholders(fname, t)
+    d = json.loads(t); inp = d.get("input", {})
+    check_keys(inp, {"projectName", "name", "schema"}, w + ".input", ("projectName", "schema"))
+    if inp.get("projectName") != "uplink": fail(f"{w}: projectName must be 'uplink'")
+    svcs = inp.get("schema", {}).get("services", [])
+    ROUTED[envname] = []
+    if len(svcs) != 1 or svcs[0].get("type") != "app": fail(f"{w}: exactly one app service expected"); return
     a = svcs[0]["data"]
-    check_keys(a, APP_ALLOWED, "02.app", ("serviceName",))
-    if not NAME.match(a.get("serviceName", "")) or a.get("serviceName") != "uplink-app": fail("02: serviceName must be uplink-app")
+    check_keys(a, APP_ALLOWED, w + ".app", ("serviceName",))
+    if not NAME.match(a.get("serviceName", "")) or a.get("serviceName") != E["service"]: fail(f"{w}: serviceName must be {E['service']}")
     src = a.get("source", {})
-    if src.get("type") != "image": fail("02: source.type must be image")
-    img = src.get("image", "")
-    if "@sha256:" not in img: fail("02: image must be pinned by @sha256 digest (no mutable tag)")
-    elif not PLACEHOLDER.search(img) and not re.search(r"@sha256:[0-9a-f]{64}$", img): fail("02: image digest must be 64 hex chars")
-    if re.search(r":(latest|main|master|dev|stable)(@|$)", img): fail("02: mutable tag present")
-    if "env" in a: fail("02: env must be OMITTED (owner enters the environment; agents never write app env)")
+    if src.get("type") != "image": fail(f"{w}: source.type must be image")
+    img = src.get("image", ""); repo = contract["image_contract"]["repository"]
+    if "@sha256:" not in img: fail(f"{w}: image must be pinned by @sha256 digest (no mutable tag)")
+    elif not img.startswith(repo + "@sha256:"): fail(f"{w}: image repository must be {repo}")
+    elif PLACEHOLDER.search(img):
+        if img != repo + "@sha256:" + E["image_digest_placeholder"]: fail(f"{w}: image must carry the {envname} digest placeholder {E['image_digest_placeholder']} (each environment has its own image)")
+    elif not re.search(r"@sha256:[0-9a-f]{64}$", img): fail(f"{w}: image digest must be 64 hex chars")
+    else: APP_DIGEST[envname] = img.rsplit(":", 1)[1]
+    if re.search(r":(latest|main|master|dev|stable)(@|$)", img): fail(f"{w}: mutable tag present")
+    if "env" in a: fail(f"{w}: env must be OMITTED (owner enters the environment; agents never write app env)")
     for k in ("mounts", "ports"):
-        if a.get(k): fail(f"02: {k} must be empty/absent")
+        if a.get(k): fail(f"{w}: {k} must be empty/absent")
     doms = a.get("domains", [])
-    if [x.get("host") for x in doms] != [contract["staging_host"]]: fail("02: only the staging host build.uplink.epic.dm may be routed")
+    ROUTED[envname] = [x.get("host") for x in doms]
+    if ROUTED[envname] != [E["routed_host"]]: fail(f"{w}: only {E['routed_host']} may be routed for {envname}")
     for x in doms:
-        check_keys(x, DOM_ALLOWED, "02.domain", ("host",))
-        if x.get("host") == contract["production_host"]: fail("02: production host must not be attached before cutover")
-        if "uplink-operators" not in x.get("middlewares", []): fail("02: domain must carry middleware uplink-operators (operator-only staging)")
-        if x.get("https") is not True or x.get("port") != 3000: fail("02: domain must be https on port 3000")
-    check_resources(a.get("resources"), L["app"], "02.resources")
+        check_keys(x, DOM_ALLOWED, w + ".domain", ("host",))
+        for other, OE in ENVS.items():
+            if other != envname and x.get("host") == OE["routed_host"]: fail(f"{w}: {other} host {OE['routed_host']} must not be routed by the {envname} service")
+        mw = x.get("middlewares", [])
+        if E["operator_only"] and "uplink-operators" not in mw: fail(f"{w}: domain must carry middleware uplink-operators (operator-only staging)")
+        if not E["operator_only"] and "uplink-operators" in mw: fail(f"{w}: the production domain must not carry the operator-only middleware")
+        if x.get("https") is not True or x.get("port") != 3000: fail(f"{w}: domain must be https on port 3000")
+    check_resources(a.get("resources"), L["app"], w + ".resources")
     dep = a.get("deploy", {})
-    check_keys(dep, DEPLOY_ALLOWED, "02.deploy")
-    if dep.get("replicas") != 1: fail("02: replicas must be 1")
+    check_keys(dep, DEPLOY_ALLOWED, w + ".deploy")
+    if dep.get("replicas") != 1: fail(f"{w}: replicas must be 1")
+for _e in ENVS: check_app(_e)
 
 # ---- 01 middleware ----
 t = load("01-middleware-uplink-operators.createMiddleware.json"); scan_placeholders("01-middleware", t)
@@ -137,46 +149,87 @@ if not mc or int(mc.group(1)) < 11 + 5: fail("03: max_connections too small for 
 sb = re.search(r"shared_buffers=(\d+)GB", cmd)
 if sb and int(sb.group(1)) * 1024 > L["db"]["memoryLimit"] * 0.3: fail("03: shared_buffers above 30 percent of the memory limit")
 
-# ---- env template vs contract ----
-t = load("uplink-app.env.template"); scan_placeholders("env.template", t, allow=("{{OWNER_ENTERS}}",))   # secret markers stay: the owner types those values himself
-env, order = {}, []
-for ln in t.splitlines():
-    if not ln.strip() or ln.lstrip().startswith("#"): continue
-    if "=" not in ln: continue                          # a bare pending line such as {{CODEX_READINESS_PATH_NOTE}}
-    k, v = ln.split("=", 1)
-    if k in env: fail(f"env.template: duplicate key {k}")
-    env[k] = v; order.append(k)
-for k, v in contract["expected_config"].items():
-    if k not in env: fail(f"env.template: missing required key {k}")
-    elif env[k] != v: fail(f"env.template: {k}={env[k]!r} expected {v!r}")
-for k in contract["owner_value_keys"]:
-    if k not in env: fail(f"env.template: missing owner key {k}")
-for k in contract["secret_keys"]:
-    if k not in env: fail(f"env.template: missing secret key name {k}")
-    elif env[k] != "{{OWNER_ENTERS}}": fail(f"env.template: {k} must carry only the OWNER_ENTERS marker (a value would be a secret in a file)")
-for k in env:
-    if k in contract["forbidden_keys"] or any(k.startswith(p) for p in contract["forbidden_key_prefixes"]):
-        fail(f"env.template: forbidden key {k} (integration/AI/SMTP/billing must be absent)")
-    for bad in contract["forbidden_value_substrings"]:
-        if bad.lower() in env[k].lower(): fail(f"env.template: {k} value contains forbidden substring {bad!r}")
-# origin (r3.1): the Codex source (canonicalAppOrigin) throws unless PLATFORM_APP_URL, AUTH_URL/NEXTAUTH_URL and NEXT_PUBLIC_APP_URL are ONE origin,
-# and that origin must be a host this app is actually routed on (auth/redirects are built from it).
+# ---- environment templates (one per environment) vs contract ----
 host = lambda u: re.sub(r"^https?://", "", u).split("/")[0]
-O = contract["origin"]
-for k in O["keys_must_equal"]:
-    if k not in env: fail(f"env.template: missing origin key {k}")
-canon = env.get(O["keys_must_equal"][0], "")
-for k in O["keys_must_equal"] + [k for k in O["optional_equal_keys"] if k in env]:
-    if env.get(k) != canon: fail(f"env.template: {k}={env.get(k)!r} differs from {O['keys_must_equal'][0]}={canon!r} (the Codex source throws on mismatched origins; one canonical origin only)")
-routed = [x.get("host") for x in svcs[0]["data"].get("domains", [])] if len(svcs) == 1 else []
-if not PLACEHOLDER.search(canon):
-    if canon not in O["allowed_origins"]: fail(f"env.template: canonical origin {canon!r} is not an Uplink origin")
-    if O["canonical_host_must_be_routed_to_the_app"] and host(canon) not in routed: fail(f"env.template: canonical origin host {host(canon)!r} is not routed to the app (routed: {routed}); auth and redirects would target an unrouted host")
-if O["optional_host_list_key"] in env:
-    allowed_hosts = {host(o) for o in O["allowed_origins"]}
-    for h in [x.strip() for x in env[O["optional_host_list_key"]].split(",") if x.strip()]:
-        if h not in allowed_hosts: fail(f"env.template: {O['optional_host_list_key']} host {h!r} is not an Uplink host")
-if env.get("WORKSPACE_BASE_DOMAIN") != contract["production_host"]: fail("env.template: WORKSPACE_BASE_DOMAIN must be uplink.epic.dm")
+O = contract["origin"]; ENVVALS = {}
+def check_env(envname):
+    E = ENVS[envname]; fn = E["env_template"]
+    t = load(fn); scan_placeholders(fn, t, allow=("{{OWNER_ENTERS}}",))   # secret markers stay: the owner types those values himself
+    env = {}
+    for ln in t.splitlines():
+        if not ln.strip() or ln.lstrip().startswith("#"): continue
+        if "=" not in ln: continue                          # a bare pending line such as {{CODEX_READINESS_PATH_NOTE}}
+        k, v = ln.split("=", 1)
+        if k in env: fail(f"{fn}: duplicate key {k}")
+        env[k] = v
+    for k, v in contract["expected_config"].items():
+        if k not in env: fail(f"{fn}: missing required key {k}")
+        elif env[k] != v: fail(f"{fn}: {k}={env[k]!r} expected {v!r}")
+    for k in contract["owner_value_keys"]:
+        if k not in env: fail(f"{fn}: missing owner key {k}")
+    for k in contract["secret_keys"]:
+        if k not in env: fail(f"{fn}: missing secret key name {k}")
+        elif env[k] != "{{OWNER_ENTERS}}": fail(f"{fn}: {k} must carry only the OWNER_ENTERS marker (a value would be a secret in a file)")
+    for k in env:
+        if k in contract["forbidden_keys"] or any(k.startswith(p) for p in contract["forbidden_key_prefixes"]):
+            fail(f"{fn}: forbidden key {k} (integration/AI/SMTP/billing must be absent)")
+        for bad in contract["forbidden_value_substrings"]:
+            if bad.lower() in env[k].lower(): fail(f"{fn}: {k} value contains forbidden substring {bad!r}")
+    # origin: the four keys agree within the environment AND equal this environment's origin (PM ruling v2.8; the Codex source throws on a mismatch),
+    # and that origin's host is the host the environment's app service is routed on
+    for k in O["keys_must_equal"]:
+        if k not in env: fail(f"{fn}: missing origin key {k}")
+    for k in O["keys_must_equal"] + [k for k in O["optional_equal_keys"] if k in env]:
+        if env.get(k) != E["origin"]: fail(f"{fn}: {k}={env.get(k)!r} must equal the {envname} origin {E['origin']!r} (all four origin keys agree within an environment)")
+    if host(E["origin"]) not in ROUTED.get(envname, []): fail(f"{fn}: origin host {host(E['origin'])!r} is not routed by the {envname} app (routed: {ROUTED.get(envname)}); auth and redirects would target an unrouted host")
+    if O["optional_host_list_key"] in env:
+        for h in [x.strip() for x in env[O["optional_host_list_key"]].split(",") if x.strip()]:
+            if h != host(E["origin"]): fail(f"{fn}: {O['optional_host_list_key']} host {h!r} is not the {envname} host (no alias host is authorized in r3.2)")
+    if env.get("WORKSPACE_BASE_DOMAIN") != contract["production_host"]: fail(f"{fn}: WORKSPACE_BASE_DOMAIN must be uplink.epic.dm")
+    ENVVALS[envname] = env
+for _e in ENVS: check_env(_e)
+S_, P_ = ENVVALS.get("staging", {}), ENVVALS.get("production", {})
+if set(S_) != set(P_): fail(f"staging and production templates define different keys: {sorted(set(S_) ^ set(P_))}")
+_allowed = set(O["keys_must_equal"]) | set(O["optional_equal_keys"]) | {O["optional_host_list_key"]}
+_diff = {k for k in S_ if k in P_ and S_[k] != P_[k]}
+if _diff - _allowed: fail(f"staging and production templates differ outside the origin keys: {sorted(_diff - _allowed)} (same inputs, different public origin only)")
+
+# ---- Codex image/receipt contract: two origin-specific images from one source commit; every Codex-owned field explicit and fail-closed ----
+IC = contract["image_contract"]
+t = load(IC["file"]); scan_placeholders(IC["file"], t); ic = json.loads(t)
+imgs = ic.get("images", {})
+if set(imgs) != set(ENVS): fail(f"{IC['file']}: images must define exactly {sorted(ENVS)}")
+sc = ic.get("source_commit", "")
+if not PLACEHOLDER.search(sc) and not re.fullmatch(r"[0-9a-f]{40}", sc): fail(f"{IC['file']}: source_commit must be a 40-hex commit (one commit for both images)")
+res_dg, res_tag = {}, {}
+for e, E in ENVS.items():
+    im = imgs.get(e, {})
+    if im.get("public_url") != E["origin"]: fail(f"{IC['file']}: {e} public_url must be {E['origin']} (the build argument baked into the image)")
+    if im.get("repository") != IC["repository"]: fail(f"{IC['file']}: {e} repository must be {IC['repository']}")
+    dg = im.get("digest", "")
+    if not PLACEHOLDER.search(dg):
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", dg): fail(f"{IC['file']}: {e} digest must be sha256:<64 hex>")
+        else:
+            res_dg[e] = dg
+            if e in APP_DIGEST and APP_DIGEST[e] != dg.split(":", 1)[1]: fail(f"{IC['file']}: {e} digest differs from the digest in {E['app_json']}")
+    tg = im.get("tag", "")
+    if not PLACEHOLDER.search(tg):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", tg) or tg in ("latest", "main", "master", "dev", "stable"): fail(f"{IC['file']}: {e} tag {tg!r} is not an immutable-style tag")
+        elif not PLACEHOLDER.search(sc) and tg == "uplink-phase1-" + sc: fail(f"{IC['file']}: {e} tag is the source-only tag; origin-specific tags are required so the second build cannot overwrite the first")
+        else: res_tag[e] = tg
+if len(res_dg) == len(ENVS) and len(set(res_dg.values())) != len(res_dg): fail(f"{IC['file']}: staging and production images must be different builds (different digests)")
+if len(res_tag) == len(ENVS) and len(set(res_tag.values())) != len(res_tag): fail(f"{IC['file']}: staging and production tags must differ")
+rp = ic.get("readiness_path", "")
+if not PLACEHOLDER.search(rp) and not re.fullmatch(r"/[A-Za-z0-9_./-]*", rp): fail(f"{IC['file']}: readiness_path must be an absolute path without query or credentials")
+if not ic.get("fixture_command"): fail(f"{IC['file']}: fixture_command must be present (placeholder until the Codex receipt)")
+for an, av in ic.get("adapters", {}).items():
+    for part in ("key", "value"):
+        if not av.get(part): fail(f"{IC['file']}: adapters.{an}.{part} must be present (placeholder until the Codex receipt)")
+for an in ("ai_mode", "chatwoot_flag", "voice_flag"):
+    if an not in ic.get("adapters", {}): fail(f"{IC['file']}: adapters.{an} missing")
+for e in ENVS:
+    for part in ("workflow_run_urls",):
+        if e not in ic.get(part, {}): fail(f"{IC['file']}: {part}.{e} missing")
 if len(contract["pending_codex_keys"]) and MODE == "final": fail("contract.json: pending_codex_keys must be substituted from the Codex receipt")
 for pk in contract["pending_codex_keys"]: pending.append(f"contract: {pk['key']} ({pk['purpose']})")
 
