@@ -8,6 +8,13 @@ const nextConfig: NextConfig = {
   // tsc post-build check to stop whack-a-mole on third-party type artifacts.
   typescript: { ignoreBuildErrors: true },
   reactCompiler: true,
+  // `pg` (opt-in self-hosted pooled driver, src/db/index.ts) is node-only. A few
+  // client components reach `@/db` transitively; keep pg out of browser bundles.
+  turbopack: {
+    resolveAlias: {
+      pg: { browser: "./src/db/pg-browser-stub.ts" },
+    },
+  },
   allowedDevOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345"],
   experimental: {
     serverActions: {
