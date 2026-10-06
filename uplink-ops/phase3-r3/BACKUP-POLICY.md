@@ -1,0 +1,19 @@
+# Uplink backup policy r3 (EasyPanel-managed; corrects the TTL-only retention of r2)
+
+## Why the earlier semantics were wrong
+A 14-day/56-day expiry rule does not prove 14 daily and 8 weekly successful restore points. After any outage longer than the window, an age-only expiry deletes every older good backup and leaves ZERO restore points (tools/backup_audit.py --selftest reproduces this: after a 20-day outage a 14-day TTL leaves 0 daily points). Retention must be a COUNT of successful points, expiry only a safe backstop, and a missing job must be visible.
+
+## Policy
+1. Separate EasyPanel backup entries on uplink-db (08-uplink-backup-config.createDatabaseBackup.json):
+   - daily: schedule `15 2 * * *`, storageProviderPath `uplink/daily`, retention 14;
+   - weekly: schedule `15 3 * * 0`, storageProviderPath `uplink/weekly`, retention 8.
+   `retention` is EasyPanel's native count of backups kept per entry. Whether EasyPanel counts only successful runs is UNPROVEN; the policy does not rely on it.
+2. A restore point is an object under its prefix with size >= 20,000 bytes (the approved baseline dump is ~331 KB). Zero/tiny objects are failed backups and are not counted.
+3. Successful-backup counting: tools/backup_audit.py counts distinct UTC days (daily) and ISO weeks (weekly) of good objects. Required counts are min(14, days since service start) and min(8, weeks since start) so a young system is not falsely failed; once old enough it must show 14 and 8.
+4. Missing-job alerts: newest good daily older than 26 h, newest good weekly older than 8 days, any missing calendar day in the 14-day window, or a shortfall in either count -> `AUDIT FAIL`. The audit runs in an EasyPanel-managed service (Box scheduled script preferred, or 07 managed app loop) and also offline on demand. There is no push channel in EasyPanel: failures surface in portal status/restarts/logs (control map G1).
+5. Safe expiration: bucket lifecycle expiry is NOT used as retention. If the owner wants a backstop it must be much longer than the window (suggested daily 60 d, weekly 240 d) and never shorter than 3x the required window. Pruning beyond the counts uses `backup_audit.py --prune-plan`, which is dry-run only and proposes candidates solely when the newest N good points exist; deletion, if ever wanted, is a separate owner action.
+6. Off-host restore proof: before production cutover, restore backup #0 through the portal (`restoreDatabaseBackup`) into the disposable EasyPanel Postgres uplink-restore-check, run the verify job (counts + zero rows), witnessed by QA. The object must exist in the off-host destination (owner/witness confirmation; Lane A has no storage credential). Repeat after the first scheduled run and weekly until 72 h soak ends (plan phase 6): a restore proof older than 35 days is a failed requirement.
+7. Encryption and authorization of the destination are provider-side: EasyPanel backups are not client-side encrypted. The owner must confirm in the provider console: (a) the bucket/space encrypts at rest, (b) Uplink backups may live there and the prefixes uplink/daily and uplink/weekly are only reachable by the backup key, (c) a separate READ-ONLY key exists for the audit. Until confirmed, "encrypted off-host backup" is NOT claimed. Candidate destination: EasyPanel storage provider "DO Spaces (isola-easypanel-backups)" (id cmsmfjqpc000207oi2idd4rxl, found with the secret-safe listStorageProviderOptions; its settings were not read).
+
+## Acceptance evidence for the backup requirement
+`listDatabaseBackups` shows both entries; at least one scheduled run per entry observed as an object; audit verdict PASS with real counts for the elapsed period; disposable restore proof with witness; owner confirmation of provider encryption/authorization; audit service/Box job visible in the portal with a recorded failing-case demonstration on staging (point the audit at a prefix with too few objects and show AUDIT FAIL).

@@ -1,0 +1,83 @@
+STAMP=20261006T135529Z NAME=uplink-r3-rehearsal-20261006T135529Z IMAGE=postgres:16.15@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65
+baseline_sha256=8f9922e3ead013557a21427468f8392d20784d6d78bec839ae1e4cdb43dba8b8 bytes=195441
+RESULT PASS baseline hash equals approved candidate (8f9922e3ead013557a21427468f8392d20784d6d78bec839ae1e4cdb43dba8b8)
+image_id=sha256:65b16a8b326e server=pinned-by-digest
+RESULT PASS disposable PostgreSQL ready (16.15)
+--- container cpu/mem limits: 536870912 bytes mem, cpu.max 100000 100000
+RESULT PASS no published ports (0)
+RESULT PASS network mode none (none)
+== 1 empty target
+RESULT PASS empty before import: tables (0)
+== 2 single-transaction import
+import ok
+RESULT PASS import exit code (0)
+import_seconds=0.85
+RESULT PASS after import: tables (117)
+RESULT PASS after import: explicit_indexes (231)
+RESULT PASS after import: constraints (312)
+RESULT PASS after import: rows (0)
+RESULT PASS after import: sequences (0)
+RESULT PASS after import: views (0)
+RESULT PASS after import: functions (0)
+RESULT PASS after import: triggers (0)
+RESULT PASS after import: schemas (1)
+RESULT PASS after import: extensions (plpgsql)
+schema_hash_import=b3e0fe2997db28b10bf40a358cc1b8b52033c857e63bb21f28c6ad32820e9568
+schema_hash_empty_control=d4f0948bf864a133f5bf608bae4e732a9da79e78393a480d959a00b3939cbbd5
+RESULT PASS control: an empty schema hashes differently from the baseline (equality checks below are not vacuous)
+== 3 repeatability: second fresh database
+import ok
+RESULT PASS second import exit code (0)
+RESULT PASS second database schema hash equals first (b3e0fe2997db28b10bf40a358cc1b8b52033c857e63bb21f28c6ad32820e9568)
+== 4 backup #0 and restore into a second database
+dump_sha256=cb5c71604b5ed9381e5193df1f241e29a43ee0a1d2f8b83412f9f4fac11e78e7
+dump_bytes=331316
+list_table_entries=117
+RESULT PASS pg_restore --list table entries (117)
+restore ok
+RESULT PASS restore exit code (0)
+restore_seconds=0.76
+RESULT PASS restored: tables (117)
+RESULT PASS restored: explicit_indexes (231)
+RESULT PASS restored: constraints (312)
+RESULT PASS restored: rows (0)
+RESULT PASS restored: schemas (1)
+RESULT PASS restored: extensions (plpgsql)
+RESULT PASS restored schema hash equals source (b3e0fe2997db28b10bf40a358cc1b8b52033c857e63bb21f28c6ad32820e9568)
+== 5 deliberate failed import rolls back
+RESULT PASS failing import fails with the psql ON_ERROR_STOP exit code (3)
+RESULT PASS after failed import: tables rolled back to 0 (0)
+-- positive control: the same bad file WITHOUT the single transaction leaves a partial schema (proves the check can see partial imports)
+RESULT PASS non-transactional failing import fails with the psql ON_ERROR_STOP exit code (3)
+RESULT PASS control: partial import leaves 117 tables (rollback result above is therefore meaningful)
+-- retry after the failure (runbook 2.6): good baseline into the rolled-back database
+import ok
+RESULT PASS retry import exit code (0)
+RESULT PASS retry: tables (117)
+-- refusal controls
+RESULT PASS wrong hash is refused (rc 13) (13)
+RESULT PASS non-empty target is refused (rc 14) (14)
+== 6 corrupted backup is rejected
+RESULT PASS truncated dump file exists and is smaller than the real dump (yes)
+RESULT PASS truncated dump rejected by pg_restore (rc=1)
+RESULT PASS truncated restore left no tables (0)
+== 6b EasyPanel job script (uplink_job.sh) exercised exactly as the managed job will run it
+RESULT PASS job import into an empty database exits 0 (0)
+RESULT PASS job reported the single-transaction import (1)
+RESULT PASS job re-run is idempotent (exit 0, verifies instead of importing) (0)
+RESULT PASS job re-run did not import again (1)
+RESULT PASS verify mode accepts the restored database (0)
+RESULT PASS negative control: verify rejects an empty database (1)
+RESULT PASS negative control: job refuses a database that is neither empty nor the baseline (1)
+RESULT PASS refusal message names the reason (1)
+RESULT PASS negative control: job refuses a baseline whose hash differs (1)
+RESULT PASS hash refusal message (1)
+RESULT PASS negative control: a hash-approved but failing file is rolled back by the job (exit 1) (1)
+RESULT PASS failed job left the database empty (0)
+RESULT PASS job output never contains the password (0)
+== 7 secrets hygiene of this run
+RESULT PASS password absent from container logs
+== 8 self-cleaning stop (no teardown command)
+RESULT PASS no container with this stamp remains (0)
+SUMMARY pass=54 fail=0 stamp=20261006T135529Z
+rc=0

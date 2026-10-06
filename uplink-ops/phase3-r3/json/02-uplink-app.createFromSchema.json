@@ -1,0 +1,39 @@
+{
+  "procedure": "createFromSchema",
+  "input": {
+    "projectName": "uplink",
+    "name": "uplink-staging-app-r3",
+    "schema": {
+      "services": [
+        {
+          "type": "app",
+          "data": {
+            "serviceName": "uplink-app",
+            "source": {
+              "type": "image",
+              "image": "ghcr.io/epicdm/isola-seldonframe@sha256:{{UPLINK_APP_IMAGE_DIGEST_HEX}}"
+            },
+            "domains": [
+              {
+                "host": "build.uplink.epic.dm",
+                "port": 3000,
+                "https": true,
+                "middlewares": ["uplink-operators"]
+              }
+            ],
+            "resources": {
+              "cpuLimit": 2,
+              "cpuReservation": 0.5,
+              "memoryLimit": 3072,
+              "memoryReservation": 1024
+            },
+            "deploy": {
+              "replicas": 1,
+              "zeroDowntime": true
+            }
+          }
+        }
+      ]
+    }
+  }
+}

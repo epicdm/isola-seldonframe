@@ -1,0 +1,26 @@
+{
+  "procedure": "createFromSchema",
+  "input": {
+    "projectName": "uplink",
+    "name": "uplink-restore-verify-job-r3",
+    "schema": {
+      "services": [
+        {
+          "type": "app",
+          "data": {
+            "serviceName": "uplink-restore-verify",
+            "source": {
+              "type": "image",
+              "image": "postgres:16.15@sha256:{{PG_IMAGE_DIGEST_HEX}}"
+            },
+            "mounts": [
+              {"type": "file", "mountPath": "/uplink/uplink_job.sh", "content": "{{JOB_SCRIPT_CONTENT}}"}
+            ],
+            "resources": {"cpuLimit": 0.5, "cpuReservation": 0.1, "memoryLimit": 512, "memoryReservation": 128},
+            "deploy": {"replicas": 1, "zeroDowntime": false, "command": "sh /uplink/uplink_job.sh verify"}
+          }
+        }
+      ]
+    }
+  }
+}

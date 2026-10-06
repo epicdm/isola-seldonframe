@@ -1,0 +1,28 @@
+{
+  "_status": "PROPOSAL needing owner/Delivery PM approval (EasyPanel-compatible solution for a recurring audit; EasyPanel has no scheduler procedure). The service lists backup objects with a READ-ONLY storage key the owner enters and logs the audit verdict; a failing verdict exits non-zero so the portal shows restarts.",
+  "procedure": "createFromSchema",
+  "input": {
+    "projectName": "uplink",
+    "name": "uplink-backup-audit-r3",
+    "schema": {
+      "services": [
+        {
+          "type": "app",
+          "data": {
+            "serviceName": "uplink-backup-audit",
+            "source": {
+              "type": "dockerfile",
+              "dockerfile": "FROM python:3.12-slim@sha256:{{PYTHON_IMAGE_DIGEST_HEX}}\nRUN pip install --no-cache-dir awscli=={{AWSCLI_VERSION}}\n"
+            },
+            "mounts": [
+              {"type": "file", "mountPath": "/uplink/backup_audit.py", "content": "{{AUDIT_SCRIPT_CONTENT}}"},
+              {"type": "file", "mountPath": "/uplink/audit_loop.sh", "content": "{{AUDIT_LOOP_CONTENT}}"}
+            ],
+            "resources": {"cpuLimit": 0.25, "cpuReservation": 0.05, "memoryLimit": 256, "memoryReservation": 64},
+            "deploy": {"replicas": 1, "zeroDowntime": false, "command": "sh /uplink/audit_loop.sh"}
+          }
+        }
+      ]
+    }
+  }
+}

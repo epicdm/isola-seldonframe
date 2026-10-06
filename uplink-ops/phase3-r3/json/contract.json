@@ -1,0 +1,53 @@
+{
+  "_comment": "Uplink deployment contract r3. Single source for validate_package.py and env_names_check.sh. Keys in section 'plan' come from master plan v2.2 section 3; nothing here is invented. Keys the Codex Phase 1 contract will define are listed under pending_codex_keys and make final-mode validation FAIL until filled.",
+  "plan_version": "2.2",
+  "limits": {
+    "app": {"cpuLimit": 2, "memoryLimit": 3072, "cpuReservation": 0.5, "memoryReservation": 1024},
+    "db": {"cpuLimit": 2, "memoryLimit": 4096, "cpuReservation": 0.5, "memoryReservation": 1024}
+  },
+  "staging_host": "build.uplink.epic.dm",
+  "production_host": "uplink.epic.dm",
+  "baseline": {
+    "sha256": "8f9922e3ead013557a21427468f8392d20784d6d78bec839ae1e4cdb43dba8b8",
+    "tables": 117,
+    "explicit_indexes": 231,
+    "constraints": 312,
+    "rows": 0
+  },
+  "postgres_image_candidate": "postgres:16.15@sha256:65b16a8b326e0cfbdf33fa7e783f2a0cb352a61448616ccccfd616ef42aa0f65",
+  "expected_config": {
+    "DB_DRIVER": "pg",
+    "DB_POOL_MAX": "10",
+    "PORT": "3000",
+    "NODE_ENV": "production",
+    "NEXT_PUBLIC_APP_URL": "https://uplink.epic.dm",
+    "AUTH_URL": "https://build.uplink.epic.dm",
+    "NEXTAUTH_URL": "https://build.uplink.epic.dm",
+    "AUTH_TRUST_HOST": "true",
+    "APP_HOSTS": "build.uplink.epic.dm",
+    "WORKSPACE_BASE_DOMAIN": "uplink.epic.dm",
+    "SHOW_VENDOR_BRANDING": "false",
+    "PLATFORM_NAME": "Uplink",
+    "PLATFORM_APP_URL": "https://build.uplink.epic.dm",
+    "PLATFORM_HOME_URL": "https://uplink.epic.dm",
+    "PLATFORM_EMAIL_FROM_NAME": "Uplink by EPIC",
+    "PLATFORM_EMAIL_FOOTER": "Uplink by EPIC Communications"
+  },
+  "owner_value_keys": ["PLATFORM_SUPPORT_EMAIL", "PLATFORM_LOGO_URL", "PLATFORM_FAVICON_URL"],
+  "secret_keys": ["DATABASE_URL", "AUTH_SECRET", "NEXTAUTH_SECRET", "ENCRYPTION_KEY"],
+  "forbidden_keys": [
+    "NEON_LOCAL_HOST", "NEON_LOCAL_PORT", "DATABASE_URL_APP",
+    "SMTP2GO_API_KEY", "PORTAL_EMAIL_FROM", "RESEND_API_KEY", "AUTH_RESEND_KEY", "AUTH_RESEND_FROM",
+    "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
+    "SF_VOICE_CONTEXT_ALLOWLIST", "FOLLOW_UP_RESPONDER_EMAIL"
+  ],
+  "forbidden_key_prefixes": ["STRIPE_", "TWILIO_", "CHATWOOT_", "SMTP"],
+  "forbidden_value_substrings": ["localhost", "seldonframe", "deepseek", "agents.epic.dm", "front.isola.epic.dm", "100.117."],
+  "pending_codex_keys": [
+    {"purpose": "readiness endpoint path used by the image HEALTHCHECK", "key": "{{CODEX_READINESS_PATH}}"},
+    {"purpose": "AI provider mode = simulator/disabled", "key": "{{CODEX_AI_MODE_KEY}}", "value": "{{CODEX_AI_MODE_VALUE}}"},
+    {"purpose": "Chatwoot adapter disabled flag", "key": "{{CODEX_CHATWOOT_FLAG_KEY}}", "value": "{{CODEX_CHATWOOT_FLAG_VALUE}}"},
+    {"purpose": "EPIC voice adapter disabled flag", "key": "{{CODEX_VOICE_FLAG_KEY}}", "value": "{{CODEX_VOICE_FLAG_VALUE}}"}
+  ],
+  "pending_note": "Do not invent these names. Substitute only from the Codex Phase 1 receipt configuration contract."
+}

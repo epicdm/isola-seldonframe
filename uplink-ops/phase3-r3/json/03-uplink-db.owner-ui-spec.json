@@ -1,0 +1,22 @@
+{
+  "_purpose": "Field values the OWNER types into the EasyPanel UI when creating the uplink-db Postgres service. NOT an API call: a create call returns the generated password in plaintext, so agents must not run it. Shape matches the createFromSchema postgres data block, minus password.",
+  "project": "uplink",
+  "service": {
+    "type": "postgres",
+    "data": {
+      "serviceName": "uplink-db",
+      "databaseName": "uplink",
+      "user": "uplink",
+      "image": "postgres:16.15@sha256:{{PG_IMAGE_DIGEST_HEX}}",
+      "command": "postgres -c max_connections=100 -c shared_buffers=1GB -c effective_cache_size=2GB -c work_mem=8MB -c maintenance_work_mem=128MB -c password_encryption=scram-sha-256 -c log_min_duration_statement=500 -c log_connections=on -c log_disconnections=on -c idle_in_transaction_session_timeout=60000",
+      "resources": {
+        "cpuLimit": 2,
+        "cpuReservation": 0.5,
+        "memoryLimit": 4096,
+        "memoryReservation": 1024
+      },
+      "dbGate": {"enabled": false},
+      "pgWeb": {"enabled": false}
+    }
+  }
+}
