@@ -11,19 +11,20 @@ test("fixture set is the four synthetic offer/workspace rows", () => {
 
 test("fixture command requires explicit opt-in and loopback in non-production", () => {
   assert.throws(() => assertUplinkFixtureTarget({}), /UPLINK_FIXTURES=enabled/);
+  assert.throws(() => assertUplinkFixtureTarget({ UPLINK_FIXTURES: "enabled" }), /DB_DRIVER=pg/);
   assert.throws(() => assertUplinkFixtureTarget({
-    UPLINK_FIXTURES: "enabled", DATABASE_URL: "postgres://hosted-db/app",
+    UPLINK_FIXTURES: "enabled", DB_DRIVER: "pg", DATABASE_URL: "postgres://hosted-db/app",
     PLATFORM_APP_URL: "http://localhost:3000", NODE_ENV: "test",
   }), /loopback/);
   assert.doesNotThrow(() => assertUplinkFixtureTarget({
-    UPLINK_FIXTURES: "enabled", DATABASE_URL: "postgres://localhost/app",
+    UPLINK_FIXTURES: "enabled", DB_DRIVER: "pg", DATABASE_URL: "postgres://localhost/app",
     PLATFORM_APP_URL: "http://localhost:3000", NODE_ENV: "test",
   }));
 });
 
 test("production fixture command accepts only the named staging app and database", () => {
   const base = {
-    UPLINK_FIXTURES: "enabled", UPLINK_FIXTURE_TARGET: "staging", NODE_ENV: "production",
+    UPLINK_FIXTURES: "enabled", DB_DRIVER: "pg", UPLINK_FIXTURE_TARGET: "staging", NODE_ENV: "production",
     DATABASE_URL: "postgres://uplink-db/app", PLATFORM_APP_URL: "https://build.uplink.epic.dm",
   };
   assert.doesNotThrow(() => assertUplinkFixtureTarget(base));
