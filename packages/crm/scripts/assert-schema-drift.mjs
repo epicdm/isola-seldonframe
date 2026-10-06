@@ -108,22 +108,67 @@ async function fetchLiveColumns(sql, required) {
   return new Set(rows.map((r) => `${r.table_name}.${r.column_name}`));
 }
 
+export function resolveDriftDriver(env = process.env) {
+  const driver = env.DB_DRIVER?.trim();
+  if (!driver || driver === "neon") return "neon";
+  if (driver === "pg") return "pg";
+  throw new Error(`Unsupported DB_DRIVER: ${driver}`);
+}
+
+export async function fetchLiveColumnsPg(query, required) {
+  const tables = [...new Set(required.map((r) => r.table))];
+  const columns = [...new Set(required.map((r) => r.column))];
+  const { rows } = await query(
+    `SELECT table_name, column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = ANY($1::text[])
+        AND column_name = ANY($2::text[])`,
+    [tables, columns],
+  );
+  return new Set(rows.map((r) => `${r.table_name}.${r.column_name}`));
+}
+
 async function main() {
   if (!process.env.DATABASE_URL) {
     console.log("[assert-schema-drift] DATABASE_URL not set — skipping");
-    process.exit(0);
+    return 0;
   }
 
-  const sql = neon(process.env.DATABASE_URL);
-
+  let pool;
   let live;
   try {
-    live = await fetchLiveColumns(sql, CRITICAL_COLUMNS);
+    const driver = resolveDriftDriver();
+    if (driver === "pg") {
+      const { Pool } = await import("pg");
+      pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        max: 1,
+        connectionTimeoutMillis: 5_000,
+        idleTimeoutMillis: 1_000,
+        statement_timeout: 10_000,
+        allowExitOnIdle: true,
+      });
+      live = await fetchLiveColumnsPg(pool.query.bind(pool), CRITICAL_COLUMNS);
+    } else {
+      const sql = neon(process.env.DATABASE_URL);
+      live = await fetchLiveColumns(sql, CRITICAL_COLUMNS);
+    }
   } catch (err) {
-    // A DB we can't query is an environmental failure — fail loudly rather
-    // than let a build proceed without verifying schema.
-    console.error(`[assert-schema-drift] FATAL: could not query the database — ${err.message}`);
-    process.exit(1);
+    if (err instanceof Error && err.message.startsWith("Unsupported DB_DRIVER:")) {
+      console.error(`[assert-schema-drift] FATAL: ${err.message}`);
+    } else {
+      console.error("[assert-schema-drift] FATAL: could not query the database with the selected driver");
+    }
+    return 1;
+  } finally {
+    if (pool) {
+      try {
+        await pool.end();
+      } catch {
+        // Preserve the original check result; no connection details are logged.
+      }
+    }
   }
 
   const missing = missingColumns(live, CRITICAL_COLUMNS);
@@ -132,7 +177,7 @@ async function main() {
     console.log(
       `[assert-schema-drift] OK — all ${CRITICAL_COLUMNS.length} critical column(s) present.`,
     );
-    process.exit(0);
+    return 0;
   }
 
   console.error(
@@ -147,15 +192,13 @@ async function main() {
   }
   console.error("");
   console.error(
-    "A migration that adds one of these columns did not apply. This is the\n" +
-      "shape of bug behind both production outages. Apply the named migration\n" +
-      "(verify it's in meta/_journal.json — see check-migrations-journaled.mjs)\n" +
-      "before this build is allowed to deploy.",
+    "A migration that adds one of these columns did not apply. Verify it is in " +
+      "meta/_journal.json and apply the named migration before deployment.",
   );
-  process.exit(1);
+  return 1;
 }
 
 // Only run when invoked directly, not when imported by tests.
 const invokedDirectly =
   process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
-if (invokedDirectly) main();
+if (invokedDirectly) main().then((code) => { process.exitCode = code; });
