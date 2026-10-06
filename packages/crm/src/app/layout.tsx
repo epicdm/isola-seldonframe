@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { getPlatformBranding } from "@/lib/platform/branding";
 import { headers } from "next/headers";
 import { Geist, Geist_Mono, Hanken_Grotesk, Newsreader } from "next/font/google";
 import { DemoToastProvider } from "@/components/shared/demo-toast-provider";
@@ -44,33 +45,35 @@ const newsreader = Newsreader({
 // /brand/ (extracted from the canonical asset bundle in the brand
 // README). The legacy /logo.svg path is kept on disk for now (not
 // removed in this commit) but no longer referenced from layout meta.
+const platformBranding = getPlatformBranding();
+const defaultMetadataTitle = "SeldonFrame — Sell AI front offices. Deploy them in minutes.";
+const defaultMetadataDescription =
+  "The agent-native, open-source alternative to GoHighLevel for agencies selling AI front offices to local businesses. Deploy branded client workspaces, booking, CRM, intake, and agents from one repeatable delivery loop.";
+const metadataTitle = platformBranding.name === "SeldonFrame"
+  ? defaultMetadataTitle
+  : `${platformBranding.name} — Your communications, customers and AI front office`;
+const metadataDescription = platformBranding.name === "SeldonFrame"
+  ? defaultMetadataDescription
+  : "Your communications, customers and AI front office—running on infrastructure EPIC already operates.";
+
 export const metadata: Metadata = {
-  metadataBase: new URL("https://www.seldonframe.com"),
-  title: "SeldonFrame — Sell AI front offices. Deploy them in minutes.",
-  description:
-    "The agent-native, open-source alternative to GoHighLevel for agencies selling AI front offices to local businesses. Deploy branded client workspaces, booking, CRM, intake, and agents from one repeatable delivery loop.",
+  metadataBase: new URL(platformBranding.homeUrl),
+  title: metadataTitle,
+  description: metadataDescription,
   manifest: "/brand/manifest.webmanifest",
   icons: {
-    icon: [
-      { url: "/brand/seldonframe-favicon.svg", type: "image/svg+xml" },
-      { url: "/brand/favicon-32.png", sizes: "32x32", type: "image/png" },
-      { url: "/brand/favicon-16.png", sizes: "16x16", type: "image/png" },
-    ],
-    shortcut: "/brand/favicon.ico",
-    apple: [{ url: "/brand/favicon-180.png", sizes: "180x180" }],
+    icon: [{ url: platformBranding.faviconUrl }],
+    shortcut: platformBranding.faviconUrl,
+    apple: [{ url: platformBranding.faviconUrl }],
   },
   openGraph: {
-    title: "SeldonFrame — Sell AI front offices. Deploy them in minutes.",
-    description:
-      "The agent-native, open-source alternative to GoHighLevel for agencies selling AI front offices to local businesses.",
-    images: [{ url: "/brand/og-image.png", width: 1200, height: 630 }],
+    title: metadataTitle,
+    description: metadataDescription,
   },
   twitter: {
-    card: "summary_large_image",
-    title: "SeldonFrame — Sell AI front offices. Deploy them in minutes.",
-    description:
-      "Deploy branded client workspaces, booking, CRM, intake, and agents from one repeatable agency delivery loop.",
-    images: ["/brand/twitter-card.png"],
+    card: "summary",
+    title: metadataTitle,
+    description: metadataDescription,
   },
 };
 
