@@ -9,6 +9,7 @@ import { SoulProvider } from "@/components/soul/soul-provider";
 import { getSoul } from "@/lib/soul/server";
 import { getPersonality } from "@/lib/crm/personality-server";
 import { Sidebar } from "@/components/layout/sidebar";
+import { getPlatformBranding } from "@/lib/platform/branding";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { DemoBanner } from "@/components/layout/demo-banner";
 import { TestModeBanner } from "@/components/layout/test-mode-banner";
@@ -47,6 +48,8 @@ const WORKSPACE_BASE_DOMAIN =
     - shell wrapper: "h-svh overflow-hidden lg:p-2 w-full"
     - inner frame: "lg:border lg:rounded-md overflow-hidden flex flex-col items-center justify-start bg-container h-full w-full bg-background"
 */
+
+const platformBranding = getPlatformBranding();
 
 export default async function DashboardLayout({
   children,
@@ -308,7 +311,10 @@ export default async function DashboardLayout({
               blocks={blocks}
               canAccessSeldon={canAccessSeldon}
               hiddenBlocks={hiddenBlocks}
-              workspaceName={activeOrg?.name || "SeldonFrame"}
+              platformName={platformBranding.name}
+              platformLogoUrl={platformBranding.logoUrl || null}
+              showVendorBranding={platformBranding.showVendorBranding}
+              workspaceName={activeOrg?.name || platformBranding.name}
               // 2026-05-18 — workspace logo from theme.logoUrl. The
               // workspace SWITCHER tile shows the client's own per-
               // workspace logo (theme.logoUrl) — falling back to the
