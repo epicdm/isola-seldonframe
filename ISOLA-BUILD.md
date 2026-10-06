@@ -48,4 +48,8 @@ Canonical origin: `PLATFORM_APP_URL`, `NEXT_PUBLIC_APP_URL`, and `AUTH_URL` must
 
 Branding: `PLATFORM_NAME`, `PLATFORM_HOME_URL`, `PLATFORM_SUPPORT_EMAIL`, `PLATFORM_LOGO_URL`, `PLATFORM_FAVICON_URL`, `PLATFORM_EMAIL_FROM_NAME`, `PLATFORM_EMAIL_FOOTER`, `SHOW_VENDOR_BRANDING`.
 
+Integration contracts: `UPLINK_CHATWOOT_ENABLED=false` and `UPLINK_EPIC_VOICE_ENABLED=false` by default. This Phase 1 build has interfaces only; setting either flag true still fails closed as not implemented. No Chatwoot messages, voice calls, DID changes, recording or transcripts are enabled.
+
+Synthetic fixtures: `pnpm --filter @seldonframe/crm db:seed-uplink` creates the Personal Line, Business Front Office, agency-parent and isolated child-client records with `.invalid` users, no passwords, no customer data and integrations off. It requires `UPLINK_FIXTURES=enabled`; local use is restricted to loopback PostgreSQL. Production-mode fixture execution is restricted to `UPLINK_FIXTURE_TARGET=staging`, `PLATFORM_APP_URL=https://build.uplink.epic.dm`, and database host `uplink-db`. Existing slugs not marked by this fixture are rejected. The command is idempotent and transaction-scoped.
+
 Authentication/application: `AUTH_SECRET`, `ENCRYPTION_KEY`. Portal email may use `SMTP2GO_API_KEY` and `PORTAL_EMAIL_FROM`; follow-up routing may use `FOLLOW_UP_RESPONDER_EMAIL`. Do not configure secrets from source files or local build arguments.
