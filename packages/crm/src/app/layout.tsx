@@ -60,7 +60,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(platformBranding.homeUrl),
   title: metadataTitle,
   description: metadataDescription,
-  manifest: "/brand/manifest.webmanifest",
+  manifest: platformBranding.showVendorBranding ? "/brand/manifest.webmanifest" : undefined,
   icons: platformBranding.faviconUrl
     ? {
         icon: [{ url: platformBranding.faviconUrl }],
