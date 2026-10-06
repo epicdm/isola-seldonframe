@@ -1,5 +1,8 @@
 import { neon, neonConfig } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
+import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
+import { resolvePoolConfig } from "./pool-config";
 import * as schema from "./schema";
 
 const databaseUrl =
@@ -20,8 +23,32 @@ if (process.env.NEON_LOCAL_HOST) {
   neonConfig.poolQueryViaFetch = true;
 }
 
-const sql = neon(databaseUrl);
+// Self-hosted pooled path (opt-in). The Neon local HTTP proxy authenticates
+// every HTTP request with a fresh SCRAM handshake (~250 ms), which dominates
+// page latency on query-heavy renders. DB_DRIVER=pg talks to Postgres directly
+// over a small, long-lived node-postgres pool instead. It is only honoured when
+// NEON_LOCAL_HOST is set (i.e. self-hosted); production Neon is unaffected.
+// Unset DB_DRIVER (the default) keeps the neon-http path above, byte-identical.
+const poolConfig = resolvePoolConfig(process.env);
 
-export const db = drizzle(sql, { schema, casing: "snake_case" });
+type GlobalWithPool = typeof globalThis & { __sfPgPool?: Pool };
+
+function createDb() {
+  if (poolConfig) {
+    const g = globalThis as GlobalWithPool;
+    // Singleton across Next.js dev reloads / module re-evaluation so the pool
+    // (and its connections) is never duplicated within one process.
+    g.__sfPgPool ??= new Pool({ connectionString: databaseUrl, ...poolConfig });
+    g.__sfPgPool.on("error", (err) => {
+      console.error("[db] idle pool client error", err.message);
+    });
+    return drizzlePg(g.__sfPgPool, { schema, casing: "snake_case" }) as unknown as NeonDb;
+  }
+  return drizzle(neon(databaseUrl), { schema, casing: "snake_case" });
+}
+
+type NeonDb = ReturnType<typeof drizzle<typeof schema>>;
+
+export const db: NeonDb = createDb();
 
 export type DbClient = typeof db;

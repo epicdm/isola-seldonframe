@@ -145,18 +145,32 @@ export async function applyTemplateGeneralizationAction(input: {
         // transaction over Neon's HTTP endpoint) — this is what makes the
         // blueprint rewrite + every author-deployment back-fill land as a
         // single all-or-nothing unit, per the never-lies contract.
-        const templateUpdate = db
-          .update(agentTemplates)
-          .set({ blueprint: nextBlueprint, updatedAt: new Date() })
-          .where(eq(agentTemplates.id, templateId));
-
-        const deploymentQueries = deploymentUpdates.map((update) =>
-          db
+        const stamp = new Date();
+        const buildTemplate = (d: typeof db) =>
+          d
+            .update(agentTemplates)
+            .set({ blueprint: nextBlueprint, updatedAt: stamp })
+            .where(eq(agentTemplates.id, templateId));
+        const buildDeployment = (d: typeof db, update: (typeof deploymentUpdates)[number]) =>
+          d
             .update(deployments)
-            .set({ customization: update.customization, updatedAt: new Date() })
-            .where(eq(deployments.id, update.id)),
-        );
+            .set({ customization: update.customization, updatedAt: stamp })
+            .where(eq(deployments.id, update.id));
 
+        // Self-hosted pooled driver (DB_DRIVER=pg) has no `db.batch` but does
+        // support real transactions - same all-or-nothing unit.
+        if (typeof (db as { batch?: unknown }).batch !== "function") {
+          await db.transaction(async (tx) => {
+            await buildTemplate(tx as unknown as typeof db);
+            for (const update of deploymentUpdates) {
+              await buildDeployment(tx as unknown as typeof db, update);
+            }
+          });
+          return;
+        }
+
+        const templateUpdate = buildTemplate(db);
+        const deploymentQueries = deploymentUpdates.map((update) => buildDeployment(db, update));
         await db.batch([templateUpdate, ...deploymentQueries] as [
           typeof templateUpdate,
           ...typeof deploymentQueries,
