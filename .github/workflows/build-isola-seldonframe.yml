@@ -6,13 +6,14 @@ on:
     inputs:
       public_url:
         description: Public base URL baked into the client bundle
-        default: https://front.isola.epic.dm
+        description: Uplink production origin, validated before build
+        default: https://uplink.epic.dm
 permissions:
   contents: read
   packages: write
 concurrency:
-  group: build-isola-seldonframe
-  cancel-in-progress: true
+  group: build-isola-seldonframe-uplink-native
+  cancel-in-progress: false
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -26,6 +27,10 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Validate production origin
+        env:
+          PUBLIC_URL: ${{ inputs.public_url }}
+        run: test "$PUBLIC_URL" = "https://uplink.epic.dm"
       - run: pnpm install --frozen-lockfile
       - name: Migration journal check (upstream gate)
         run: pnpm db:check-journaled
@@ -35,7 +40,7 @@ jobs:
         run: pnpm --filter @seldonframe/crm exec tsc --noEmit
       - name: Launch specs
         working-directory: packages/crm
-        run: node --import tsx --test tests/unit/agents/form-follow-up.spec.ts tests/unit/agents/portal-service-links.spec.ts tests/unit/agents/portal-email.spec.ts tests/unit/agents/follow-up-responder.spec.ts tests/unit/agents/contact-from-answers.spec.ts
+        run: node --import tsx --test tests/unit/agents/form-follow-up.spec.ts tests/unit/agents/portal-service-links.spec.ts tests/unit/agents/portal-email.spec.ts tests/unit/agents/follow-up-responder.spec.ts tests/unit/agents/contact-from-answers.spec.ts tests/unit/http/app-hosts.spec.ts
   image:
     needs: verify
     runs-on: ubuntu-latest
@@ -55,6 +60,8 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
-          build-args: NEXT_PUBLIC_APP_URL=${{ inputs.public_url }}
-          tags: ghcr.io/${{ github.repository_owner }}/isola-seldonframe:launch-2026-10-04
+          build-args: |
+            NEXT_PUBLIC_APP_URL=${{ inputs.public_url }}
+            APP_HOSTS=${{ inputs.public_url }}
+          tags: ghcr.io/${{ github.repository_owner }}/isola-seldonframe:uplink-native-${{ github.sha }}
       - run: echo "image digest ${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

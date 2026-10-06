@@ -26,11 +26,13 @@ RUN pnpm install --frozen-lockfile
 # placeholders keep any module-load-time env reads happy; NEON_LOCAL_HOST is
 # deliberately unset so the build path matches production (plain neon-http).
 ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
+ARG APP_HOSTS
 ENV DATABASE_URL=postgres://build:build@127.0.0.1:5432/build \
     AUTH_SECRET=build-only-not-a-real-secret \
     NEXTAUTH_SECRET=build-only-not-a-real-secret \
     ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 \
-    NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+    NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL} \
+    APP_HOSTS=${APP_HOSTS}
 RUN pnpm --filter @seldonframe/crm build
 
 # ---------- runner ----------

@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { withWorkflow } from "workflow/next";
+import { extraAppHosts } from "./src/lib/http/app-hosts";
 
 const nextConfig: NextConfig = {
   // Pre-existing React 19 / Framer Motion dual @types/react resolution
@@ -11,7 +12,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345"],
   experimental: {
     serverActions: {
-      allowedOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345"],
+      allowedOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345", ...extraAppHosts()],
     },
   },
   // v1.38.4 — allowlist Unsplash domains for next/image. Without this,

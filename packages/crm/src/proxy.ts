@@ -19,6 +19,7 @@ import {
   type MarkdownFetchMode,
 } from "@/lib/marketplace/md-analytics";
 import { toInternalRedirectPath } from "@/lib/auth/signup-redirect";
+import { extraAppHosts, primaryAppHost } from "@/lib/http/app-hosts";
 
 const protectedPrefixes = ["/hub", "/dashboard", "/welcome", "/orgs", "/contacts", "/deals", "/activities", "/forms", "/settings", "/api/v1"];
 const publicPrefixes = ["/api/v1", "/api/auth"];
@@ -94,7 +95,7 @@ function resolveWorkspaceAdminRedirect(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
   if (!isAdminPath) return null;
-  const target = new URL("https://app.seldonframe.com/switch-workspace");
+  const target = new URL(`https://${primaryAppHost() ?? appHostFallback}/switch-workspace`);
   target.searchParams.set("to", orgId);
   target.searchParams.set("next", `${pathname}${search ?? ""}`);
   return target;
@@ -163,7 +164,7 @@ function resolveWorkspaceRewritePath(
 }
 
 function isAppHost(host: string) {
-  return defaultAppHosts.has(host) || host.endsWith(".vercel.app");
+  return defaultAppHosts.has(host) || host.endsWith(".vercel.app") || extraAppHosts().includes(host);
 }
 
 function isAuthPath(pathname: string) {
