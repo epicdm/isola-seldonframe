@@ -19,6 +19,7 @@ import {
   type MarkdownFetchMode,
 } from "@/lib/marketplace/md-analytics";
 import { toInternalRedirectPath } from "@/lib/auth/signup-redirect";
+import { buildWorkspaceAdminRedirectUrl, extraAppHosts, primaryAppHost, workspaceBaseDomain } from "@/lib/http/app-hosts";
 
 const protectedPrefixes = ["/hub", "/dashboard", "/welcome", "/orgs", "/contacts", "/deals", "/activities", "/forms", "/settings", "/api/v1"];
 const publicPrefixes = ["/api/v1", "/api/auth"];
@@ -44,15 +45,15 @@ function getRequestHost(request: NextRequest) {
 }
 
 function resolveWorkspaceSlugFromHost(host: string) {
-  const workspaceBaseDomain = (process.env.WORKSPACE_BASE_DOMAIN?.trim().toLowerCase() || "app.seldonframe.com")
+  const baseDomain = workspaceBaseDomain().trim().toLowerCase()
     .replace(/^\.+/, "")
     .replace(/\.+$/, "");
 
-  if (!workspaceBaseDomain || host === workspaceBaseDomain) {
+  if (!baseDomain || host === baseDomain) {
     return null;
   }
 
-  const suffix = `.${workspaceBaseDomain}`;
+  const suffix = `.${baseDomain}`;
   if (!host.endsWith(suffix)) {
     return null;
   }
@@ -94,10 +95,7 @@ function resolveWorkspaceAdminRedirect(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
   if (!isAdminPath) return null;
-  const target = new URL("https://app.seldonframe.com/switch-workspace");
-  target.searchParams.set("to", orgId);
-  target.searchParams.set("next", `${pathname}${search ?? ""}`);
-  return target;
+  return buildWorkspaceAdminRedirectUrl(orgId, pathname, search ?? "");
 }
 
 function resolveWorkspaceRewritePath(
@@ -163,7 +161,7 @@ function resolveWorkspaceRewritePath(
 }
 
 function isAppHost(host: string) {
-  return defaultAppHosts.has(host) || host.endsWith(".vercel.app");
+  return host === primaryAppHost() || defaultAppHosts.has(host) || host.endsWith(".vercel.app") || extraAppHosts().includes(host);
 }
 
 function isAuthPath(pathname: string) {

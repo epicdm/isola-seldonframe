@@ -1,3 +1,4 @@
+import { canonicalAppOrigin } from "@/lib/http/app-hosts";
 // ============================================================================
 // v1.7.0 — magic-link device-flow auth helpers
 // ============================================================================
@@ -102,9 +103,7 @@ export async function initiateDeviceAuth(input: InitiateInput): Promise<Initiate
     userAgent: input.userAgent?.slice(0, 200) ?? null,
   });
 
-  const baseUrl = (
-    process.env.NEXTAUTH_URL?.trim() || "https://app.seldonframe.com"
-  ).replace(/\/+$/, "");
+  const baseUrl = canonicalAppOrigin().replace(/\/+$/, "");
   const approvalUrl = `${baseUrl}/auth?atok=${encodeURIComponent(atok)}`;
 
   return {

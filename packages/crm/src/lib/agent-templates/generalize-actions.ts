@@ -8,7 +8,8 @@
 // customization in one atomic unit.
 
 import { eq, and } from "drizzle-orm";
-import { db } from "@/db";
+import { db, dbDriver, runNeonBatch } from "@/db";
+import { persistPgGeneralization } from "./persist-generalization";
 import { agentTemplates } from "@/db/schema/agent-templates";
 import { deployments } from "@/db/schema/deployments";
 import type { AgentBlueprint } from "@/db/schema/agents";
@@ -138,29 +139,25 @@ export async function applyTemplateGeneralizationAction(input: {
         }));
       },
       persist: async ({ templateId, nextBlueprint, deploymentUpdates }) => {
-        // The neon-http driver has NO `db.transaction` support (it throws "No
-        // transactions support in neon-http driver" — verified against the
-        // installed drizzle-orm version). `db.batch([...])` is neon-http's
-        // atomic multi-statement primitive (it sends the whole array as ONE
-        // transaction over Neon's HTTP endpoint) — this is what makes the
-        // blueprint rewrite + every author-deployment back-fill land as a
-        // single all-or-nothing unit, per the never-lies contract.
-        const templateUpdate = db
-          .update(agentTemplates)
-          .set({ blueprint: nextBlueprint, updatedAt: new Date() })
-          .where(eq(agentTemplates.id, templateId));
+        if (dbDriver === "pg") {
+          await persistPgGeneralization(db, { templateId, nextBlueprint, deploymentUpdates });
+          return;
+        }
 
-        const deploymentQueries = deploymentUpdates.map((update) =>
-          db
-            .update(deployments)
-            .set({ customization: update.customization, updatedAt: new Date() })
-            .where(eq(deployments.id, update.id)),
-        );
-
-        await db.batch([templateUpdate, ...deploymentQueries] as [
-          typeof templateUpdate,
-          ...typeof deploymentQueries,
-        ]);
+        const stamp = new Date();
+        await runNeonBatch((client) => {
+          const templateUpdate = client
+            .update(agentTemplates)
+            .set({ blueprint: nextBlueprint, updatedAt: stamp })
+            .where(eq(agentTemplates.id, templateId));
+          const deploymentQueries = deploymentUpdates.map((update) =>
+            client
+              .update(deployments)
+              .set({ customization: update.customization, updatedAt: stamp })
+              .where(eq(deployments.id, update.id)),
+          );
+          return [templateUpdate, ...deploymentQueries] as const;
+        });
       },
     },
     { templateId, orgId: auth.orgId, rows: input.rows ?? [] },

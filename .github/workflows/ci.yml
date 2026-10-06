@@ -15,6 +15,20 @@ on:
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: seldon_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d seldon_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -49,8 +63,15 @@ jobs:
         # ~40s typecheck shouldn't wait on a full test run to report).
         run: pnpm --filter @seldonframe/crm exec tsc --noEmit
 
+      - name: Prepare disposable PostgreSQL schema
+        run: pnpm --filter @seldonframe/crm db:push --force
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/seldon_test
+
       - name: Unit tests
         run: pnpm test:unit
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/seldon_test
 
       - name: BLOCK.md emit drift-detector
         run: pnpm emit:blocks:check

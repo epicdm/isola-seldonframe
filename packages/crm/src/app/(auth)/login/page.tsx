@@ -1,49 +1,12 @@
 import { LoginForm } from "./login-form";
 import Link from "next/link";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 import { toInternalRedirectPath } from "@/lib/auth/signup-redirect";
 import { isGoogleAuthEnabled } from "@/lib/auth/google-enabled";
 import { isDemoReadonly } from "@/lib/demo/server";
-import { resolveAppOrigin } from "@/lib/marketplace/buy-box-auth";
+import { redirectToAppHostIfNeeded } from "@/lib/auth/app-host-redirect";
+import { getPlatformBranding } from "@/lib/platform/branding";
 
-// 2026-07-04 — Prod incident: Google OAuth failed with
-// `InvalidCheck: pkceCodeVerifier value could not be parsed` because sign-in
-// was INITIATED on the marketing host (www.seldonframe.com — the /try → Save
-// → /signup flow renders there). NextAuth's pkce/state cookies are HOST-ONLY
-// (no cookies.domain override in authConfig — see the PKCE-cookie note in
-// lib/auth/signup-redirect.ts), so they're set on www but Google calls back
-// to app.seldonframe.com/api/auth/callback/google, where those cookies don't
-// exist (log-confirmed: `callback pkce cookie { present:false }`,
-// `hasState:false`). Email magic-link is unaffected (token travels in the
-// URL, not a cookie). Fix: pin this page to the app host with a
-// server-side redirect BEFORE any auth cookie gets set, preserving the full
-// query string (callbackUrl carries the /claim-build token round-trip).
-// Local dev and Vercel preview hosts are exempt so those flows are unchanged.
-function normalizeHost(host: string) {
-  return host.trim().toLowerCase().replace(/:\d+$/, "");
-}
-
-function isExemptHost(host: string) {
-  return (
-    host === "" ||
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host.endsWith(".vercel.app")
-  );
-}
-
-async function redirectToAppHostIfNeeded(path: string, search: string) {
-  const requestHost = normalizeHost((await headers()).get("host") ?? "");
-  if (isExemptHost(requestHost)) return;
-
-  const appOrigin = resolveAppOrigin(process.env.NEXT_PUBLIC_APP_URL);
-  const appHost = normalizeHost(new URL(appOrigin).host);
-  if (requestHost === appHost) return;
-
-  redirect(`${appOrigin}${path}${search}`);
-}
-
+// The shared helper pins auth entry to the configured canonical app origin.
 export default async function LoginPage({
   searchParams,
 }: {
@@ -57,6 +20,7 @@ export default async function LoginPage({
   searchParams: Promise<{ callbackUrl?: string }>;
 }) {
   const params = await searchParams;
+  const branding = getPlatformBranding();
 
   // Rebuild the full query string from the parsed searchParams so callbackUrl
   // (and any other param) survives the cross-host bounce.
@@ -74,9 +38,9 @@ export default async function LoginPage({
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="text-center">
-          <h1 className="text-section-title text-foreground">Welcome to SeldonFrame</h1>
+          <h1 className="text-section-title text-foreground">Welcome to {branding.name}</h1>
           <p className="mt-1 text-label text-[hsl(var(--color-text-secondary))]">
-            The operating system for your business.
+            Your communications, customers and AI front office.
           </p>
         </div>
         <LoginForm
@@ -99,7 +63,7 @@ export default async function LoginPage({
           <Link href="/terms" className="underline-offset-4 hover:underline">
             Terms of Service
           </Link>
-          <span className="ml-auto">&copy; 2026 SeldonFrame</span>
+          <span className="ml-auto">{branding.emailFooter}</span>
         </div>
       </footer>
     </div>

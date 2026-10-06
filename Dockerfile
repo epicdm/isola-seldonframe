@@ -26,12 +26,16 @@ RUN pnpm install --frozen-lockfile
 # placeholders keep any module-load-time env reads happy; NEON_LOCAL_HOST is
 # deliberately unset so the build path matches production (plain neon-http).
 ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
-ENV DATABASE_URL=postgres://build:build@127.0.0.1:5432/build \
+ARG UPLINK_DIAG_BROWSER_SOURCEMAPS=0
+ENV UPLINK_DIAG_BROWSER_SOURCEMAPS=${UPLINK_DIAG_BROWSER_SOURCEMAPS} \\
+    DATABASE_URL=postgres://build:build@127.0.0.1:5432/build \
     AUTH_SECRET=build-only-not-a-real-secret \
     NEXTAUTH_SECRET=build-only-not-a-real-secret \
     ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 \
     NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
 RUN pnpm --filter @seldonframe/crm build
+RUN node packages/crm/scripts/assert-browser-pg-boundary.mjs
+RUN find packages/crm/.next -type f -name "*.map" -delete
 
 # ---------- runner ----------
 FROM node:22-bookworm-slim AS runner

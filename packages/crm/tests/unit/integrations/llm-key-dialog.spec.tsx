@@ -117,6 +117,14 @@ describe("<LlmKeyDialog>", () => {
       assert.ok(screen.getAllByText(/anthropic keys start with sk-ant-/i).length > 0);
     }, WAIT);
 
+    await waitFor(() => {
+      assert.equal(
+        (screen.getByRole("button", { name: /save key/i }) as HTMLButtonElement).disabled,
+        false,
+        "failed save transition should finish before closing",
+      );
+    }, WAIT);
+
     // Close without saving via the dialog's own close control — the same
     // onOpenChange(false) path Escape/overlay-click drive internally.
     fireEvent.click(screen.getByRole("button", { name: /close/i }));

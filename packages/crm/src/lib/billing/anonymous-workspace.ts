@@ -17,6 +17,7 @@ import { captureServerEvent } from "@/lib/analytics/capture";
 import { classifyBusinessTypeFromSoul } from "@/lib/page-schema/classify-business";
 import { selectCRMPersonality } from "@/lib/crm/personality";
 import { inferTimezone } from "@/lib/workspace/infer-timezone";
+import { canonicalAppOrigin } from "@/lib/http/app-hosts";
 
 const DEFAULT_ENABLED_BLOCKS = [
   "crm",
@@ -672,7 +673,7 @@ function buildSeedSoul(
   return soul;
 }
 
-const APP_HOST = "app.seldonframe.com";
+const APP_ORIGIN = canonicalAppOrigin();
 
 export function buildWorkspaceUrls(
   slug: string,
@@ -680,7 +681,7 @@ export function buildWorkspaceUrls(
   orgId: string
 ) {
   const publicOrigin = `https://${slug}.${baseDomain}`;
-  const adminOrigin = `https://${APP_HOST}`;
+  const adminOrigin = APP_ORIGIN;
   const sw = (next: string) =>
     `${adminOrigin}/switch-workspace?to=${encodeURIComponent(orgId)}&next=${encodeURIComponent(next)}`;
   return {
@@ -713,7 +714,7 @@ export function buildStructuredWorkspaceUrls(
   opts?: { bearerToken?: string }
 ) {
   const publicOrigin = `https://${slug}.${baseDomain}`;
-  const adminOrigin = `https://${APP_HOST}`;
+  const adminOrigin = APP_ORIGIN;
   const sw = (next: string) =>
     `${adminOrigin}/switch-workspace?to=${encodeURIComponent(orgId)}&next=${encodeURIComponent(next)}`;
 
@@ -740,9 +741,9 @@ export function buildStructuredWorkspaceUrls(
       settings: sw("/settings"),
     },
     admin_setup_note: adminUrl
-      ? "The `admin_url` above is the fastest way in: paste it into your browser to land directly on the dashboard (token-scoped, no signup, expires in 7 days). The `admin_urls` map is the legacy login-required path — use it only after you've signed up at app.seldonframe.com and run link_workspace_owner({})."
-      : "Admin URLs require login at app.seldonframe.com AND for the workspace to be linked to your user account. To enable browser admin access: " +
-        "(1) Sign up at https://app.seldonframe.com/signup. " +
+      ? "The `admin_url` above is the fastest way in: paste it into your browser to land directly on the dashboard (token-scoped, no signup, expires in 7 days). The `admin_urls` map is the legacy login-required path — use it only after you've signed up at " + APP_ORIGIN + " and run link_workspace_owner({})."
+      : "Admin URLs require login at " + APP_ORIGIN + " AND for the workspace to be linked to your user account. To enable browser admin access: " +
+        "(1) Sign up at https://" + APP_ORIGIN + "/signup. " +
         "(2) In Settings → API, generate a SELDONFRAME_API_KEY. " +
         "(3) `export SELDONFRAME_API_KEY=sk-…` in your shell and restart Claude Code. " +
         "(4) Run `link_workspace_owner({})` to attach this workspace to your account. " +

@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 import { withWorkflow } from "workflow/next";
+import path from "node:path";
+import { extraAppHosts } from "./src/lib/http/app-hosts";
 
 const nextConfig: NextConfig = {
   // Pre-existing React 19 / Framer Motion dual @types/react resolution
@@ -8,10 +10,28 @@ const nextConfig: NextConfig = {
   // tsc post-build check to stop whack-a-mole on third-party type artifacts.
   typescript: { ignoreBuildErrors: true },
   reactCompiler: true,
-  allowedDevOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345"],
+  productionBrowserSourceMaps: process.env.UPLINK_DIAG_BROWSER_SOURCEMAPS === "1",
+  // `pg` is node-only. A few client components reach `@/db` transitively; both
+  // bundlers map browser imports to a throwing stub, never the networking driver.
+  turbopack: {
+    resolveAlias: {
+      pg: { browser: "./src/db/pg-browser-stub.ts" },
+    },
+  },
+  webpack(config, { isServer }) {
+    if (!isServer) {
+      const aliases = config.resolve.alias;
+      config.resolve.alias = {
+        ...(aliases && !Array.isArray(aliases) ? aliases : {}),
+        "pg$": path.resolve(process.cwd(), "src/db/pg-browser-stub.ts"),
+      };
+    }
+    return config;
+  },
+  allowedDevOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345", ...extraAppHosts()],
   experimental: {
     serverActions: {
-      allowedOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345"],
+      allowedOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345", ...extraAppHosts()],
     },
   },
   // v1.38.4 — allowlist Unsplash domains for next/image. Without this,

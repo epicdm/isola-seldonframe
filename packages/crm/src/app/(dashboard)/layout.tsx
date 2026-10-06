@@ -9,6 +9,7 @@ import { SoulProvider } from "@/components/soul/soul-provider";
 import { getSoul } from "@/lib/soul/server";
 import { getPersonality } from "@/lib/crm/personality-server";
 import { Sidebar } from "@/components/layout/sidebar";
+import { getPlatformBranding } from "@/lib/platform/branding";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { DemoBanner } from "@/components/layout/demo-banner";
 import { TestModeBanner } from "@/components/layout/test-mode-banner";
@@ -23,6 +24,7 @@ import { isDraftApprovalsOn } from "@/lib/agent-drafts/policy";
 import { readEnabledModules } from "@/lib/workspace/surface";
 import { hasLiveSms } from "@/lib/telephony/config";
 import { buildWorkspaceUrls } from "@/lib/billing/anonymous-workspace";
+import { workspaceBaseDomain } from "@/lib/http/app-hosts";
 import { registerCrmEventListeners } from "@/lib/events/listeners";
 import { getAllBlocksForOrg } from "@/lib/blocks/registry";
 import { canSeldonIt, resolvePlanFromPlanId } from "@/lib/billing/entitlements";
@@ -39,7 +41,7 @@ import Link from "next/link";
 // Mirrors dashboard/page.tsx's WORKSPACE_BASE_DOMAIN — the public workspace
 // host used to build the SeldonChat live-preview iframe URL.
 const WORKSPACE_BASE_DOMAIN =
-  process.env.WORKSPACE_BASE_DOMAIN?.trim() || "app.seldonframe.com";
+  workspaceBaseDomain();
 
 /*
   Square UI class reference (source of truth):
@@ -47,6 +49,8 @@ const WORKSPACE_BASE_DOMAIN =
     - shell wrapper: "h-svh overflow-hidden lg:p-2 w-full"
     - inner frame: "lg:border lg:rounded-md overflow-hidden flex flex-col items-center justify-start bg-container h-full w-full bg-background"
 */
+
+const platformBranding = getPlatformBranding();
 
 export default async function DashboardLayout({
   children,
@@ -308,7 +312,10 @@ export default async function DashboardLayout({
               blocks={blocks}
               canAccessSeldon={canAccessSeldon}
               hiddenBlocks={hiddenBlocks}
-              workspaceName={activeOrg?.name || "SeldonFrame"}
+              platformName={platformBranding.name}
+              platformLogoUrl={platformBranding.logoUrl || null}
+              showVendorBranding={platformBranding.showVendorBranding}
+              workspaceName={activeOrg?.name || platformBranding.name}
               // 2026-05-18 — workspace logo from theme.logoUrl. The
               // workspace SWITCHER tile shows the client's own per-
               // workspace logo (theme.logoUrl) — falling back to the
@@ -387,7 +394,7 @@ export default async function DashboardLayout({
                   userEmail={user?.email || ""}
                   avatarFallback={avatarFallback}
                   canAccessSeldon={canAccessSeldon}
-                  workspaceName={activeOrg?.name || "SeldonFrame"}
+                  workspaceName={activeOrg?.name || platformBranding.name}
                   activeWorkspaceId={orgId}
                   workspaceOptions={workspaceOptions.map((workspace) => ({
                     id: workspace.id,

@@ -20,7 +20,7 @@
 // docs/superpowers/specs/2026-07-15-claim-flow-origin-fix-design.md).
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { resolveAppOrigin } from "@/lib/marketplace/buy-box-auth";
+import { canonicalAppOrigin } from "@/lib/http/app-hosts";
 
 export function normalizeHost(host: string) {
   return host.trim().toLowerCase().replace(/:\d+$/, "");
@@ -53,7 +53,7 @@ export async function redirectToAppHostIfNeeded(path: string, search: string) {
   const requestHost = (await headers()).get("host") ?? "";
   const target = resolveAppHostRedirectTarget({
     requestHost,
-    appOrigin: resolveAppOrigin(process.env.NEXT_PUBLIC_APP_URL),
+    appOrigin: canonicalAppOrigin(),
     path,
     search,
   });
