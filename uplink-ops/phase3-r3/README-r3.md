@@ -1,4 +1,4 @@
-# Uplink Phase 3 runnable-readiness package r3 (r3.3: separate staging and production pairings)
+# Uplink Phase 3 runnable-readiness package r3 (r3.4 middleware correction on top of r3.3: separate staging and production pairings)
 
 Status: candidate, UNEXECUTED on host03; offline-tested by Lane A only (these are Lane A's own tests, NOT independent acceptance). Not a schema or source approval, not deployment. Preserves r1/r2 (Port entities ev-lane-a-uplink-pkg-r1-*, -r2-*), the original r3 commit c869e993d70e6cbee193f50af6009103306a3e30 and the r3.1 commit 85d3995b965cdca6f4d26b4d71bab094e74258df (history is kept; r3.2 is a later additive commit).
 Governing records: master plan / handoff v2.8 (EasyPanel-only; PM ruling: separate staging https://build.uplink.epic.dm and production https://uplink.epic.dm images from the same accepted source commit; PLATFORM_APP_URL, NEXT_PUBLIC_APP_URL, AUTH_URL and NEXTAUTH_URL agree within each environment), Chatwoot reuse decision.

@@ -123,7 +123,8 @@ for _e in ENVS: check_app(_e)
 # ---- 01 middleware ----
 t = load("01-middleware-uplink-operators.createMiddleware.json"); scan_placeholders("01-middleware", t)
 m = json.loads(t)["input"]
-check_keys(m, {"name", "type", "sourceRange", "ipStrategy", "rejectedStatusCode"}, "01.input", ("name", "type"))
+# rejectedStatusCode is NOT accepted by the running Traefik (measured 2026-10-06: "field not found, node: rejectedStatusCode" made Traefik drop the whole file config); ipAllowList answers 403 by default
+check_keys(m, {"name", "type", "sourceRange", "ipStrategy"}, "01.input", ("name", "type"))
 if m.get("type") != "ipAllowList" or m.get("name") != "uplink-operators": fail("01: must be ipAllowList named uplink-operators")
 for c in m.get("sourceRange", []):
     if PLACEHOLDER.search(c): continue

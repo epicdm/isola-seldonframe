@@ -3,7 +3,6 @@
   "input": {
     "name": "uplink-operators",
     "type": "ipAllowList",
-    "sourceRange": ["{{STAGING_OPERATOR_CIDR}}"],
-    "rejectedStatusCode": "403"
+    "sourceRange": ["{{STAGING_OPERATOR_CIDR}}"]
   }
 }

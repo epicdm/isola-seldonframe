@@ -92,6 +92,7 @@ muts = [
  ("db on PostgreSQL 17", DB, lambda t: t.replace("postgres:16.15", "postgres:17.2")),
  ("db tool enabled", DB, lambda t: t.replace('"pgWeb": {"enabled": false}', '"pgWeb": {"enabled": true}')),
  ("CIDR too broad", MW, lambda t: t.replace("{{STAGING_OPERATOR_CIDR}}", "0.0.0.0/0")),
+ ("01: ipAllowList carries rejectedStatusCode (this Traefik drops the whole config on it)", MW, lambda t: t.replace('"sourceRange": [\"{{STAGING_OPERATOR_CIDR}}\"]', '"sourceRange": [\"{{STAGING_OPERATOR_CIDR}}\"], "rejectedStatusCode": "403"')),
  ("CIDR /8", MW, lambda t: t.replace("{{STAGING_OPERATOR_CIDR}}", "10.0.0.0/8")),
  ("env: forbidden SMTP key", ENV, lambda t: t + "SMTP2GO_API_KEY=x\n"),
  ("env: Chatwoot key prefix", ENV, lambda t: t + "CHATWOOT_TOKEN=x\n"),
