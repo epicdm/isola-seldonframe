@@ -8,3 +8,14 @@ export class Pool {
     throw new Error("pg is not available in the browser");
   }
 }
+
+// drizzle-orm/node-postgres does `import pg from "pg"` and destructures it at
+// module load, so the stub also needs a default export with the same keys.
+export const types = { builtins: {}, getTypeParser: () => (value: unknown) => value };
+export class Client {
+  constructor() {
+    throw new Error("pg is not available in the browser");
+  }
+}
+const pg = { Pool, Client, types };
+export default pg;
