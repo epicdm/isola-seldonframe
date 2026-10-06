@@ -26,6 +26,7 @@
 // the over-limit upgrade prompt.
 
 import { SignupForm } from "./signup-form";
+import { getPlatformBranding } from "@/lib/platform/branding";
 import Link from "next/link";
 import { buildSignupNextPath, toInternalRedirectPath } from "@/lib/auth/signup-redirect";
 import { isGoogleAuthEnabled } from "@/lib/auth/google-enabled";
@@ -54,6 +55,7 @@ export default async function SignupPage({
   }>;
 }) {
   const params = await searchParams;
+  const platformBranding = getPlatformBranding();
 
   // Rebuild the full query string from the parsed searchParams so every
   // param (token/url/biz/intent/callbackUrl) survives the cross-host bounce.
@@ -103,7 +105,7 @@ export default async function SignupPage({
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="text-center">
-          <h1 className="text-section-title text-foreground">Welcome to SeldonFrame</h1>
+          <h1 className="text-section-title text-foreground">Welcome to {platformBranding.name}</h1>
           <p className="mt-1 text-label text-[hsl(var(--color-text-secondary))]">
             Your website, booking, CRM, and AI receptionist — live in minutes.
           </p>
@@ -128,7 +130,7 @@ export default async function SignupPage({
           <Link href="/terms" className="underline-offset-4 hover:underline">
             Terms of Service
           </Link>
-          <span className="ml-auto">&copy; 2026 SeldonFrame</span>
+          <span className="ml-auto">{platformBranding.emailFooter}</span>
         </div>
       </footer>
     </div>
