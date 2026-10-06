@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const NODE_PG_BROWSER_MARKERS = [
@@ -52,6 +52,12 @@ async function main() {
   const markers = findNodePgBrowserMarkers(contents);
   if (markers.length) {
     console.error(`[browser-pg-boundary] node-postgres runtime markers found: ${markers.join(", ")}`);
+    for (let index = 0; index < files.length; index += 1) {
+      const fileMarkers = findNodePgBrowserMarkers([contents[index]]);
+      if (fileMarkers.length) {
+        console.error(`[browser-pg-boundary] ${relative(staticDirectory, files[index])}: ${fileMarkers.join(", ")}`);
+      }
+    }
     process.exitCode = 1;
     return;
   }
