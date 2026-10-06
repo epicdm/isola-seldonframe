@@ -17,8 +17,9 @@
 // is a large lift; the curated list catches the actual failure mode (a new
 // auth/billing column not applying) in a few lines of SQL.
 //
-// Usage (from packages/crm), uses the same DATABASE_URL as the migrate step:
-//   node scripts/assert-schema-drift.mjs
+// Usage (from packages/crm), uses DATABASE_URL and DB_DRIVER like the application:
+//   DB_DRIVER=pg node scripts/assert-schema-drift.mjs
+//   node scripts/assert-schema-drift.mjs  # legacy Neon default
 //
 // Skips cleanly when DATABASE_URL is unset (local builds, CI without a DB).
 
