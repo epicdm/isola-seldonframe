@@ -56,7 +56,6 @@ async function main() {
           passwordHash: null,
           emailVerified: null,
           onboardingCompletedAt: now,
-          agencyProfile: {},
         }).returning();
       }
       if (!owner) throw new Error(`Could not create fixture owner: ${fixture.slug}`);
