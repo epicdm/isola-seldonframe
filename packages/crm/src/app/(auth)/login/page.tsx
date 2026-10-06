@@ -4,6 +4,7 @@ import { toInternalRedirectPath } from "@/lib/auth/signup-redirect";
 import { isGoogleAuthEnabled } from "@/lib/auth/google-enabled";
 import { isDemoReadonly } from "@/lib/demo/server";
 import { redirectToAppHostIfNeeded } from "@/lib/auth/app-host-redirect";
+import { getPlatformBranding } from "@/lib/platform/branding";
 
 // The shared helper pins auth entry to the configured canonical app origin.
 export default async function LoginPage({
@@ -19,6 +20,7 @@ export default async function LoginPage({
   searchParams: Promise<{ callbackUrl?: string }>;
 }) {
   const params = await searchParams;
+  const branding = getPlatformBranding();
 
   // Rebuild the full query string from the parsed searchParams so callbackUrl
   // (and any other param) survives the cross-host bounce.
@@ -36,9 +38,9 @@ export default async function LoginPage({
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="text-center">
-          <h1 className="text-section-title text-foreground">Welcome to SeldonFrame</h1>
+          <h1 className="text-section-title text-foreground">Welcome to {branding.name}</h1>
           <p className="mt-1 text-label text-[hsl(var(--color-text-secondary))]">
-            The operating system for your business.
+            Your communications, customers and AI front office.
           </p>
         </div>
         <LoginForm
@@ -61,7 +63,7 @@ export default async function LoginPage({
           <Link href="/terms" className="underline-offset-4 hover:underline">
             Terms of Service
           </Link>
-          <span className="ml-auto">&copy; 2026 SeldonFrame</span>
+          <span className="ml-auto">{branding.emailFooter}</span>
         </div>
       </footer>
     </div>
