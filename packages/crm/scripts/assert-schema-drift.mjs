@@ -175,7 +175,7 @@ async function main() {
         .replace(/(?:postgres(?:ql)?|mysql):\/\/[^\s"']+/gi, "[redacted-url]")
         .replace(/\b(password|passwd|secret|token|api[_-]?key)\b\s*[:=]\s*[^,\s;]+/gi, "$1=[redacted]")
         .replace(/[\r\n\t]+/g, " ")
-        .slice(0, 160);0, 160);
+        .slice(0, 160);
       console.error(
         `[assert-schema-drift] FATAL: could not query the database with the selected driver (error=${errorName}, code=${errorCode}, detail=${safeMessage})`,
       );
