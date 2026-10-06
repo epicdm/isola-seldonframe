@@ -17,6 +17,7 @@ import { captureServerEvent } from "@/lib/analytics/capture";
 import { classifyBusinessTypeFromSoul } from "@/lib/page-schema/classify-business";
 import { selectCRMPersonality } from "@/lib/crm/personality";
 import { inferTimezone } from "@/lib/workspace/infer-timezone";
+import { primaryAppHost } from "@/lib/http/app-hosts";
 
 const DEFAULT_ENABLED_BLOCKS = [
   "crm",
@@ -672,7 +673,8 @@ function buildSeedSoul(
   return soul;
 }
 
-const APP_HOST = "app.seldonframe.com";
+// Admin links point at the install's own app host when APP_HOSTS is set (self-hosted), else the vendor host.
+const APP_HOST = primaryAppHost() ?? "app.seldonframe.com";
 
 export function buildWorkspaceUrls(
   slug: string,

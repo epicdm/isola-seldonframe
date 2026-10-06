@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 import { withWorkflow } from "workflow/next";
 
+// APP_HOSTS (see src/lib/http/app-hosts.ts): the install's own dashboard hostnames must be allowed Server Action origins.
+const extraAppHosts = (process.env.APP_HOSTS ?? "")
+  .split(",")
+  .map((h) => h.trim())
+  .filter(Boolean);
+
 const nextConfig: NextConfig = {
   // Pre-existing React 19 / Framer Motion dual @types/react resolution
   // produces spurious ReactNode/ReactPortal errors across UI components.
@@ -18,7 +24,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345"],
   experimental: {
     serverActions: {
-      allowedOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345"],
+      allowedOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345", ...extraAppHosts],
     },
   },
   // v1.38.4 — allowlist Unsplash domains for next/image. Without this,
