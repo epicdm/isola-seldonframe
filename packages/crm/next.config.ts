@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { withWorkflow } from "workflow/next";
+import path from "node:path";
 import { extraAppHosts } from "./src/lib/http/app-hosts";
 
 const nextConfig: NextConfig = {
@@ -9,12 +10,22 @@ const nextConfig: NextConfig = {
   // tsc post-build check to stop whack-a-mole on third-party type artifacts.
   typescript: { ignoreBuildErrors: true },
   reactCompiler: true,
-  // `pg` (opt-in self-hosted pooled driver, src/db/index.ts) is node-only. A few
-  // client components reach `@/db` transitively; keep pg out of browser bundles.
+  // `pg` is node-only. A few client components reach `@/db` transitively; both
+  // bundlers map browser imports to a throwing stub, never the networking driver.
   turbopack: {
     resolveAlias: {
       pg: { browser: "./src/db/pg-browser-stub.ts" },
     },
+  },
+  webpack(config, { isServer }) {
+    if (!isServer) {
+      const aliases = config.resolve.alias;
+      config.resolve.alias = {
+        ...(aliases && !Array.isArray(aliases) ? aliases : {}),
+        "pg$": path.resolve(process.cwd(), "src/db/pg-browser-stub.ts"),
+      };
+    }
+    return config;
   },
   allowedDevOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345", ...extraAppHosts()],
   experimental: {
