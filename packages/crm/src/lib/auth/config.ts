@@ -5,6 +5,8 @@ import { db } from "@/db";
 import { accounts, organizations, users } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { sendNewSignupAlert } from "@/lib/notifications/ops-notifications";
+import { selectPortalEmailTransport } from "@/lib/portal/email-transport";
+import { sendSignInEmailViaSmtp2go } from "./signin-email-smtp2go";
 // funnel.ts (posthog-node) is imported lazily below, not statically here —
 // config.ts sits in the proxy/middleware module graph (config -> auth ->
 // src/proxy.ts), and a static import would pull posthog-node into that
@@ -180,6 +182,16 @@ if (resendApiKey) {
           process.env.NEXTAUTH_URL?.trim() || "https://app.seldonframe.com"
         ).replace(/\/+$/, "");
         const { subject, html, text } = renderSeldonFrameSignInEmail({ url, baseUrl });
+
+        // EPIC 2026-10-06: SMTP2GO wins when fully configured (same rule as the portal access code).
+        const transport = selectPortalEmailTransport(process.env);
+        if (transport.transport === "smtp2go") {
+          await sendSignInEmailViaSmtp2go(
+            { to: identifier, subject, html, text },
+            { apiKey: transport.apiKey, from: transport.from },
+          );
+          return;
+        }
 
         const response = await fetch("https://api.resend.com/emails", {
           method: "POST",

@@ -22,6 +22,7 @@ import {
 } from "./generalize";
 import { makeGeneralizationLlm, DEFAULT_GENERALIZATION_MODEL } from "./generalize-llm";
 import { buildGeneralizeFailureLog } from "./generalize-log";
+import { persistGeneralization } from "./persist-generalization";
 import {
   applyTemplateGeneralizationTx,
   type ApplyGeneralizationTxResult,
@@ -137,45 +138,7 @@ export async function applyTemplateGeneralizationAction(input: {
           customization: (r.customization as Record<string, unknown> | null) ?? null,
         }));
       },
-      persist: async ({ templateId, nextBlueprint, deploymentUpdates }) => {
-        // The neon-http driver has NO `db.transaction` support (it throws "No
-        // transactions support in neon-http driver" — verified against the
-        // installed drizzle-orm version). `db.batch([...])` is neon-http's
-        // atomic multi-statement primitive (it sends the whole array as ONE
-        // transaction over Neon's HTTP endpoint) — this is what makes the
-        // blueprint rewrite + every author-deployment back-fill land as a
-        // single all-or-nothing unit, per the never-lies contract.
-        const stamp = new Date();
-        const buildTemplate = (d: typeof db) =>
-          d
-            .update(agentTemplates)
-            .set({ blueprint: nextBlueprint, updatedAt: stamp })
-            .where(eq(agentTemplates.id, templateId));
-        const buildDeployment = (d: typeof db, update: (typeof deploymentUpdates)[number]) =>
-          d
-            .update(deployments)
-            .set({ customization: update.customization, updatedAt: stamp })
-            .where(eq(deployments.id, update.id));
-
-        // Self-hosted pooled driver (DB_DRIVER=pg) has no `db.batch` but does
-        // support real transactions - same all-or-nothing unit.
-        if (typeof (db as { batch?: unknown }).batch !== "function") {
-          await db.transaction(async (tx) => {
-            await buildTemplate(tx as unknown as typeof db);
-            for (const update of deploymentUpdates) {
-              await buildDeployment(tx as unknown as typeof db, update);
-            }
-          });
-          return;
-        }
-
-        const templateUpdate = buildTemplate(db);
-        const deploymentQueries = deploymentUpdates.map((update) => buildDeployment(db, update));
-        await db.batch([templateUpdate, ...deploymentQueries] as [
-          typeof templateUpdate,
-          ...typeof deploymentQueries,
-        ]);
-      },
+      persist: (args) => persistGeneralization(db, args),
     },
     { templateId, orgId: auth.orgId, rows: input.rows ?? [] },
   );
