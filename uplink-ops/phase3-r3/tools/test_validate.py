@@ -3,6 +3,7 @@
 import json, os, shutil, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__)); SRC = os.path.join(HERE, "..", "json"); V = os.path.join(HERE, "validate_package.py")
 GOOD_DIGEST = "a" * 64
+CANON = "https://build.uplink.epic.dm"   # the origin the staging app is routed on (single canonical origin, r3.1)
 
 BASELINE = os.environ.get("UPLINK_BASELINE", os.path.join(HERE, "..", "..", "uplink-baseline.final.sql"))
 MAKE = os.path.join(HERE, "make_job_json.py")
@@ -37,7 +38,7 @@ def substitute(d):
     open(os.path.join(d, "contract.json"), "w", newline="\n").write(json.dumps(c, indent=2) + "\n")
     t = open(os.path.join(d, "uplink-app.env.template")).read()
     keep = [ln for ln in t.splitlines() if "{{CODEX_" not in ln]
-    t = "\n".join(keep).replace("{{OWNER_SUPPORT_EMAIL_OR_EMPTY}}", "").replace("{{OWNER_LOGO_URL_OR_EMPTY}}", "").replace("{{OWNER_FAVICON_URL_OR_EMPTY}}", "")
+    t = "\n".join(keep).replace("{{CANONICAL_APP_ORIGIN}}", CANON).replace("{{OWNER_SUPPORT_EMAIL_OR_EMPTY}}", "").replace("{{OWNER_LOGO_URL_OR_EMPTY}}", "").replace("{{OWNER_FAVICON_URL_OR_EMPTY}}", "")
     open(os.path.join(d, "uplink-app.env.template"), "w", newline="\n").write(t + "\n")
 
 fails = 0
@@ -82,8 +83,10 @@ muts = [
  ("env: secret key carries a value", ENV, lambda t: t.replace("AUTH_SECRET={{OWNER_ENTERS}}", "AUTH_SECRET=Abc123Def456Ghi789")),
  ("env: vendor branding on", ENV, lambda t: t.replace("SHOW_VENDOR_BRANDING=false", "SHOW_VENDOR_BRANDING=true")),
  ("env: beta host leaks", ENV, lambda t: t.replace("PLATFORM_HOME_URL=https://uplink.epic.dm", "PLATFORM_HOME_URL=https://front.isola.epic.dm")),
- ("env: origin hosts disagree", ENV, lambda t: t.replace("NEXTAUTH_URL=https://build.uplink.epic.dm", "NEXTAUTH_URL=https://uplink.epic.dm")),
- ("env: NEXT_PUBLIC_APP_URL not production origin", ENV, lambda t: t.replace("NEXT_PUBLIC_APP_URL=https://uplink.epic.dm", "NEXT_PUBLIC_APP_URL=https://build.uplink.epic.dm")),
+ ("env: NEXTAUTH_URL differs from the canonical origin", ENV, lambda t: t.replace("NEXTAUTH_URL={{CANONICAL_APP_ORIGIN}}", "NEXTAUTH_URL=https://uplink.epic.dm")),
+ ("env: r3 split origin (NEXT_PUBLIC production, others staging) is rejected", ENV, lambda t: t.replace("NEXT_PUBLIC_APP_URL={{CANONICAL_APP_ORIGIN}}", "NEXT_PUBLIC_APP_URL=https://uplink.epic.dm").replace("AUTH_URL={{CANONICAL_APP_ORIGIN}}", "AUTH_URL=https://build.uplink.epic.dm").replace("NEXTAUTH_URL={{CANONICAL_APP_ORIGIN}}", "NEXTAUTH_URL=https://build.uplink.epic.dm").replace("PLATFORM_APP_URL={{CANONICAL_APP_ORIGIN}}", "PLATFORM_APP_URL=https://build.uplink.epic.dm")),
+ ("env: PLATFORM_APP_URL line removed", ENV, lambda t: t.replace("PLATFORM_APP_URL={{CANONICAL_APP_ORIGIN}}\n", "")),
+ ("env: APP_HOSTS names the beta host", ENV, lambda t: t + "APP_HOSTS=agents.epic.dm\n"),
  ("env: missing required key", ENV, lambda t: t.replace("DB_DRIVER=pg\n", "")),
  ("env: wrong DB_DRIVER", ENV, lambda t: t.replace("DB_DRIVER=pg", "DB_DRIVER=neon")),
 ]
@@ -113,6 +116,13 @@ more = [
 ]
 for label, name, fn in more:
     d = fresh(); edit(d, name, fn); expect("negative control: " + label, 1, d, "offline")
+# origin controls in FINAL mode (all placeholders substituted): consistent single origin passes (above); split or unrouted origins fail
+def final_with(label, want_rc, fn):
+    d = fresh(); substitute(d); edit(d, ENV, fn); expect(label, want_rc, d, "final", gen(d))
+final_with("final: a consistent origin on the routed staging host passes (positive twin of the two controls below)", 0, lambda t: t.replace("# Codex canonicalAppOrigin", "# Codex canonicalAppOrigin", 1) + "# note\n")
+final_with("negative control final: r3 split origin fails even fully substituted", 1, lambda t: t.replace("NEXT_PUBLIC_APP_URL=" + CANON, "NEXT_PUBLIC_APP_URL=https://uplink.epic.dm"))
+final_with("negative control final: canonical origin = production host while only the staging host is routed fails", 1, lambda t: t.replace(CANON, "https://uplink.epic.dm"))
+final_with("negative control final: canonical origin is not an Uplink origin fails", 1, lambda t: t.replace(CANON, "https://agents.epic.dm"))
 # generated-file tampering must be caught
 def tamper(label, fname, fn):
     d = fresh(); g = gen(d); p = os.path.join(g, fname); t = open(p, newline="").read(); t2 = fn(t); assert t != t2

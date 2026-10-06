@@ -1,5 +1,5 @@
 {
-  "_status": "PROPOSAL needing owner/Delivery PM approval (EasyPanel-compatible solution for a recurring audit; EasyPanel has no scheduler procedure). The service lists backup objects with a READ-ONLY storage key the owner enters and logs the audit verdict; a failing verdict exits non-zero so the portal shows restarts.",
+  "_status": "PROPOSAL, DEFERRED: not created unless scoped read access to the backup destination already exists (acceptance test T6; no new key is created for this proposal alone). EasyPanel has no scheduler procedure; the service would list backup objects with that existing access and log the audit verdict; a failing verdict exits non-zero so the portal shows restarts.",
   "procedure": "createFromSchema",
   "input": {
     "projectName": "uplink",

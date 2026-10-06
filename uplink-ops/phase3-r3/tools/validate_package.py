@@ -159,11 +159,23 @@ for k in env:
         fail(f"env.template: forbidden key {k} (integration/AI/SMTP/billing must be absent)")
     for bad in contract["forbidden_value_substrings"]:
         if bad.lower() in env[k].lower(): fail(f"env.template: {k} value contains forbidden substring {bad!r}")
-# origin consistency: staging AUTH/NEXTAUTH/PLATFORM_APP/APP_HOSTS must be the same host; NEXT_PUBLIC_APP_URL is the production origin
+# origin (r3.1): the Codex source (canonicalAppOrigin) throws unless PLATFORM_APP_URL, AUTH_URL/NEXTAUTH_URL and NEXT_PUBLIC_APP_URL are ONE origin,
+# and that origin must be a host this app is actually routed on (auth/redirects are built from it).
 host = lambda u: re.sub(r"^https?://", "", u).split("/")[0]
-if len({host(env.get("AUTH_URL", "")), host(env.get("NEXTAUTH_URL", "")), host(env.get("PLATFORM_APP_URL", "")), env.get("APP_HOSTS", "")}) != 1:
-    fail("env.template: AUTH_URL / NEXTAUTH_URL / PLATFORM_APP_URL / APP_HOSTS must share one canonical staging host")
-if host(env.get("NEXT_PUBLIC_APP_URL", "")) != contract["production_host"]: fail("env.template: NEXT_PUBLIC_APP_URL must be the production origin (baked at build)")
+O = contract["origin"]
+for k in O["keys_must_equal"]:
+    if k not in env: fail(f"env.template: missing origin key {k}")
+canon = env.get(O["keys_must_equal"][0], "")
+for k in O["keys_must_equal"] + [k for k in O["optional_equal_keys"] if k in env]:
+    if env.get(k) != canon: fail(f"env.template: {k}={env.get(k)!r} differs from {O['keys_must_equal'][0]}={canon!r} (the Codex source throws on mismatched origins; one canonical origin only)")
+routed = [x.get("host") for x in svcs[0]["data"].get("domains", [])] if len(svcs) == 1 else []
+if not PLACEHOLDER.search(canon):
+    if canon not in O["allowed_origins"]: fail(f"env.template: canonical origin {canon!r} is not an Uplink origin")
+    if O["canonical_host_must_be_routed_to_the_app"] and host(canon) not in routed: fail(f"env.template: canonical origin host {host(canon)!r} is not routed to the app (routed: {routed}); auth and redirects would target an unrouted host")
+if O["optional_host_list_key"] in env:
+    allowed_hosts = {host(o) for o in O["allowed_origins"]}
+    for h in [x.strip() for x in env[O["optional_host_list_key"]].split(",") if x.strip()]:
+        if h not in allowed_hosts: fail(f"env.template: {O['optional_host_list_key']} host {h!r} is not an Uplink host")
 if env.get("WORKSPACE_BASE_DOMAIN") != contract["production_host"]: fail("env.template: WORKSPACE_BASE_DOMAIN must be uplink.epic.dm")
 if len(contract["pending_codex_keys"]) and MODE == "final": fail("contract.json: pending_codex_keys must be substituted from the Codex receipt")
 for pk in contract["pending_codex_keys"]: pending.append(f"contract: {pk['key']} ({pk['purpose']})")

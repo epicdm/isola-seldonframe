@@ -21,7 +21,9 @@ def serve(kind):
             if p == "/a.css":
                 self.send_response(200); self.end_headers(); self.wfile.write(b"body{} /* app.seldonframe.com */" if kind == "branded-asset" else b"body{}"); return
             if p == "/ready":
-                self.send_response(200); self.end_headers(); self.wfile.write(b'{"status":"ok","db":"ok"}' if kind != "leaky" else b'{"DATABASE_URL":"postgres://u:p@h/db","password":"x"}'); return
+                if kind == "unavailable": self.send_response(503); self.end_headers(); self.wfile.write(b'{"status":"unavailable","database":"unavailable"}'); return
+                # body shape observed in the Codex /api/health route at c853877f (candidate, not the final contract)
+                self.send_response(200); self.end_headers(); self.wfile.write(b'{"status":"ok","database":"ready"}' if kind != "leaky" else b'{"DATABASE_URL":"postgres://u:p@h/db","password":"x"}'); return
             self.send_response(404); self.end_headers()
     srv = http.server.HTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start(); return srv
 
@@ -65,6 +67,7 @@ expect2("negative control: vendor string inside a CSS/JS asset FAILS", "branded-
 expect2("negative control: redirect to localhost FAILS", "redirect-localhost", 1, must="redirect from / does not contain 'localhost'")
 expect2("negative control: unauthenticated /dashboard that is served FAILS fail-closed", "open", 1, must="FAIL fail-closed")
 expect2("negative control: readiness body that leaks DATABASE_URL FAILS", "leaky", 1, ("--readiness-path", "/ready"), must="FAIL readiness body leaks no configuration")
+expect2("negative control: a readiness endpoint answering 503 (database unavailable) FAILS", "unavailable", 1, ("--readiness-path", "/ready"), must="FAIL readiness endpoint answers 200")
 expect2("without a readiness path the check is SKIPPED not passed", "clean", 0, must="SKIPPED readiness endpoint")
 expect2("positive control: a package name inside an inline script is not customer-visible branding", "inline-script", 0, must="PASS page / contains no 'seldonframe'")
 rc, out = run("forbidden", "--expect-forbidden"); good = rc == 0 and "403" in out

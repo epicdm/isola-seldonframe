@@ -25,7 +25,7 @@
 | TLS certificate for build.uplink.epic.dm | domain entry | domain status in portal | portal | Traefik resolver |
 | Chatwoot (existing, NOT deployed by this package) | project isola > chat (+ chatwoot-sidekiq, db, redis) | portal | portal | existing |
 
-## 3. Gaps and EasyPanel-compatible proposals (need approval; none is claimed as solved)
+## 3. Gaps and EasyPanel-compatible proposals (none is claimed as solved; classification and handling in PREREQUISITES-ACCEPTANCE-OPTIONAL.md: only G4 (provider encryption/authorization) is an owner prerequisite, G2/G3/G5 are staging acceptance tests, G1/G7 are disclosed limitations, G6 is an inventory risk, none is a blanket approval)
 G1 No push alerting for failed backups/audit: EasyPanel has no notification channel for these. Proposal: audit service/Box script fails visibly (status, restarts, logs) plus a recurring owner check; if push alerts are required, approve an EasyPanel-managed notifier service (e.g. a managed app that posts the verdict to a channel the owner chooses).
 G2 restart.condition is not settable (on-failure for apps): a process that exits 0 is stranded. Mitigation: staging test, portal status watch; ask Codex to confirm the app exits non-zero when it terminates unexpectedly. No host-level override is allowed (it is erased by the next deploy).
 G3 EasyPanel Postgres services have no health check or mount fields: readiness is verified by the import/verify jobs and by the app readiness endpoint (Codex Phase 1).
