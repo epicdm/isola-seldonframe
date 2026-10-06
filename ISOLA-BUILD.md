@@ -44,7 +44,7 @@ For a candidate image, run the `build-isola-seldonframe` workflow (Actions tab).
 
 Database: `DATABASE_URL`, optional `DB_DRIVER=pg`, `DB_POOL_MAX`, `DB_POOL_IDLE_MS`, `DB_POOL_CONNECT_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`.
 
-Canonical origin: `PLATFORM_APP_URL`, `NEXT_PUBLIC_APP_URL`, and `AUTH_URL` must agree; `APP_HOSTS` contains only explicitly approved aliases.
+Canonical origin: set `PLATFORM_APP_URL`, `NEXT_PUBLIC_APP_URL`, and `AUTH_URL` to the same environment-specific origin: `https://build.uplink.epic.dm` in staging and `https://uplink.epic.dm` in production. `APP_HOSTS` contains only explicitly approved aliases. `WORKSPACE_BASE_DOMAIN` must be explicitly configured for the approved workspace host pattern; if omitted, previews derive from the canonical app host. `agents.epic.dm` is historical beta only and must not appear in Uplink auth, redirects, origins, or workspace links.
 
 Branding: `PLATFORM_NAME`, `PLATFORM_HOME_URL`, `PLATFORM_SUPPORT_EMAIL`, `PLATFORM_LOGO_URL`, `PLATFORM_FAVICON_URL`, `PLATFORM_EMAIL_FROM_NAME`, `PLATFORM_EMAIL_FOOTER`, `SHOW_VENDOR_BRANDING`.
 
