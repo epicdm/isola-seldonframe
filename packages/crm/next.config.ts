@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { withWorkflow } from "workflow/next";
+import { extraAppHosts } from "./src/lib/http/app-hosts";
 
 const nextConfig: NextConfig = {
   // Pre-existing React 19 / Framer Motion dual @types/react resolution
