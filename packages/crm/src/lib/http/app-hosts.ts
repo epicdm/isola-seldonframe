@@ -31,17 +31,18 @@ export function extraAppHosts(env: Record<string, string | undefined> = process.
 }
 
 export function canonicalAppOrigin(env: Record<string, string | undefined> = process.env): string {
-  const configured = [
+  const configured: Array<[string, string | undefined]> = [
     ["PLATFORM_APP_URL", env.PLATFORM_APP_URL?.trim()],
     ["NEXT_PUBLIC_APP_URL", env.NEXT_PUBLIC_APP_URL?.trim()],
     ["AUTH_URL", (env.AUTH_URL ?? env.NEXTAUTH_URL)?.trim()],
-  ] as const;
-  const normalized = configured.map(([key, value]) => {
-    const origin = value ? normalizedOrigin(value) : null;
-    if (value && !origin) throw new Error(`${key} must be a valid HTTP(S) origin`);
-    return [key, origin] as const;
-  });
-  const configuredOrigins = normalized.filter((entry): entry is readonly [string, string] => entry[1] !== null);
+  ];
+  const configuredOrigins: Array<[string, string]> = [];
+  for (const [key, value] of configured) {
+    if (!value) continue;
+    const origin = normalizedOrigin(value);
+    if (!origin) throw new Error(`${key} must be a valid HTTP(S) origin`);
+    configuredOrigins.push([key, origin]);
+  }
   const canonical = configuredOrigins[0]?.[1] ?? DEFAULT_VENDOR_APP_ORIGIN;
   if (configuredOrigins.some(([, origin]) => origin !== canonical)) {
     throw new Error("PLATFORM_APP_URL, AUTH_URL, and NEXT_PUBLIC_APP_URL must use the same canonical origin");
