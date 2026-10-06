@@ -1,3 +1,5 @@
+import { canonicalAppOrigin } from "@/lib/http/app-hosts";
+
 const DEFAULT_NAME = "SeldonFrame";
 const DEFAULT_HOME = "https://www.seldonframe.com";
 const DEFAULT_SUPPORT = "support@seldonframe.com";
@@ -36,10 +38,7 @@ export function getPlatformBranding(
 ): PlatformBranding {
   const name = optionalText(env.PLATFORM_NAME, DEFAULT_NAME);
   const customBrand = name !== DEFAULT_NAME;
-  const appUrl = optionalUrl(
-    env.PLATFORM_APP_URL ?? env.AUTH_URL ?? env.NEXT_PUBLIC_APP_URL,
-    "https://app.seldonframe.com",
-  );
+  const appUrl = canonicalAppOrigin(env);
   const homeUrl = optionalUrl(env.PLATFORM_HOME_URL, customBrand ? appUrl : DEFAULT_HOME);
   const showVendorBranding = env.SHOW_VENDOR_BRANDING === undefined
     ? true
