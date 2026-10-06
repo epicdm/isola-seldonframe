@@ -1,3 +1,4 @@
+import { canonicalAppOrigin } from "@/lib/http/app-hosts";
 import crypto from "node:crypto";
 import { db } from "@/db";
 import { verificationTokens } from "@/db/schema";
@@ -44,9 +45,7 @@ export async function mintClaimMagicLink(
   userEmail: string,
   callbackPath: string
 ): Promise<MintedMagicLink> {
-  const baseUrl = (
-    process.env.NEXTAUTH_URL?.trim() || "https://app.seldonframe.com"
-  ).replace(/\/+$/, "");
+  const baseUrl = canonicalAppOrigin().replace(/\/+$/, "");
 
   const secret = (
     process.env.AUTH_SECRET?.trim() || process.env.NEXTAUTH_SECRET?.trim() || ""
