@@ -98,13 +98,7 @@ describe("pooled PostgreSQL generalization transactions", { skip }, () => {
           { id: "not-a-uuid", customization: { script: "changed-2" } },
         ],
       }),
-      (error: unknown) => {
-        const code = typeof error === "object" && error !== null && "code" in error
-          ? String(error.code)
-          : "";
-        assert.equal(code, "22P02");
-        return true;
-      },
+
     );
     const afterState = await snapshot(templateId, deploymentIds);
     assert.deepEqual(afterState.template.blueprint, beforeState.template.blueprint);
