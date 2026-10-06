@@ -6,6 +6,7 @@ import {
   extraAppHosts,
   parseAppHosts,
   primaryAppHost,
+  workspaceBaseDomain,
 } from "../../../src/lib/http/app-hosts";
 import { resolveAppHostRedirectTarget } from "../../../src/lib/auth/app-host-redirect";
 
@@ -57,6 +58,11 @@ describe("Uplink application hosts", () => {
       }),
       null,
     );
+  });
+
+  test("workspace preview host defaults to canonical Uplink host and honors explicit domain", () => {
+    assert.equal(workspaceBaseDomain({ PLATFORM_APP_URL: "https://build.uplink.epic.dm" }), "build.uplink.epic.dm");
+    assert.equal(workspaceBaseDomain({ PLATFORM_APP_URL: "https://uplink.epic.dm", WORKSPACE_BASE_DOMAIN: "clients.uplink.epic.dm" }), "clients.uplink.epic.dm");
   });
 
   test("workspace admin redirect uses the canonical app URL, never vendor host", () => {
