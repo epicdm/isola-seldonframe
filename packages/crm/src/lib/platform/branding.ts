@@ -4,6 +4,7 @@ const DEFAULT_SUPPORT = "support@seldonframe.com";
 
 function optionalUrl(value: string | undefined, fallback: string): string {
   if (!value?.trim()) return fallback;
+  if (value.trim().startsWith("/") && !value.trim().startsWith("//")) return value.trim();
   try {
     const url = new URL(value.trim());
     if (url.protocol !== "https:" && url.protocol !== "http:") return fallback;
