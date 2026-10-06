@@ -39,7 +39,17 @@ export function getPlatformBranding(
   const name = optionalText(env.PLATFORM_NAME, DEFAULT_NAME);
   const customBrand = name !== DEFAULT_NAME;
   const appUrl = canonicalAppOrigin(env);
-  const homeUrl = optionalUrl(env.PLATFORM_HOME_URL, customBrand ? appUrl : DEFAULT_HOME);
+  const homeFallback = customBrand ? appUrl : DEFAULT_HOME;
+  const homeUrl = env.PLATFORM_HOME_URL?.trim()
+    ? (() => {
+        try {
+          const url = new URL(env.PLATFORM_HOME_URL.trim());
+          return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : homeFallback;
+        } catch {
+          return homeFallback;
+        }
+      })()
+    : homeFallback;
   const showVendorBranding = env.SHOW_VENDOR_BRANDING === undefined
     ? true
     : !["false", "0", "no"].includes(env.SHOW_VENDOR_BRANDING.trim().toLowerCase());
