@@ -8,7 +8,8 @@
 // customization in one atomic unit.
 
 import { eq, and } from "drizzle-orm";
-import { db } from "@/db";
+import { db, dbDriver, runNeonBatch } from "@/db";
+import { persistPgGeneralization } from "./persist-generalization";
 import { agentTemplates } from "@/db/schema/agent-templates";
 import { deployments } from "@/db/schema/deployments";
 import type { AgentBlueprint } from "@/db/schema/agents";
@@ -138,43 +139,25 @@ export async function applyTemplateGeneralizationAction(input: {
         }));
       },
       persist: async ({ templateId, nextBlueprint, deploymentUpdates }) => {
-        // The neon-http driver has NO `db.transaction` support (it throws "No
-        // transactions support in neon-http driver" — verified against the
-        // installed drizzle-orm version). `db.batch([...])` is neon-http's
-        // atomic multi-statement primitive (it sends the whole array as ONE
-        // transaction over Neon's HTTP endpoint) — this is what makes the
-        // blueprint rewrite + every author-deployment back-fill land as a
-        // single all-or-nothing unit, per the never-lies contract.
-        const stamp = new Date();
-        const buildTemplate = (d: typeof db) =>
-          d
-            .update(agentTemplates)
-            .set({ blueprint: nextBlueprint, updatedAt: stamp })
-            .where(eq(agentTemplates.id, templateId));
-        const buildDeployment = (d: typeof db, update: (typeof deploymentUpdates)[number]) =>
-          d
-            .update(deployments)
-            .set({ customization: update.customization, updatedAt: stamp })
-            .where(eq(deployments.id, update.id));
-
-        // Self-hosted pooled driver (DB_DRIVER=pg) has no `db.batch` but does
-        // support real transactions - same all-or-nothing unit.
-        if (typeof (db as { batch?: unknown }).batch !== "function") {
-          await db.transaction(async (tx) => {
-            await buildTemplate(tx as unknown as typeof db);
-            for (const update of deploymentUpdates) {
-              await buildDeployment(tx as unknown as typeof db, update);
-            }
-          });
+        if (dbDriver === "pg") {
+          await persistPgGeneralization(db, { templateId, nextBlueprint, deploymentUpdates });
           return;
         }
 
-        const templateUpdate = buildTemplate(db);
-        const deploymentQueries = deploymentUpdates.map((update) => buildDeployment(db, update));
-        await db.batch([templateUpdate, ...deploymentQueries] as [
-          typeof templateUpdate,
-          ...typeof deploymentQueries,
-        ]);
+        const stamp = new Date();
+        await runNeonBatch((client) => {
+          const templateUpdate = client
+            .update(agentTemplates)
+            .set({ blueprint: nextBlueprint, updatedAt: stamp })
+            .where(eq(agentTemplates.id, templateId));
+          const deploymentQueries = deploymentUpdates.map((update) =>
+            client
+              .update(deployments)
+              .set({ customization: update.customization, updatedAt: stamp })
+              .where(eq(deployments.id, update.id)),
+          );
+          return [templateUpdate, ...deploymentQueries] as const;
+        });
       },
     },
     { templateId, orgId: auth.orgId, rows: input.rows ?? [] },
