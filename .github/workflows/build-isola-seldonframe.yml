@@ -49,6 +49,7 @@ jobs:
       - name: Prepare disposable PostgreSQL schema
         run: pnpm --filter @seldonframe/crm db:push --force
         env:
+          DB_DRIVER: pg
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/seldon_test
       - name: Full unit and PostgreSQL transaction suite
         run: pnpm test:unit
@@ -57,6 +58,7 @@ jobs:
       - name: Schema drift check
         run: pnpm --filter @seldonframe/crm db:assert-drift
         env:
+          DB_DRIVER: pg
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/seldon_test
       - name: BLOCK.md emit drift detector
         run: pnpm emit:blocks:check
