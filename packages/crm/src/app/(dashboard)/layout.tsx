@@ -393,7 +393,7 @@ export default async function DashboardLayout({
                   userEmail={user?.email || ""}
                   avatarFallback={avatarFallback}
                   canAccessSeldon={canAccessSeldon}
-                  workspaceName={activeOrg?.name || "SeldonFrame"}
+                  workspaceName={activeOrg?.name || platformBranding.name}
                   activeWorkspaceId={orgId}
                   workspaceOptions={workspaceOptions.map((workspace) => ({
                     id: workspace.id,
