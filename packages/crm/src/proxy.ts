@@ -19,7 +19,7 @@ import {
   type MarkdownFetchMode,
 } from "@/lib/marketplace/md-analytics";
 import { toInternalRedirectPath } from "@/lib/auth/signup-redirect";
-import { canonicalAppOrigin, extraAppHosts } from "@/lib/http/app-hosts";
+import { buildWorkspaceAdminRedirectUrl, extraAppHosts } from "@/lib/http/app-hosts";
 
 const protectedPrefixes = ["/hub", "/dashboard", "/welcome", "/orgs", "/contacts", "/deals", "/activities", "/forms", "/settings", "/api/v1"];
 const publicPrefixes = ["/api/v1", "/api/auth"];
@@ -95,10 +95,7 @@ function resolveWorkspaceAdminRedirect(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
   if (!isAdminPath) return null;
-  const target = new URL("/switch-workspace", canonicalAppOrigin());
-  target.searchParams.set("to", orgId);
-  target.searchParams.set("next", `${pathname}${search ?? ""}`);
-  return target;
+  return buildWorkspaceAdminRedirectUrl(orgId, pathname, search ?? "");
 }
 
 function resolveWorkspaceRewritePath(
