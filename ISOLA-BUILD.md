@@ -29,15 +29,23 @@ for that service (AGPL-3.0 section 13).
 * **Not in this repository:** credentials, customer or tenant data, environment files, internal EPIC operating
   documents. Runtime configuration is supplied only through environment variables at deploy time.
 
-## Build
+## Build and deployment boundary
 
-    docker build --build-arg NEXT_PUBLIC_APP_URL=https://<public host> -t isola-seldonframe .
+Production deployment and every deployed support service for Uplink are managed in EasyPanel. Do not deploy with host-level Docker/Compose/Swarm commands, standalone containers, host daemons, host cron, or manual service overrides. Application configuration and secrets are entered through the authorized EasyPanel controls; do not materialize secrets into host files or unmanaged wrappers. External DNS, provider storage, the existing Chatwoot deployment, and EPIC telecom systems are not recreated by this repository.
 
-or run the `build-isola-seldonframe` workflow (Actions tab), which type-checks, runs the three specs and pushes
-`ghcr.io/<owner>/isola-seldonframe:pgpool-2026-10-06` (resolve the workflow output to an immutable digest before deployment). The values in the Dockerfile's build stage
-(`DATABASE_URL`, `AUTH_SECRET`, ...) are upstream's throwaway build placeholders, not real credentials.
+For a local/offline build check only:
+
+    docker build --build-arg NEXT_PUBLIC_APP_URL=https://uplink.epic.dm -t isola-seldonframe .
+
+For a candidate image, run the `build-isola-seldonframe` workflow (Actions tab). It type-checks, runs the configured specs and pushes one amd64 image to
+`ghcr.io/<owner>/isola-seldonframe`. Record and pin the workflow's immutable digest in EasyPanel; do not deploy by mutable tag. The Dockerfile's build-stage values (`DATABASE_URL`, `AUTH_SECRET`, ...) are throwaway placeholders, never runtime credentials. EasyPanel redeploy persistence must be verified from its portal read-back before staging.
 
 ## Runtime environment (names only)
 
-`DATABASE_URL`, optional `DB_DRIVER=pg`, `DB_POOL_MAX`, `DB_POOL_IDLE_MS`, `DB_POOL_CONNECT_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`, `AUTH_SECRET`, `AUTH_URL`, `ENCRYPTION_KEY`, `NEXT_PUBLIC_APP_URL`, and optionally
-`SMTP2GO_API_KEY` + `PORTAL_EMAIL_FROM` (portal sign-in email) and `FOLLOW_UP_RESPONDER_EMAIL` (who receives enquiry follow-ups). See `.env.docker.example` for the full list.
+Database: `DATABASE_URL`, optional `DB_DRIVER=pg`, `DB_POOL_MAX`, `DB_POOL_IDLE_MS`, `DB_POOL_CONNECT_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`.
+
+Canonical origin: `PLATFORM_APP_URL`, `NEXT_PUBLIC_APP_URL`, and `AUTH_URL` must agree; `APP_HOSTS` contains only explicitly approved aliases.
+
+Branding: `PLATFORM_NAME`, `PLATFORM_HOME_URL`, `PLATFORM_SUPPORT_EMAIL`, `PLATFORM_LOGO_URL`, `PLATFORM_FAVICON_URL`, `PLATFORM_EMAIL_FROM_NAME`, `PLATFORM_EMAIL_FOOTER`, `SHOW_VENDOR_BRANDING`.
+
+Authentication/application: `AUTH_SECRET`, `ENCRYPTION_KEY`. Portal email may use `SMTP2GO_API_KEY` and `PORTAL_EMAIL_FROM`; follow-up routing may use `FOLLOW_UP_RESPONDER_EMAIL`. Do not configure secrets from source files or local build arguments.
