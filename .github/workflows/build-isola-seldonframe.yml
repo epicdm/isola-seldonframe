@@ -3,8 +3,11 @@ name: build-isola-seldonframe
 on:
   workflow_dispatch:
     inputs:
-      public_url:
-        description: Canonical public URL baked into the client bundle
+      staging_public_url:
+        description: Canonical staging origin baked into the staging client bundle
+        default: https://build.uplink.epic.dm
+      production_public_url:
+        description: Canonical production origin baked into the production client bundle
         default: https://uplink.epic.dm
 permissions:
   contents: read
@@ -51,6 +54,13 @@ jobs:
         env:
           DB_DRIVER: pg
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/seldon_test
+      - name: Validate origin inputs
+        env:
+          STAGING_PUBLIC_URL: ${{ inputs.staging_public_url }}
+          PRODUCTION_PUBLIC_URL: ${{ inputs.production_public_url }}
+        run: |
+          test "$STAGING_PUBLIC_URL" = "https://build.uplink.epic.dm"
+          test "$PRODUCTION_PUBLIC_URL" = "https://uplink.epic.dm"
       - name: Full unit and PostgreSQL transaction suite
         run: pnpm test:unit
         env:
@@ -76,10 +86,18 @@ jobs:
         run: pnpm emit:event-registry:check
       - name: Generator regression suite
         run: cd packages/crm && node --import tsx --test tests/regression/generator-prompts.spec.ts
-  image:
+  images:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: staging
+            public_url: ${{ inputs.staging_public_url }}
+          - target: production
+            public_url: ${{ inputs.production_public_url }}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
@@ -95,7 +113,13 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
-          build-args: NEXT_PUBLIC_APP_URL=${{ inputs.public_url }}
-          tags: ghcr.io/${{ github.repository_owner }}/isola-seldonframe:uplink-phase1-${{ github.sha }}
+          build-args: NEXT_PUBLIC_APP_URL=${{ matrix.public_url }}
+          tags: ghcr.io/${{ github.repository_owner }}/isola-seldonframe:uplink-${{ matrix.target }}-${{ github.sha }}
       - name: Record immutable image reference
-        run: echo "image digest ${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_TAG: ghcr.io/${{ github.repository_owner }}/isola-seldonframe:uplink-${{ matrix.target }}-${{ github.sha }}
+          SOURCE_SHA: ${{ github.sha }}
+          PUBLIC_URL: ${{ matrix.public_url }}
+        run: |
+          printf 'target=%s\nsource=%s\norigin=%s\nimage=%s@%s\n' "${{ matrix.target }}" "$SOURCE_SHA" "$PUBLIC_URL" "$IMAGE_TAG" "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
