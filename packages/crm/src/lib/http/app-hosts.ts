@@ -66,3 +66,7 @@ export function buildWorkspaceAdminRedirectUrl(
   target.searchParams.set("next", `${pathname}${search}`);
   return target;
 }
+
+export function workspaceBaseDomain(env: Record<string, string | undefined> = process.env): string {
+  return env.WORKSPACE_BASE_DOMAIN?.trim() || new URL(canonicalAppOrigin(env)).hostname;
+}
