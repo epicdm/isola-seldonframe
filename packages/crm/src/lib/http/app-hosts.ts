@@ -18,8 +18,8 @@ export function parseAppHosts(raw: string | undefined): string[] {
     if (!value) continue;
     const origin = normalizedOrigin(value.includes("://") ? value : `https://${value}`);
     if (!origin) continue;
-    const host = new URL(origin).host;
-    if (/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$/.test(host)) {
+    const host = new URL(origin).hostname;
+    if (/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host)) {
       hosts.add(host);
     }
   }
