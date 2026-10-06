@@ -1,5 +1,7 @@
 import { getPlatformBranding } from "@/lib/platform/branding";
 
+const branding = getPlatformBranding();
+
 export default function AuthLayout({
   children,
 }: Readonly<{
