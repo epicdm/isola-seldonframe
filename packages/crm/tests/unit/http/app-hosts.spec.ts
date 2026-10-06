@@ -21,6 +21,7 @@ describe("Uplink application hosts", () => {
 
   test("canonical origin requires configured auth and public origins to agree", () => {
     const env = {
+      PLATFORM_APP_URL: "https://uplink.epic.dm",
       NEXT_PUBLIC_APP_URL: "https://uplink.epic.dm",
       AUTH_URL: "https://uplink.epic.dm/",
     };
@@ -28,6 +29,10 @@ describe("Uplink application hosts", () => {
     assert.equal(primaryAppHost(env), "uplink.epic.dm");
     assert.throws(
       () => canonicalAppOrigin({ ...env, AUTH_URL: "https://wrong.example" }),
+      /same canonical origin/,
+    );
+    assert.throws(
+      () => canonicalAppOrigin({ ...env, PLATFORM_APP_URL: "https://other.example" }),
       /same canonical origin/,
     );
     assert.throws(() => canonicalAppOrigin({ NEXT_PUBLIC_APP_URL: "javascript:alert(1)" }), /HTTP\(S\)/);
