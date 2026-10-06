@@ -24,7 +24,10 @@
 // Skips cleanly when DATABASE_URL is unset (local builds, CI without a DB).
 
 import { resolve } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+
+const require = createRequire(import.meta.url);
 import { neon } from "@neondatabase/serverless";
 
 /**
@@ -146,7 +149,7 @@ async function main() {
   try {
     const driver = resolveDriftDriver();
     if (driver === "pg") {
-      const { Pool } = await import("pg");
+      const { Pool } = require("pg");
       pool = new Pool({
         connectionString: process.env.DATABASE_URL,
         max: 1,
