@@ -1,7 +1,7 @@
 export function parseAppHosts(raw: string | undefined): string[] {
   return (raw ?? "")
     .split(",")
-    .map((host) => host.trim().toLowerCase().replace(/^https?:\\/\\//, "").replace(/\\/.*$/, "").replace(/:\\d+$/, ""))
+    .map((host) => host.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, ""))
     .filter((host) => /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(host));
 }
 
