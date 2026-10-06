@@ -25,11 +25,16 @@ describe("Uplink application hosts", () => {
       PLATFORM_APP_URL: "https://uplink.epic.dm",
       NEXT_PUBLIC_APP_URL: "https://uplink.epic.dm",
       AUTH_URL: "https://uplink.epic.dm/",
+      NEXTAUTH_URL: "https://uplink.epic.dm",
     };
     assert.equal(canonicalAppOrigin(env), "https://uplink.epic.dm");
     assert.equal(primaryAppHost(env), "uplink.epic.dm");
     assert.throws(
       () => canonicalAppOrigin({ ...env, AUTH_URL: "https://wrong.example" }),
+      /same canonical origin/,
+    );
+    assert.throws(
+      () => canonicalAppOrigin({ ...env, NEXTAUTH_URL: "https://wrong.example" }),
       /same canonical origin/,
     );
     assert.throws(
