@@ -61,11 +61,13 @@ export const metadata: Metadata = {
   title: metadataTitle,
   description: metadataDescription,
   manifest: "/brand/manifest.webmanifest",
-  icons: {
-    icon: [{ url: platformBranding.faviconUrl }],
-    shortcut: platformBranding.faviconUrl,
-    apple: [{ url: platformBranding.faviconUrl }],
-  },
+  icons: platformBranding.faviconUrl
+    ? {
+        icon: [{ url: platformBranding.faviconUrl }],
+        shortcut: platformBranding.faviconUrl,
+        apple: [{ url: platformBranding.faviconUrl }],
+      }
+    : undefined,
   openGraph: {
     title: metadataTitle,
     description: metadataDescription,
