@@ -16,10 +16,10 @@ const nextConfig: NextConfig = {
       pg: { browser: "./src/db/pg-browser-stub.ts" },
     },
   },
-  allowedDevOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345"],
+  allowedDevOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345", ...extraAppHosts()],
   experimental: {
     serverActions: {
-      allowedOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345"],
+      allowedOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345", ...extraAppHosts()],
     },
   },
   // v1.38.4 — allowlist Unsplash domains for next/image. Without this,
