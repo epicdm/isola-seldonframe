@@ -46,6 +46,33 @@ async function collectJavaScriptFiles(directory) {
   return files;
 }
 
+function sourceMapEntries(map) {
+  if (Array.isArray(map.sections)) return map.sections.flatMap((section) => sourceMapEntries(section.map));
+  return (map.sources ?? []).map((source, index) => ({
+    source,
+    content: map.sourcesContent?.[index] ?? null,
+  }));
+}
+
+async function reportSourceMap(chunkPath) {
+  try {
+    const map = JSON.parse(await readFile(`${chunkPath}.map`, "utf8"));
+    const entries = sourceMapEntries(map);
+    const appEntries = entries.filter(({ source }) =>
+      source.includes("packages/crm/src/") || source.includes("/src/")
+    );
+    console.error(`[browser-pg-boundary] sourcemap sources for ${chunkPath.split("/").pop()}: ${appEntries.length} app modules`);
+    for (const { source, content } of appEntries) {
+      console.error(`[browser-pg-boundary] source ${source}`);
+      if (!content) continue;
+      const imports = content.split(/\r?\n/).filter((line) => /^\s*(?:import|export)\b/.test(line)).slice(0, 8);
+      for (const line of imports) console.error(`[browser-pg-boundary] import ${source}: ${line.trim().slice(0, 240)}`);
+    }
+  } catch (error) {
+    console.error(`[browser-pg-boundary] no readable source map for ${chunkPath.split("/").pop()}: ${error.code ?? error.name}`);
+  }
+}
+
 async function main() {
   const here = resolve(fileURLToPath(new URL(".", import.meta.url)));
   const staticDirectory = resolve(here, "../.next/static");
@@ -68,6 +95,7 @@ async function main() {
           const context = markerContext(contents[index], marker);
           if (context) console.error(`[browser-pg-boundary] context ${marker}: ${JSON.stringify(context)}`);
         }
+        await reportSourceMap(files[index]);
       }
     }
     process.exitCode = 1;

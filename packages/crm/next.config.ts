@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
   // tsc post-build check to stop whack-a-mole on third-party type artifacts.
   typescript: { ignoreBuildErrors: true },
   reactCompiler: true,
+  productionBrowserSourceMaps: process.env.UPLINK_DIAG_BROWSER_SOURCEMAPS === "1",
   // `pg` is node-only. A few client components reach `@/db` transitively; both
   // bundlers map browser imports to a throwing stub, never the networking driver.
   turbopack: {

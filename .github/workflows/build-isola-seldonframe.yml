@@ -115,7 +115,9 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
-          build-args: NEXT_PUBLIC_APP_URL=${{ matrix.public_url }}
+          build-args: |
+            NEXT_PUBLIC_APP_URL=${{ matrix.public_url }}
+            UPLINK_DIAG_BROWSER_SOURCEMAPS=1
           tags: ghcr.io/${{ github.repository_owner }}/isola-seldonframe:uplink-${{ matrix.target }}-${{ github.sha }}
       - name: Record immutable image reference
         env:
