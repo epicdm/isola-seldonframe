@@ -19,7 +19,7 @@ import {
   type MarkdownFetchMode,
 } from "@/lib/marketplace/md-analytics";
 import { toInternalRedirectPath } from "@/lib/auth/signup-redirect";
-import { buildWorkspaceAdminRedirectUrl, extraAppHosts } from "@/lib/http/app-hosts";
+import { buildWorkspaceAdminRedirectUrl, extraAppHosts, primaryAppHost } from "@/lib/http/app-hosts";
 
 const protectedPrefixes = ["/hub", "/dashboard", "/welcome", "/orgs", "/contacts", "/deals", "/activities", "/forms", "/settings", "/api/v1"];
 const publicPrefixes = ["/api/v1", "/api/auth"];
@@ -161,7 +161,7 @@ function resolveWorkspaceRewritePath(
 }
 
 function isAppHost(host: string) {
-  return defaultAppHosts.has(host) || host.endsWith(".vercel.app") || extraAppHosts().includes(host);
+  return host === primaryAppHost() || defaultAppHosts.has(host) || host.endsWith(".vercel.app") || extraAppHosts().includes(host);
 }
 
 function isAuthPath(pathname: string) {
