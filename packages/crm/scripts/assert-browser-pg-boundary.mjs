@@ -27,6 +27,14 @@ export function findNodePgBrowserMarkers(contents) {
   return [...found].sort();
 }
 
+function markerContext(contents, marker, radius = 72) {
+  const index = contents.indexOf(marker);
+  if (index < 0) return null;
+  const start = Math.max(0, index - radius);
+  const end = Math.min(contents.length, index + marker.length + radius);
+  return contents.slice(start, end).replace(/[\r\n\t]/g, " ");
+}
+
 async function collectJavaScriptFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
@@ -56,6 +64,10 @@ async function main() {
       const fileMarkers = findNodePgBrowserMarkers([contents[index]]);
       if (fileMarkers.length) {
         console.error(`[browser-pg-boundary] ${relative(staticDirectory, files[index])}: ${fileMarkers.join(", ")}`);
+        for (const marker of fileMarkers) {
+          const context = markerContext(contents[index], marker);
+          if (context) console.error(`[browser-pg-boundary] context ${marker}: ${JSON.stringify(context)}`);
+        }
       }
     }
     process.exitCode = 1;

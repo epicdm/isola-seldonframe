@@ -45,6 +45,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Migration journal check
         run: pnpm db:check-journaled
+      - name: Browser PostgreSQL boundary guard controls
+        run: node --test packages/crm/scripts/assert-browser-pg-boundary.test.mjs
       - name: Typecheck
         env:
           NODE_OPTIONS: --max-old-space-size=6000
