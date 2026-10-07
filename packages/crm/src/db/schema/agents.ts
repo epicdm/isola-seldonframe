@@ -400,6 +400,8 @@ export type AgentEvalScenario = {
 export type AgentEvalExpectation = {
   /** Substrings that MUST appear in the final assistant response. */
   responseContains?: string[];
+  /** At least one acceptable phrase must appear in the final response. */
+  responseContainsAny?: string[];
   /** Substrings that MUST NOT appear (e.g., specific dollar amounts
    *  not in soul.pricing). */
   responseLacks?: string[];

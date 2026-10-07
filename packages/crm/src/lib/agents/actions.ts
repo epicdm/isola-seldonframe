@@ -102,16 +102,16 @@ export type PublishStatusResult = PublishAgentResult;
 export async function setAgentStatusAction(input: {
   agentId: string;
   status: "draft" | "test" | "live" | "paused";
-  force?: boolean;
 }): Promise<PublishStatusResult> {
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
+  // Workspace sessions publish only through the normal eval gate; `force` is
+  // never forwarded from a client-callable server action.
   const result = await publishAgent({
     agentId: input.agentId,
     orgId,
     status: input.status,
-    force: input.force,
   });
   revalidatePath(`/agents/${input.agentId}`, "layout");
   revalidatePath(`/agents`);

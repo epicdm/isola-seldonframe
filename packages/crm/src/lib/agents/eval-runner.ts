@@ -29,9 +29,9 @@ import {
   agents,
   type AgentBlueprint,
   type AgentEvalScenario,
-  type AgentEvalExpectation,
 } from "@/db/schema";
 import { executeTurn } from "./runtime";
+import { checkEvalExpectations } from "./eval-expectations";
 import {
   PUBLISH_PASS_RATE_THRESHOLD,
   getScenariosForArchetype,
@@ -225,7 +225,7 @@ async function runOneScenario(input: {
   }
 
   // 3. Check expectations
-  const failures = checkExpectations({
+  const failures = checkEvalExpectations({
     response: lastResponse,
     validatorFails: lastValidatorFails,
     toolNames: allToolNames,
@@ -265,48 +265,6 @@ async function runOneScenario(input: {
 }
 
 // ─── expectation checker ────────────────────────────────────────────────
-
-function checkExpectations(input: {
-  response: string;
-  validatorFails: string[];
-  toolNames: string[];
-  expected: AgentEvalExpectation;
-}): string[] {
-  const failures: string[] = [];
-  const lowerResp = input.response.toLowerCase();
-
-  if (input.expected.responseContains) {
-    for (const needle of input.expected.responseContains) {
-      if (!lowerResp.includes(needle.toLowerCase())) {
-        failures.push(`missing_required_substring: "${needle}"`);
-      }
-    }
-  }
-
-  if (input.expected.responseLacks) {
-    for (const forbidden of input.expected.responseLacks) {
-      if (lowerResp.includes(forbidden.toLowerCase())) {
-        failures.push(`contained_forbidden_substring: "${forbidden}"`);
-      }
-    }
-  }
-
-  if (input.expected.toolCallsRequired) {
-    for (const tc of input.expected.toolCallsRequired) {
-      if (!input.toolNames.includes(tc.name)) {
-        failures.push(`missing_required_tool_call: ${tc.name}`);
-      }
-    }
-  }
-
-  if (input.expected.validatorsAllPassed && input.validatorFails.length > 0) {
-    failures.push(
-      `validators_failed: ${input.validatorFails.join(", ")}`,
-    );
-  }
-
-  return failures;
-}
 
 // ─── helpers exposed to caller ──────────────────────────────────────────
 

@@ -59,6 +59,13 @@ export default function Page() {
         which scenarios failed and why.
       </Step>
 
+      <Callout variant="warn" title="Publishing runs the suite">
+        Changing an agent to Live runs the native evaluation suite as part of
+        the publication gate. Do not run a separate evaluation immediately
+        before publishing unless you intentionally want two model-backed runs.
+        A refused publish still consumes the evaluation run that checks it.
+      </Callout>
+
       <Callout variant="warn" title="The runtime gate is real">
         Even after publish, the same critical-fail validators run in
         production. If a live agent says "I rescheduled your appointment"

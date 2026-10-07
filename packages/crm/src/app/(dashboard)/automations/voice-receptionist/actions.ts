@@ -20,10 +20,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { organizations, type AgentBlueprint, type OrganizationIntegrations } from "@/db/schema";
+import { agents, organizations, type AgentBlueprint, type OrganizationIntegrations } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { assertWritable } from "@/lib/demo/server";
 import { normalizeVoiceNumber } from "@/lib/agents/voice/card-status";
@@ -83,6 +83,15 @@ export async function setVoiceStatusAction(input: {
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
+  // Only a genuine voice-receptionist agent in this workspace may skip the
+  // chatbot eval gate; any other agent id goes through the normal gate.
+  const [row] = await db
+    .select({ archetype: agents.archetype })
+    .from(agents)
+    .where(and(eq(agents.id, input.agentId), eq(agents.orgId, orgId)))
+    .limit(1);
+  const isVoiceAgent = row?.archetype === "voice-receptionist";
+
   const result = await publishAgent({
     agentId: input.agentId,
     orgId,
@@ -90,7 +99,7 @@ export async function setVoiceStatusAction(input: {
     // Voice receptionist has no eval scenarios; the eval gate is a
     // website-chatbot concept. Force the transition so Live/Pause is a
     // direct operator control here.
-    force: true,
+    force: isVoiceAgent,
   });
   revalidatePath("/automations/voice-receptionist");
   revalidatePath("/automations");
