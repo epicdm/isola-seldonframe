@@ -27,7 +27,7 @@
 // without conflicts). Theming via the agent's blueprint.greeting +
 // the workspace's primaryColor (queried at embed-load time).
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { agents, organizations } from "@/db/schema";
@@ -71,7 +71,14 @@ export async function GET(
     })
     .from(agents)
     .innerJoin(organizations, eq(organizations.id, agents.orgId))
-    .where(eq(organizations.slug, orgSlugPart))
+    // Both slugs select the row. An org-only filter returned an arbitrary agent
+    // of the workspace, so any workspace with 2+ agents got a no-op script.
+    .where(
+      and(
+        eq(organizations.slug, orgSlugPart),
+        eq(agents.slug, agentSlugPart),
+      ),
+    )
     .limit(1);
 
   // Even if not found, return a no-op script (don't 404 — that
