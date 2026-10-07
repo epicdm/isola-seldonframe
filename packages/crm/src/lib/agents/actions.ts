@@ -106,8 +106,6 @@ export async function setAgentStatusAction(input: {
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
-  // Workspace sessions publish only through the normal eval gate; `force` is
-  // never forwarded from a client-callable server action.
   const result = await publishAgent({
     agentId: input.agentId,
     orgId,

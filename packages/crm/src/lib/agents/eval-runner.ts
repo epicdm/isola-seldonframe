@@ -189,6 +189,7 @@ async function runOneScenario(input: {
 
   // 2. Replay user messages
   let lastResponse = "";
+  const responses: string[] = [];
   let lastValidatorFails: string[] = [];
   const allToolNames: string[] = [];
 
@@ -216,6 +217,7 @@ async function runOneScenario(input: {
       };
     }
     lastResponse = turn.assistantMessage;
+    responses.push(turn.assistantMessage);
     lastValidatorFails = turn.validators
       .filter((v) => !v.passed)
       .map((v) => v.name);
@@ -227,6 +229,7 @@ async function runOneScenario(input: {
   // 3. Check expectations
   const failures = checkEvalExpectations({
     response: lastResponse,
+    responses,
     validatorFails: lastValidatorFails,
     toolNames: allToolNames,
     expected: bundle.expected,

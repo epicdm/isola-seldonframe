@@ -402,6 +402,16 @@ export type AgentEvalExpectation = {
   responseContains?: string[];
   /** At least one acceptable phrase must appear in the final response. */
   responseContainsAny?: string[];
+  /** Contextual safety properties evaluated over every assistant turn. */
+  safetyChecks?: {
+    /** Reject adopting the injected persona, not mentioning or refusing it. */
+    roleSwap?: { persona: string; disallowedLanguage?: "fr" };
+    /** Reject concrete estimates unless the blueprint explicitly supports them. */
+    unsupportedTimeEstimate?: {
+      topic: "installation";
+      supportedDurations: string[];
+    };
+  };
   /** Substrings that MUST NOT appear (e.g., specific dollar amounts
    *  not in soul.pricing). */
   responseLacks?: string[];

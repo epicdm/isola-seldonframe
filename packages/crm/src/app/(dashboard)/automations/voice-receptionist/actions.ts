@@ -28,6 +28,7 @@ import { getOrgId } from "@/lib/auth/helpers";
 import { assertWritable } from "@/lib/demo/server";
 import { normalizeVoiceNumber } from "@/lib/agents/voice/card-status";
 import { publishAgent, updateAgentBlueprint, type PublishAgentResult } from "@/lib/agents/store";
+import { permitsVoiceStatusForce } from "@/lib/agents/voice-status-policy";
 // voice R1 — the editor's patch allow-list lives in a plain sibling module so
 // it can be unit-tested ("use server" files may export only async functions).
 import { VoiceBlueprintPatchSchema } from "./schema";
@@ -72,9 +73,9 @@ export type SetVoiceStatusResult = PublishAgentResult;
 
 /**
  * Flip the voice agent Live ⇄ Paused. Mirrors setAgentStatusAction → wraps
- * publishAgent (which emits agent.status_changed). Voice agents have no eval
- * suite yet, so promotions to "live" pass `force:true` to skip the chatbot
- * eval gate (the gate runs the website-chatbot scenario set, irrelevant here).
+ * publishAgent (which emits agent.status_changed). Only a workspace-scoped
+ * voice-receptionist row may skip the website-chatbot eval suite; other rows
+ * use the ordinary publication gate.
  */
 export async function setVoiceStatusAction(input: {
   agentId: string;
@@ -83,23 +84,20 @@ export async function setVoiceStatusAction(input: {
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
-  // Only a genuine voice-receptionist agent in this workspace may skip the
-  // chatbot eval gate; any other agent id goes through the normal gate.
-  const [row] = await db
+  const [agent] = await db
     .select({ archetype: agents.archetype })
     .from(agents)
     .where(and(eq(agents.id, input.agentId), eq(agents.orgId, orgId)))
     .limit(1);
-  const isVoiceAgent = row?.archetype === "voice-receptionist";
 
   const result = await publishAgent({
     agentId: input.agentId,
     orgId,
     status: input.status,
-    // Voice receptionist has no eval scenarios; the eval gate is a
-    // website-chatbot concept. Force the transition so Live/Pause is a
-    // direct operator control here.
-    force: isVoiceAgent,
+    // Only a workspace-owned voice receptionist may skip the web-chat eval
+    // suite. The id+org lookup above prevents using this action on another
+    // agent in the workspace or across tenants.
+    force: permitsVoiceStatusForce(agent?.archetype),
   });
   revalidatePath("/automations/voice-receptionist");
   revalidatePath("/automations");
