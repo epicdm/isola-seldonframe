@@ -27,7 +27,7 @@
 // without conflicts). Theming via the agent's blueprint.greeting +
 // the workspace's primaryColor (queried at embed-load time).
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { agents, organizations } from "@/db/schema";
@@ -47,6 +47,11 @@ import {
 // workspaces hit the same logic in v2/complete BEFORE the chatbot
 // activates — this is the safety net for the existing ones.
 import { applyArchetypeThemeToOrg } from "@/lib/workspace/apply-archetype-theme";
+import {
+  buildEmbedTurnUrl,
+  isEmbedAgentAccessible,
+  resolveRequestedEmbedAgent,
+} from "@/lib/agents/public-embed-resolution";
 
 export async function GET(
   request: Request,
@@ -57,7 +62,7 @@ export async function GET(
     ? agentSlugPath.split("--", 2)
     : [agentSlugPath, "default"];
 
-  const [agentRow] = await db
+  const agentRows = await db
     .select({
       id: agents.id,
       name: agents.name,
@@ -71,20 +76,23 @@ export async function GET(
     })
     .from(agents)
     .innerJoin(organizations, eq(organizations.id, agents.orgId))
-    .where(eq(organizations.slug, orgSlugPart))
+    .where(and(
+      eq(organizations.slug, orgSlugPart),
+      eq(agents.slug, agentSlugPart),
+    ))
     .limit(1);
+  const agentRow = resolveRequestedEmbedAgent(agentRows, orgSlugPart, agentSlugPart);
 
   // Even if not found, return a no-op script (don't 404 — that
   // would log noise on the operator's website console).
   const url = new URL(request.url);
-  const turnUrl = `${url.protocol}//${url.host}/api/v1/public/agent/${orgSlugPart}--${agentSlugPart}/turn`;
+  const turnUrl = buildEmbedTurnUrl(`${url.protocol}//${url.host}`, orgSlugPart, agentSlugPart);
 
-  if (!agentRow || agentRow.slug !== agentSlugPart || !["live", "test"].includes(agentRow.status)) {
+  if (!agentRow || !isEmbedAgentAccessible(agentRow.status)) {
     console.warn(JSON.stringify({
       event: "embed_js_noop_returned",
       slug: agentSlugPath,
       reason: !agentRow ? "agent_not_found" :
-              agentRow.slug !== agentSlugPart ? "slug_mismatch" :
               `status_${agentRow.status}`,
     }));
     return new NextResponse(

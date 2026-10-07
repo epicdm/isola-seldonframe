@@ -34,9 +34,9 @@ export type FallbackEntry = {
 const FALLBACKS: Record<string, FallbackEntry> = {
   quotes_only_from_soul_pricing: {
     correction:
-      "Your previous response quoted a dollar amount that's not in the operator's authorized pricing list. Regenerate WITHOUT quoting any specific dollar amount. If the visitor asked about price, say something like 'I'd like to give you an accurate quote — let me have someone follow up' (don't ask for email; the visitor already provided it OR will follow up with their preferred channel).",
+      "Your previous response quoted a dollar amount that's not in the operator's authorized pricing list. Regenerate WITHOUT quoting any specific dollar amount. If the visitor asked about price, say plainly that you don't have an exact price to quote. Do NOT promise a callback, a follow-up, a message or any future contact, and do not ask for an email or phone number.",
     finalFallback:
-      "I'd like to give you an accurate quote — I'll have someone from the team follow up.",
+      "I can't verify that answer right now. Please try again, or use any support contact shown on this page.",
     fixHint:
       "The agent quoted a price not in your pricing_facts. Either add the missing service to /agents/[id]/settings → Pricing facts, or trim the FAQ entries that mention specific dollar amounts.",
   },
@@ -76,7 +76,7 @@ const FALLBACKS: Record<string, FallbackEntry> = {
     correction:
       "Your previous response claimed an action you didn't actually take (e.g., 'I rescheduled it' / 'You're booked' / 'I cancelled it' / 'I let the team know'). State-changing actions REQUIRE the matching tool call (reschedule_appointment, cancel_appointment, book_appointment, escalate_to_human) returning ok=true. Regenerate: either ACTUALLY call the tool now, OR rewrite without claiming the action — say 'let me look into that' instead.",
     finalFallback:
-      "Let me look into that for you.",
+      "I can't confirm that here.",
     fixHint:
       "The agent claimed an action without calling the matching tool. Verify the agent's blueprint includes the relevant capability (reschedule_appointment, cancel_appointment, etc.) under /agents/[id]/settings.",
   },
@@ -130,7 +130,7 @@ export function selectFinalFallback(
     }
   }
   // Generic — neutral, no info solicitation, no false confirmations.
-  return "Let me look into that for you.";
+  return "I'm not able to help with that here.";
 }
 
 /** Map a validator name to its operator-facing fix hint. */

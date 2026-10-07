@@ -8,6 +8,7 @@ import {
   TEMPORARY_RUNTIME_ERROR_FALLBACK,
   WORKSPACE_NOT_FOUND_FALLBACK,
 } from "../../../src/lib/agents/fallback-messages";
+import { selectFinalFallback } from "../../../src/lib/agents/fallbacks";
 
 test("unavailable-agent fallbacks do not promise unsupported contact or handoff", () => {
   for (const message of [
@@ -27,4 +28,11 @@ test("agent runtime uses the reviewed fixed fallbacks", () => {
   assert.match(runtime, /fallbackMessage:\s*PROVIDER_NOT_CONFIGURED_FALLBACK/);
   assert.match(runtime, /:\s*TEMPORARY_RUNTIME_ERROR_FALLBACK/);
   assert.doesNotMatch(runtime, /Please reach out directly|someone follow up with you/);
+});
+
+test("critical-validator failure does not claim a human handoff or callback", () => {
+  const message = selectFinalFallback(["quotes_only_from_soul_pricing"]);
+  assert.match(message, /can't verify that answer right now/i);
+  assert.match(message, /support contact shown on this page/i);
+  assert.doesNotMatch(message, /someone (?:will|is going to)|follow up|team has been notified|we've forwarded/i);
 });
