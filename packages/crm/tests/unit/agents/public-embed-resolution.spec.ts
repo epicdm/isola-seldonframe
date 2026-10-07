@@ -154,13 +154,16 @@ test("the generated embed script sends the visitor turn to the selected sales ag
   const panel = body.children.find((child) => child.className === "sf-agent-panel");
   const form = panel?.querySelector("#sf-agent-form");
   const input = panel?.querySelector("#sf-agent-input");
+  assert.ok(panel);
   assert.ok(form);
   assert.ok(input);
   input.value = "What plans are available?";
-  await form.handlers.get("submit")({ preventDefault() {} });
+  const submit = form.handlers.get("submit");
+  assert.ok(submit);
+  await submit({ preventDefault() {} });
 
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.url, "https://uplink.epic.dm/api/v1/public/agent/uplinks-workspace-4816--default/turn");
   assert.equal(JSON.parse(requests[0].body).message, "What plans are available?");
-  assert.equal(panel.querySelector("#sf-agent-msgs").children.at(-1)?.innerHTML, "Plans are available.");
+  assert.equal(panel.querySelector("#sf-agent-msgs")?.children.at(-1)?.innerHTML, "Plans are available.");
 });
