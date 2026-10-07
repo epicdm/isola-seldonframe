@@ -15,9 +15,9 @@
 /** Build the copy-paste `claude mcp add` command that connects an IDE agent to
  *  the SeldonFrame MCP over Streamable HTTP, authenticating with the raw key.
  *  Pure: same inputs → same string. */
-export function buildMcpConnectSnippet(rawKey: string, mcpUrl: string): string {
+export function buildMcpConnectSnippet(rawKey: string, mcpUrl: string, serverName = "seldonframe"): string {
   return [
-    `claude mcp add seldonframe --transport http ${mcpUrl} \\`,
+    `claude mcp add ${serverName} --transport http ${mcpUrl} \\`,
     `  --header "Authorization: Bearer ${rawKey}"`,
   ].join("\n");
 }

@@ -5,6 +5,7 @@ import { bookings, organizations } from "@/db/schema";
 import { resolveOrgIdForWrite, resolveV1Identity } from "@/lib/auth/v1-identity";
 import { assertWritable, demoApiBlockedResponse, isDemoReadonly } from "@/lib/demo/server";
 import { logEvent } from "@/lib/observability/log";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 
 // CRUD for appointment types — template rows in `bookings` with
 // status='template'. Pre-fix, the only MCP write path was `configure_booking`
@@ -216,7 +217,7 @@ export async function POST(request: Request) {
         booking_slug: created.bookingSlug,
         metadata: created.metadata,
       },
-      public_url: `https://${org.slug}.${process.env.WORKSPACE_BASE_DOMAIN?.trim() || "app.seldonframe.com"}/book/${created.bookingSlug}`,
+      public_url: `https://${org.slug}.${resolveWorkspaceBaseDomain()}/book/${created.bookingSlug}`,
     },
     { status: 201 },
   );

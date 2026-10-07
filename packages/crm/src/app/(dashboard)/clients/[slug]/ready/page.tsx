@@ -38,6 +38,7 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { agents, bookings, intakeForms, landingPages, organizations, orgMembers, soulSources } from "@/db/schema";
 import { buildWorkspaceUrls } from "@/lib/billing/anonymous-workspace";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 // 2026-05-27 — Unified onboarding shell + step-3 completion path.
 import { OnboardingShell } from "@/components/onboarding/shell";
 import { getOnboardingState } from "@/lib/onboarding/state";
@@ -61,8 +62,7 @@ import { resolveDesignModuleProps } from "@/components/clients/design-picker/res
 
 export const dynamic = "force-dynamic";
 
-const WORKSPACE_BASE_DOMAIN =
-  process.env.WORKSPACE_BASE_DOMAIN?.trim() || "app.seldonframe.com";
+const WORKSPACE_BASE_DOMAIN = resolveWorkspaceBaseDomain();
 
 type ReadyPageProps = {
   params: Promise<{ slug: string }>;

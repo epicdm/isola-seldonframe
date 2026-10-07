@@ -30,6 +30,7 @@ import { autoCreateWebsiteChatbot } from "@/lib/agents/auto-create-website-chatb
 import { seedClientContactInAgencyCrm } from "@/lib/workspace/seed-client-contact-in-agency";
 import { seedDefaultOutboundTriggers } from "@/lib/messaging/seed-default-triggers";
 import { extractBusinessFactsFromPaste } from "@/lib/web-onboarding/paste-extractor";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -101,7 +102,7 @@ async function dispatchCreateFromPaste(text: unknown, landingTemplate?: unknown,
       },
       seedClientContactInAgencyCrm,
       seedDefaultOutboundTriggers,
-      workspaceBaseDomain: process.env.WORKSPACE_BASE_DOMAIN ?? "app.seldonframe.com",
+      workspaceBaseDomain: resolveWorkspaceBaseDomain(),
     },
     body: {
       text,

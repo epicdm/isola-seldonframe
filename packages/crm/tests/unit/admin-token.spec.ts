@@ -126,3 +126,31 @@ test("buildStructuredWorkspaceUrls — workspace id + token are URL-encoded in a
     "token encoded"
   );
 });
+
+test("Uplink workspace admin links and setup guidance use the configured app origin", () => {
+  const prior = {
+    APP_HOSTS: process.env.APP_HOSTS,
+    PLATFORM_NAME: process.env.PLATFORM_NAME,
+    PLATFORM_APP_URL: process.env.PLATFORM_APP_URL,
+    PLATFORM_HOME_URL: process.env.PLATFORM_HOME_URL,
+  };
+  process.env.APP_HOSTS = "uplink.epic.dm";
+  process.env.PLATFORM_NAME = "Uplink";
+  process.env.PLATFORM_APP_URL = "https://uplink.epic.dm";
+  process.env.PLATFORM_HOME_URL = "https://uplink.epic.dm";
+  try {
+    const withToken = buildStructuredWorkspaceUrls("test", "uplink.epic.dm", "org-1", { bearerToken: "synthetic" });
+    const withoutToken = buildStructuredWorkspaceUrls("test", "uplink.epic.dm", "org-1");
+    assert.ok(withToken.admin_url?.startsWith("https://uplink.epic.dm/admin/"));
+    assert.ok(withToken.admin_urls.dashboard.startsWith("https://uplink.epic.dm/switch-workspace"));
+    assert.match(withToken.admin_setup_note, /https:\/\/uplink\.epic\.dm/);
+    assert.match(withoutToken.admin_setup_note, /https:\/\/uplink\.epic\.dm\/signup/);
+    assert.doesNotMatch(withToken.admin_setup_note, /seldonframe\.com/i);
+    assert.doesNotMatch(withoutToken.admin_setup_note, /seldonframe\.com/i);
+  } finally {
+    for (const [key, value] of Object.entries(prior)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});

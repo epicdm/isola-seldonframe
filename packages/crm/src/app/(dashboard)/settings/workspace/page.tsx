@@ -7,6 +7,7 @@ import { getOrgId, requireAuth } from "@/lib/auth/helpers";
 import { isAdminTokenUserId } from "@/lib/auth/admin-token";
 import { updateWorkspaceSettingsAction } from "@/lib/workspace/actions";
 import { COMMON_TIMEZONES } from "@/lib/workspace/timezones";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 
 /**
  * Server-action wrapper that adapts the typed result to the
@@ -41,6 +42,7 @@ async function updateWorkspaceFormHandler(formData: FormData): Promise<void> {
 export default async function WorkspaceSettingsPage() {
   const session = await requireAuth();
   const orgId = await getOrgId();
+  const workspaceBaseDomain = resolveWorkspaceBaseDomain();
   const isGuestAdminToken = isAdminTokenUserId(session.user.id);
 
   if (!orgId) {
@@ -162,10 +164,7 @@ export default async function WorkspaceSettingsPage() {
         <div className="flex items-center justify-between gap-3 pt-1">
           <p className="text-xs text-muted-foreground">
             Slug + workspace ID are immutable. Want a different slug?{" "}
-            <a href="https://seldonframe.com/docs/migrate-workspace" className="underline">
-              Migration docs
-            </a>
-            .
+            Contact your platform operator to discuss a workspace URL change.
           </p>
           <button type="submit" className="crm-button-primary h-10 px-5">
             Save changes
@@ -224,34 +223,34 @@ export default async function WorkspaceSettingsPage() {
           <li className="flex items-center justify-between">
             <span className="text-muted-foreground">Landing</span>
             <a
-              href={`https://${org.slug}.app.seldonframe.com/`}
+              href={`https://${org.slug}.${workspaceBaseDomain}/`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-foreground hover:underline font-mono text-xs"
             >
-              {org.slug}.app.seldonframe.com
+              {org.slug}.{workspaceBaseDomain}
             </a>
           </li>
           <li className="flex items-center justify-between">
             <span className="text-muted-foreground">Booking</span>
             <a
-              href={`https://${org.slug}.app.seldonframe.com/book`}
+              href={`https://${org.slug}.${workspaceBaseDomain}/book`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-foreground hover:underline font-mono text-xs"
             >
-              {org.slug}.app.seldonframe.com/book
+              {org.slug}.{workspaceBaseDomain}/book
             </a>
           </li>
           <li className="flex items-center justify-between">
             <span className="text-muted-foreground">Intake</span>
             <a
-              href={`https://${org.slug}.app.seldonframe.com/intake`}
+              href={`https://${org.slug}.${workspaceBaseDomain}/intake`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-foreground hover:underline font-mono text-xs"
             >
-              {org.slug}.app.seldonframe.com/intake
+              {org.slug}.{workspaceBaseDomain}/intake
             </a>
           </li>
         </ul>

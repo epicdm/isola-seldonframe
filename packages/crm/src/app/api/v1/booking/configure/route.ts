@@ -8,6 +8,7 @@ import {
 } from "@/lib/auth/v1-identity";
 import { assertWritable, demoApiBlockedResponse, isDemoReadonly } from "@/lib/demo/server";
 import { logEvent } from "@/lib/observability/log";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 
 type ConfigureBody = {
   workspace_id?: unknown;
@@ -133,7 +134,7 @@ export async function POST(request: Request) {
       duration_minutes: effectiveDuration,
       description_updated: Boolean(newDescription),
     },
-    public_url: `https://${org.slug}.${process.env.WORKSPACE_BASE_DOMAIN?.trim() || "app.seldonframe.com"}/book`,
+    public_url: `https://${org.slug}.${resolveWorkspaceBaseDomain()}/book`,
     next: ["Visit /book on your subdomain to verify the new booking details."],
   });
 }

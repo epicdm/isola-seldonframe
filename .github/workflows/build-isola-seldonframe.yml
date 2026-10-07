@@ -8,6 +8,45 @@ on:
       public_url:
         description: Public base URL baked into the client bundle
         default: https://uplink.epic.dm
+      platform_name:
+        description: Customer-visible platform name
+        default: Uplink
+      platform_operator_name:
+        description: Operating company name
+        default: EPIC
+      platform_app_url:
+        description: Canonical platform origin
+        default: https://uplink.epic.dm
+      platform_home_url:
+        description: Public platform home URL
+        default: https://uplink.epic.dm
+      platform_support_email:
+        description: Public support contact
+        default: uplink@epic.dm
+      platform_email_from_name:
+        description: Sign-in email sender display name
+        default: Uplink by EPIC
+      platform_email_footer:
+        description: Sign-in email footer
+        default: Uplink is operated by EPIC - uplink@epic.dm
+      workspace_base_domain:
+        description: Base domain for customer workspace URLs
+        default: uplink.epic.dm
+      app_hosts:
+        description: Additional canonical app host allow-list
+        default: uplink.epic.dm
+      platform_logo_url:
+        description: Optional HTTPS or root-relative Uplink logo
+        default: ""
+      platform_favicon_url:
+        description: Optional HTTPS or root-relative Uplink favicon
+        default: ""
+      platform_source_url:
+        description: Public URL for this exact corresponding source (leave blank until authorized and published)
+        default: ""
+      show_vendor_branding:
+        description: Global visibility preference; commercial entitlement remains authoritative
+        default: "false"
 permissions:
   contents: read
   packages: write
@@ -20,6 +59,22 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - name: Validate canonical platform origins
+        shell: bash
+        env:
+          PUBLIC_URL: ${{ inputs.public_url }}
+          PLATFORM_APP_URL: ${{ inputs.platform_app_url }}
+          PLATFORM_HOME_URL: ${{ inputs.platform_home_url }}
+          WORKSPACE_BASE_DOMAIN: ${{ inputs.workspace_base_domain }}
+          APP_HOSTS: ${{ inputs.app_hosts }}
+        run: |
+          test "$PUBLIC_URL" = "$PLATFORM_APP_URL"
+          test "$PLATFORM_APP_URL" = "$PLATFORM_HOME_URL"
+          case "$PUBLIC_URL" in https://*) ;; *) echo "Uplink origins must use HTTPS"; exit 1 ;; esac
+          public_host="${PUBLIC_URL#https://}"
+          public_host="${public_host%%/*}"
+          test "$public_host" = "$WORKSPACE_BASE_DOMAIN"
+          test "$public_host" = "$APP_HOSTS"
       - uses: pnpm/action-setup@v6
         with:
           version: 10.18.1
@@ -54,8 +109,23 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          target: uplink
           platforms: linux/amd64
           push: true
-          build-args: NEXT_PUBLIC_APP_URL=${{ inputs.public_url }}
+          build-args: |
+            NEXT_PUBLIC_APP_URL=${{ inputs.public_url }}
+            PLATFORM_NAME=${{ inputs.platform_name }}
+            PLATFORM_OPERATOR_NAME=${{ inputs.platform_operator_name }}
+            PLATFORM_APP_URL=${{ inputs.platform_app_url }}
+            PLATFORM_HOME_URL=${{ inputs.platform_home_url }}
+            PLATFORM_SUPPORT_EMAIL=${{ inputs.platform_support_email }}
+            PLATFORM_EMAIL_FROM_NAME=${{ inputs.platform_email_from_name }}
+            PLATFORM_EMAIL_FOOTER=${{ inputs.platform_email_footer }}
+            WORKSPACE_BASE_DOMAIN=${{ inputs.workspace_base_domain }}
+            APP_HOSTS=${{ inputs.app_hosts }}
+            PLATFORM_LOGO_URL=${{ inputs.platform_logo_url }}
+            PLATFORM_FAVICON_URL=${{ inputs.platform_favicon_url }}
+            PLATFORM_SOURCE_URL=${{ inputs.platform_source_url }}
+            SHOW_VENDOR_BRANDING=${{ inputs.show_vendor_branding }}
           tags: ghcr.io/${{ github.repository_owner }}/isola-seldonframe:uplink-native-${{ github.sha }}
       - run: echo "image digest ${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

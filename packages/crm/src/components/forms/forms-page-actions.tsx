@@ -5,6 +5,7 @@ import { useMemo, useState, useTransition } from "react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { createFormAction } from "@/lib/forms/actions";
 import { INTAKE_FORM_TEMPLATES, getIntakeFormTemplate } from "@/lib/forms/templates";
+import { buildPublicFormPath } from "@/lib/forms/public-url";
 
 function toSlug(value: string) {
   return (
@@ -17,7 +18,7 @@ function toSlug(value: string) {
   );
 }
 
-export function FormsPageActions({ buttonLabel = "+ New Form" }: { buttonLabel?: string }) {
+export function FormsPageActions({ buttonLabel = "+ New Form", orgSlug }: { buttonLabel?: string; orgSlug: string }) {
   const router = useRouter();
   const [showCreate, setShowCreate] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -178,7 +179,7 @@ export function FormsPageActions({ buttonLabel = "+ New Form" }: { buttonLabel?:
                       required
                     />
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Public URL: /forms/{slug || "new-intake-form"}
+                      Public URL: {buildPublicFormPath(orgSlug, slug || "new-intake-form")}
                     </p>
                   </div>
 

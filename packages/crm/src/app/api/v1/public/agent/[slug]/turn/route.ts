@@ -30,6 +30,7 @@ import { db } from "@/db";
 import { agentConversations, agents, organizations } from "@/db/schema";
 import { executeTurn } from "@/lib/agents/runtime";
 import { decidePublicConversationStatus } from "@/lib/agents/public-turn-status";
+import { publicTurnFallbackEvents, publicTurnFallbackResponse } from "@/lib/agents/public-turn-response";
 import { getCurrentUser } from "@/lib/auth/helpers";
 
 type Body = {
@@ -237,12 +238,9 @@ export async function POST(
             userMessage: message,
           });
           if (!result.ok) {
-            send("delta", { text: result.fallbackMessage });
-            send("done", {
-              conversation_id: conversationId,
-              degraded: true,
-              reason: result.reason,
-            });
+            for (const event of publicTurnFallbackEvents(conversationId!, result)) {
+              send(event.event, event.data);
+            }
             controller.close();
             return;
           }
@@ -291,15 +289,7 @@ export async function POST(
   });
 
   if (!result.ok) {
-    return NextResponse.json(
-      {
-        conversation_id: conversationId,
-        message: result.fallbackMessage,
-        degraded: true,
-        reason: result.reason,
-      },
-      { headers: CORS_HEADERS },
-    );
+    return publicTurnFallbackResponse(conversationId, result, CORS_HEADERS);
   }
 
   return NextResponse.json(

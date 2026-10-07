@@ -18,6 +18,7 @@ import { classifyBusinessTypeFromSoul } from "@/lib/page-schema/classify-busines
 import { selectCRMPersonality } from "@/lib/crm/personality";
 import { inferTimezone } from "@/lib/workspace/infer-timezone";
 import { primaryAppHost } from "@/lib/http/app-hosts";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 const DEFAULT_ENABLED_BLOCKS = [
   "crm",
@@ -673,8 +674,10 @@ function buildSeedSoul(
   return soul;
 }
 
-// Admin links point at the install's own app host when APP_HOSTS is set (self-hosted), else the vendor host.
-const APP_HOST = primaryAppHost() ?? "app.seldonframe.com";
+function canonicalAdminOrigin(env: Record<string, string | undefined> = process.env): string {
+  const host = primaryAppHost(env);
+  return host ? `https://${host}` : resolvePlatformBranding(env).appUrl;
+}
 
 export function buildWorkspaceUrls(
   slug: string,
@@ -682,7 +685,7 @@ export function buildWorkspaceUrls(
   orgId: string
 ) {
   const publicOrigin = `https://${slug}.${baseDomain}`;
-  const adminOrigin = `https://${APP_HOST}`;
+  const adminOrigin = canonicalAdminOrigin();
   const sw = (next: string) =>
     `${adminOrigin}/switch-workspace?to=${encodeURIComponent(orgId)}&next=${encodeURIComponent(next)}`;
   return {
@@ -715,7 +718,7 @@ export function buildStructuredWorkspaceUrls(
   opts?: { bearerToken?: string }
 ) {
   const publicOrigin = `https://${slug}.${baseDomain}`;
-  const adminOrigin = `https://${APP_HOST}`;
+  const adminOrigin = canonicalAdminOrigin();
   const sw = (next: string) =>
     `${adminOrigin}/switch-workspace?to=${encodeURIComponent(orgId)}&next=${encodeURIComponent(next)}`;
 
@@ -741,7 +744,12 @@ export function buildStructuredWorkspaceUrls(
       agents: sw("/agents"),
       settings: sw("/settings"),
     },
-    admin_setup_note: adminUrl
+    admin_setup_note:
+      resolvePlatformBranding().name !== "SeldonFrame"
+        ? (adminUrl
+            ? `The admin_url above opens the dashboard with a token-scoped link that expires in 7 days. The admin_urls map requires signing in at ${adminOrigin} and running link_workspace_owner({}).`
+            : `Admin URLs require login at ${adminOrigin} and for the workspace to be linked to your user account. Sign up at ${adminOrigin}/signup, then run link_workspace_owner({}) to attach this workspace.`)
+        : adminUrl
       ? "The `admin_url` above is the fastest way in: paste it into your browser to land directly on the dashboard (token-scoped, no signup, expires in 7 days). The `admin_urls` map is the legacy login-required path — use it only after you've signed up at app.seldonframe.com and run link_workspace_owner({})."
       : "Admin URLs require login at app.seldonframe.com AND for the workspace to be linked to your user account. To enable browser admin access: " +
         "(1) Sign up at https://app.seldonframe.com/signup. " +

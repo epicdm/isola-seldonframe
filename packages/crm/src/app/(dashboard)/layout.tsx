@@ -26,6 +26,7 @@ import { buildWorkspaceUrls } from "@/lib/billing/anonymous-workspace";
 import { registerCrmEventListeners } from "@/lib/events/listeners";
 import { getAllBlocksForOrg } from "@/lib/blocks/registry";
 import { canSeldonIt, resolvePlanFromPlanId } from "@/lib/billing/entitlements";
+import { resolvePlatformBranding, resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 import { listManagedOrganizations, setActiveOrgAction } from "@/lib/billing/orgs";
 import { getHiddenBlocks } from "@/lib/blocks/visibility-actions";
 import { getNotificationFeed } from "@/lib/notifications/feed";
@@ -38,8 +39,7 @@ import Link from "next/link";
 
 // Mirrors dashboard/page.tsx's WORKSPACE_BASE_DOMAIN — the public workspace
 // host used to build the SeldonChat live-preview iframe URL.
-const WORKSPACE_BASE_DOMAIN =
-  process.env.WORKSPACE_BASE_DOMAIN?.trim() || "app.seldonframe.com";
+const WORKSPACE_BASE_DOMAIN = resolveWorkspaceBaseDomain();
 
 /*
   Square UI class reference (source of truth):
@@ -54,6 +54,7 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }>) {
   registerCrmEventListeners();
+  const platformBrand = resolvePlatformBranding();
 
   const session = await requireAuth();
 
@@ -308,7 +309,10 @@ export default async function DashboardLayout({
               blocks={blocks}
               canAccessSeldon={canAccessSeldon}
               hiddenBlocks={hiddenBlocks}
-              workspaceName={activeOrg?.name || "SeldonFrame"}
+              workspaceName={activeOrg?.name || platformBrand.name}
+              platformName={platformBrand.name}
+              platformOperatorName={platformBrand.operatorName}
+              platformLogoUrl={platformBrand.logoUrl}
               // 2026-05-18 — workspace logo from theme.logoUrl. The
               // workspace SWITCHER tile shows the client's own per-
               // workspace logo (theme.logoUrl) — falling back to the
@@ -387,7 +391,7 @@ export default async function DashboardLayout({
                   userEmail={user?.email || ""}
                   avatarFallback={avatarFallback}
                   canAccessSeldon={canAccessSeldon}
-                  workspaceName={activeOrg?.name || "SeldonFrame"}
+                  workspaceName={activeOrg?.name || platformBrand.name}
                   activeWorkspaceId={orgId}
                   workspaceOptions={workspaceOptions.map((workspace) => ({
                     id: workspace.id,
@@ -426,7 +430,9 @@ export default async function DashboardLayout({
               with Discord / Docs / Report-a-bug links.
               v1.25.3 — hidden for operator sessions: their support is
               their agency (Acme AI), not SF community / docs. */}
-          {!isOperatorSession ? <HelpButton /> : null}
+          {!isOperatorSession ? (
+            <HelpButton platformName={platformBrand.name} supportEmail={platformBrand.supportEmail} />
+          ) : null}
         </div>
       </div>
     </SoulProvider>

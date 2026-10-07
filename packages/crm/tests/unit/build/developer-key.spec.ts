@@ -11,6 +11,13 @@ import assert from "node:assert/strict";
 import { buildMcpConnectSnippet } from "../../../src/lib/build/developer-key";
 
 describe("buildMcpConnectSnippet", () => {
+  test("supports a configured Uplink MCP endpoint and label", () => {
+    const snippet = buildMcpConnectSnippet("synthetic-key", "https://uplink.epic.dm/api/mcp/v1", "uplink");
+    assert.ok(snippet.includes("claude mcp add uplink"));
+    assert.ok(snippet.includes("https://uplink.epic.dm/api/mcp/v1"));
+    assert.ok(snippet.includes("Bearer synthetic-key"));
+  });
+
   test("embeds the raw key in a copy-paste claude mcp add command over Streamable HTTP", () => {
     const raw = "wst_THE_RAW_KEY";
     const snippet = buildMcpConnectSnippet(raw, "https://mcp.seldonframe.com/v1");

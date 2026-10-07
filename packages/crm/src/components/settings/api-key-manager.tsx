@@ -5,8 +5,6 @@ import { Copy, Check, KeyRound, Trash2, Eye, EyeOff, AlertCircle } from "lucide-
 import { mintApiKeyAction, revokeApiKeyAction } from "@/lib/workspace/actions";
 import { buildMcpConnectSnippet } from "@/lib/build/developer-key";
 
-/** The SeldonFrame MCP origin the connect snippet points at (mirrors SKILL.md). */
-const MCP_URL = "https://mcp.seldonframe.com/v1";
 
 /**
  * P0-4: client-side wrapper around the mint / revoke server actions.
@@ -37,7 +35,9 @@ interface MintedKey {
   name: string;
 }
 
-export function ApiKeyManager({ keys }: { keys: KeyRow[] }) {
+export function ApiKeyManager({ keys, appUrl = "https://app.seldonframe.com", platformName = "SeldonFrame" }: { keys: KeyRow[]; appUrl?: string; platformName?: string }) {
+  const mcpUrl = new URL("/api/mcp/v1", appUrl).toString();
+  const contactsUrl = new URL("/api/v1/contacts", appUrl).toString();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [revealedKey, setRevealedKey] = useState<MintedKey | null>(null);
@@ -186,10 +186,10 @@ export function ApiKeyManager({ keys }: { keys: KeyRow[] }) {
               <div className="mt-2 space-y-2 pl-4">
                 <p className="text-muted-foreground">
                   <strong className="text-foreground">Connect the MCP (build & sell from your IDE):</strong>{" "}
-                  add SeldonFrame as a Streamable-HTTP connector:
+                  add {platformName} as a Streamable-HTTP connector:
                 </p>
                 <pre className="rounded-md border bg-background p-2 text-[11px] font-mono overflow-x-auto">
-                  {buildMcpConnectSnippet(revealedKey.token, MCP_URL)}
+                  {buildMcpConnectSnippet(revealedKey.token, mcpUrl, platformName.toLowerCase().replace(/[^a-z0-9-]+/g, "-"))}
                 </pre>
                 <p className="text-muted-foreground">
                   <strong className="text-foreground">Or via SELDONFRAME_API_KEY:</strong>{" "}
@@ -202,7 +202,7 @@ export function ApiKeyManager({ keys }: { keys: KeyRow[] }) {
                   <strong className="text-foreground">For direct API calls:</strong>
                 </p>
                 <pre className="rounded-md border bg-background p-2 text-[11px] font-mono overflow-x-auto">
-                  {`curl -H "Authorization: Bearer ${revealedKey.token}" \\\n  https://app.seldonframe.com/api/v1/contacts`}
+                  {`curl -H "Authorization: Bearer ${revealedKey.token}" \\\n  ${contactsUrl}`}
                 </pre>
               </div>
             </details>

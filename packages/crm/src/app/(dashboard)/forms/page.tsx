@@ -12,6 +12,7 @@ import { FormsPageActions } from "@/components/forms/forms-page-actions";
 // a separate visual editor. Theme already drives the Formbricks-style
 // rendering of public intake forms; the gap was discoverability.
 import { getThemeSettings } from "@/lib/theme/actions";
+import { buildPublicFormPath } from "@/lib/forms/public-url";
 
 /*
   Square UI class reference (source of truth):
@@ -61,7 +62,7 @@ export default async function FormsPage() {
             Submissions become {labels.contact.plural.toLowerCase()} in your CRM automatically.
           </p>
         </div>
-        <FormsPageActions buttonLabel={`+ New ${labels.intakeForm.singular}`} />
+        <FormsPageActions buttonLabel={`+ New ${labels.intakeForm.singular}`} orgSlug={orgSlug} />
       </div>
 
       {/* 2026-05-18 — design customization callout. The Formbricks-style
@@ -131,7 +132,7 @@ export default async function FormsPage() {
               Submissions become {labels.contact.plural.toLowerCase()} in your CRM automatically.
             </p>
             <div className="mt-5">
-              <FormsPageActions buttonLabel={`+ New ${labels.intakeForm.singular}`} />
+              <FormsPageActions buttonLabel={`+ New ${labels.intakeForm.singular}`} orgSlug={orgSlug} />
             </div>
           </div>
         </article>
@@ -142,7 +143,7 @@ export default async function FormsPage() {
               <h3 className="font-medium text-base">Your forms</h3>
               <p className="text-xs text-muted-foreground">Create, edit, and preview the forms your clients will actually complete.</p>
             </div>
-            <FormsPageActions buttonLabel={`+ New ${labels.intakeForm.singular}`} />
+            <FormsPageActions buttonLabel={`+ New ${labels.intakeForm.singular}`} orgSlug={orgSlug} />
           </div>
 
           <div className="hidden sm:grid grid-cols-[1fr_120px_140px_220px] gap-4 px-4 py-3 border-b bg-muted/50 text-xs font-medium text-muted-foreground">
@@ -157,7 +158,7 @@ export default async function FormsPage() {
               <div key={form.id} className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_120px_140px_220px] gap-2 sm:gap-4 px-4 py-3 hover:bg-accent/50 transition-colors items-center">
                 <div className="min-w-0">
                   <p className="font-medium text-sm truncate">{form.name}</p>
-                  <p className="text-xs text-muted-foreground sm:hidden">/{form.slug}</p>
+                  <p className="text-xs text-muted-foreground sm:hidden">{buildPublicFormPath(orgSlug, form.slug)}</p>
                 </div>
                 <span
                   className={`rounded-full border px-2 py-1 text-xs w-fit ${

@@ -17,6 +17,7 @@ import {
   agentTurns,
 } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,7 @@ type AgentRowStats = {
 };
 
 export default async function AdminAgentsPage() {
+  const platformBrand = resolvePlatformBranding();
   const orgId = await getOrgId();
   if (!orgId) {
     return (
@@ -155,14 +157,14 @@ export default async function AdminAgentsPage() {
               website as a chat bubble. Set up takes ~30 seconds.
             </p>
             <div className="flex flex-wrap justify-center gap-2 pt-2">
-              <a
+              {platformBrand.name === "SeldonFrame" ? <a
                 href="https://seldonframe.com/docs/agents"
                 target="_blank"
                 rel="noopener"
                 className="crm-button-secondary h-10 px-5 text-sm"
               >
                 How it works
-              </a>
+              </a> : null}
               <details className="inline-block text-left">
                 <summary className="crm-button-primary h-10 px-5 text-sm cursor-pointer inline-flex items-center">
                   Build with Claude Code →

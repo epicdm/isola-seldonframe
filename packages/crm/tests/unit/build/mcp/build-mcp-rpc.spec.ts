@@ -226,8 +226,12 @@ describe("unauthorizedRpcBody", () => {
   test("route 401 carries WWW-Authenticate resource_metadata when SF_OAUTH_ENABLED=true, with the JSON-RPC body unchanged", async () => {
     const { POST } = await import("../../../../src/app/api/mcp/v1/route");
     const previous = process.env.SF_OAUTH_ENABLED;
+    const previousBrand = process.env.PLATFORM_NAME;
+    const previousAppUrl = process.env.PLATFORM_APP_URL;
     try {
       process.env.SF_OAUTH_ENABLED = "true";
+      delete process.env.PLATFORM_NAME;
+      delete process.env.PLATFORM_APP_URL;
       const response = await POST(
         new Request("http://localhost/api/mcp/v1", { method: "POST", body: "{}" })
       );
@@ -241,6 +245,37 @@ describe("unauthorizedRpcBody", () => {
     } finally {
       if (previous === undefined) delete process.env.SF_OAUTH_ENABLED;
       else process.env.SF_OAUTH_ENABLED = previous;
+      if (previousBrand === undefined) delete process.env.PLATFORM_NAME;
+      else process.env.PLATFORM_NAME = previousBrand;
+      if (previousAppUrl === undefined) delete process.env.PLATFORM_APP_URL;
+      else process.env.PLATFORM_APP_URL = previousAppUrl;
+    }
+  });
+
+  test("branded deployment keeps OAuth metadata on its configured origin", async () => {
+    const { POST } = await import("../../../../src/app/api/mcp/v1/route");
+    const previous = process.env.SF_OAUTH_ENABLED;
+    const previousBrand = process.env.PLATFORM_NAME;
+    const previousAppUrl = process.env.PLATFORM_APP_URL;
+    try {
+      process.env.SF_OAUTH_ENABLED = "true";
+      process.env.PLATFORM_NAME = "Uplink";
+      process.env.PLATFORM_APP_URL = "https://uplink.epic.dm";
+      const response = await POST(
+        new Request("https://uplink.epic.dm/api/mcp/v1", { method: "POST", body: "{}" })
+      );
+      assert.equal(response.status, 401);
+      assert.equal(
+        response.headers.get("www-authenticate"),
+        'Bearer resource_metadata="https://uplink.epic.dm/.well-known/oauth-protected-resource"'
+      );
+    } finally {
+      if (previous === undefined) delete process.env.SF_OAUTH_ENABLED;
+      else process.env.SF_OAUTH_ENABLED = previous;
+      if (previousBrand === undefined) delete process.env.PLATFORM_NAME;
+      else process.env.PLATFORM_NAME = previousBrand;
+      if (previousAppUrl === undefined) delete process.env.PLATFORM_APP_URL;
+      else process.env.PLATFORM_APP_URL = previousAppUrl;
     }
   });
 

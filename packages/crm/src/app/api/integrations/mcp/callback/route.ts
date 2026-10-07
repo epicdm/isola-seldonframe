@@ -12,6 +12,8 @@ import { exchangeCode } from "@/lib/agents/mcp/oauth";
 import { discoverVettedToolsLive } from "@/lib/agents/mcp/discover-vetted-tools";
 import { MCP_OAUTH_COOKIE } from "@/lib/agents/mcp/oauth-state-cookie";
 import { handleMcpOauthCallback } from "@/lib/agents/mcp/oauth-callback";
+import { canonicalAppOrigin } from "@/lib/http/app-hosts";
+import { safeInternalRedirect } from "@/lib/http/redirect-target";
 
 export const runtime = "nodejs";
 
@@ -20,7 +22,7 @@ function resolveAuthSecret(): string {
 }
 
 function resolveAppOrigin(): string {
-  return (process.env.NEXTAUTH_URL?.trim() || "https://app.seldonframe.com").replace(/\/+$/, "");
+  return canonicalAppOrigin().replace(/\/+$/, "");
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -46,7 +48,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     },
   );
 
-  const response = NextResponse.redirect(new URL(result.redirect, request.url));
+  const response = NextResponse.redirect(new URL(safeInternalRedirect(result.redirect, "/integrations?error=mcp_oauth_invalid_redirect"), resolveAppOrigin()));
   if (result.clearCookie) {
     response.cookies.delete(MCP_OAUTH_COOKIE);
   }

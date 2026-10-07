@@ -5,6 +5,8 @@
 // worked around it by rewriting Host to localhost (which then broke Server Actions origin checks: logout failed, and
 // absolute URLs leaked "localhost"). APP_HOSTS="host1,host2" declares extra app hosts. Unset = behaviour unchanged.
 
+import { resolvePlatformBranding } from "@/lib/branding/platform";
+
 export function parseAppHosts(raw: string | undefined): string[] {
   return (raw ?? "")
     .split(",")
@@ -19,4 +21,10 @@ export function extraAppHosts(env: Record<string, string | undefined> = process.
 /** First declared app host, used to build admin links; null when APP_HOSTS is unset. */
 export function primaryAppHost(env: Record<string, string | undefined> = process.env): string | null {
   return extraAppHosts(env)[0] ?? null;
+}
+
+/** Configured app origin for redirects; never derive operator redirects from request.url. */
+export function canonicalAppOrigin(env: Record<string, string | undefined> = process.env): string {
+  const host = primaryAppHost(env);
+  return host ? `https://${host}` : resolvePlatformBranding(env).appUrl;
 }

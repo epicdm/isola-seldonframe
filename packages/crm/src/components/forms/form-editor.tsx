@@ -1,12 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import {
   AlignLeft,
   ArrowDown,
   ArrowUp,
-  FileText,
   ListChecks,
   Mail,
   Phone,
@@ -15,6 +15,7 @@ import {
   Type as TypeIcon,
 } from "lucide-react";
 import { updateFormAction } from "@/lib/forms/actions";
+import { buildPublicFormPath } from "@/lib/forms/public-url";
 import { cn } from "@/lib/utils";
 
 type EditableField = {
@@ -45,11 +46,13 @@ const FIELD_TYPE_BY_VALUE: Map<string, (typeof FIELD_TYPES)[number]> = new Map(
 );
 
 export function FormEditor({
+  orgSlug,
   formId,
   initialName,
   initialSlug,
   initialFields,
 }: {
+  orgSlug: string;
   formId: string;
   initialName: string;
   initialSlug: string;
@@ -142,7 +145,14 @@ export function FormEditor({
               onChange={(event) => setSlug(event.target.value)}
               required
             />
-            <p className="text-[11px] text-muted-foreground">Public URL: /forms/{slug || "…"}</p>
+            <Link
+              href={buildPublicFormPath(orgSlug, slug)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              Preview public form
+            </Link>
           </div>
         </div>
       </section>

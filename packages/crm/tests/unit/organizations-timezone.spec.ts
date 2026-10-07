@@ -10,6 +10,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
 import { resolveScheduleTimezone } from "../../src/lib/agents/schedule-timezone";
+import { COMMON_TIMEZONES } from "../../src/lib/workspace/timezones";
 
 // ---------------------------------------------------------------------
 // Schema-shape pin (Drizzle column must exist + default to UTC)
@@ -32,6 +33,12 @@ describe("organizations.timezone column — schema surface", () => {
 // ---------------------------------------------------------------------
 
 describe("resolveScheduleTimezone — fallback chain", () => {
+  test("America/Dominica is a supported workspace timezone and a valid IANA zone", () => {
+    assert.ok(COMMON_TIMEZONES.includes("America/Dominica"));
+    assert.equal(resolveScheduleTimezone({ triggerTimezone: undefined, workspaceTimezone: "America/Dominica" }), "America/Dominica");
+    assert.doesNotThrow(() => new Intl.DateTimeFormat("en-US", { timeZone: "America/Dominica" }));
+  });
+
   test("per-trigger timezone wins when valid IANA", () => {
     const tz = resolveScheduleTimezone({
       triggerTimezone: "Europe/London",

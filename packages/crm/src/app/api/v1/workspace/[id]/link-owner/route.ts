@@ -143,12 +143,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             userRow.email,
             `/switch-workspace?to=${encodeURIComponent(workspaceId)}&next=/dashboard`
           );
-        } catch (error) {
+        } catch {
           logEvent(
             "magic_link_mint_failed_on_relink",
-            {
-              error: error instanceof Error ? error.message : String(error),
-            },
+            { reason: "verification_token_mint_failed" },
             { request, orgId: workspaceId, severity: "warn" }
           );
         }
@@ -235,12 +233,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         userRow.email,
         `/switch-workspace?to=${encodeURIComponent(workspaceId)}&next=/dashboard`
       );
-    } catch (error) {
+    } catch {
       logEvent(
         "magic_link_mint_failed",
-        {
-          error: error instanceof Error ? error.message : String(error),
-        },
+        { reason: "verification_token_mint_failed" },
         { request, orgId: workspaceId, severity: "warn" }
       );
     }

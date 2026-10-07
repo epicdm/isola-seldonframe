@@ -20,6 +20,7 @@ export const COMMON_TIMEZONES = [
   "America/New_York",
   "America/Toronto",
   "America/Halifax",
+  "America/Dominica",
   "America/St_Johns",
   "America/Sao_Paulo",
   "America/Argentina/Buenos_Aires",

@@ -1,17 +1,21 @@
 import type { MetadataRoute } from "next";
 import { generatePwaManifest } from "@seldonframe/core/virality";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 export default function manifest(): MetadataRoute.Manifest {
+  const branding = resolvePlatformBranding();
   const base = generatePwaManifest({
-    name: "SeldonFrame CRM",
-    shortName: "SeldonFrame",
-    description: "Soul-driven CRM framework",
+    name: `${branding.name} CRM`,
+    shortName: branding.name,
+    description: `${branding.name} workspace`,
     startUrl: "/hub",
     themeColor: "#0a0e14",
     backgroundColor: "#0a0e14",
-    icons: [
-      { src: "/logo.svg", sizes: "any", type: "image/svg+xml" },
-    ],
+    icons: branding.name === "SeldonFrame"
+      ? [{ src: "/logo.svg", sizes: "any", type: "image/svg+xml" }]
+      : branding.faviconUrl
+        ? [{ src: branding.faviconUrl, sizes: "any", type: "image/svg+xml" }]
+        : [],
   }) as MetadataRoute.Manifest;
 
   return {

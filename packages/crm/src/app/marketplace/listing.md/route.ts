@@ -20,12 +20,19 @@
 
 import { loadStorefrontAgentBySlug } from "@/lib/marketplace/load-storefront";
 import { renderListingMarkdown, listingUrl } from "@/lib/marketplace/render-markdown";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request): Promise<Response> {
   const slug = new URL(req.url).searchParams.get("slug")?.trim() ?? "";
   const agent = slug ? await loadStorefrontAgentBySlug(slug) : null;
+  if (agent?.isSeed && resolvePlatformBranding().name !== "SeldonFrame") {
+    return new Response(`# Not found\n\nNo agent listing exists at \`/marketplace/${slug}\`.\n`, {
+      status: 404,
+      headers: { "Content-Type": "text/markdown; charset=utf-8" },
+    });
+  }
 
   if (!agent) {
     return new Response(`# Not found\n\nNo agent listing exists at \`/marketplace/${slug}\`.\n`, {
@@ -34,13 +41,14 @@ export async function GET(req: Request): Promise<Response> {
     });
   }
 
-  const md = renderListingMarkdown(agent);
+  const appUrl = resolvePlatformBranding().appUrl;
+  const md = renderListingMarkdown(agent, appUrl);
 
   return new Response(md, {
     headers: {
       "Content-Type": "text/markdown; charset=utf-8",
       Vary: "Accept",
-      Link: `<${listingUrl(agent.slug)}>; rel="alternate"; type="text/html"`,
+      Link: `<${listingUrl(agent.slug, appUrl)}>; rel="alternate"; type="text/html"`,
       "Cache-Control": "public, max-age=300, s-maxage=3600",
     },
   });

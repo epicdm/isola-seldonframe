@@ -36,6 +36,7 @@ import {
 } from "@/lib/agents/store";
 import { runEvalSuite } from "@/lib/agents/eval-runner";
 import { executeTurn } from "@/lib/agents/runtime";
+import { normalizeAgentBlueprintPatch } from "@/lib/agents/normalize-blueprint-patch";
 // v1.40.7 — workspace-level chatbot embed.
 import {
   setPublicChatbotEmbed,
@@ -194,7 +195,7 @@ export async function POST(request: Request) {
     }
 
     // Mutable local patch — we may splice in a regenerated faq array below.
-    const patch = body.patch as Record<string, unknown>;
+    const patch = normalizeAgentBlueprintPatch(body.patch as Record<string, unknown>);
 
     // Optional FAQ regeneration from soul (v1.45 — faq-from-url).
     // When operator passes regenerate_synthesized: true, we replace all

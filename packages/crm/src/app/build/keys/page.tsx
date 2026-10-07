@@ -17,39 +17,41 @@ import { auth } from "@/auth";
 import { getOrgId } from "@/lib/auth/helpers";
 import { ApiKeyManager } from "@/components/settings/api-key-manager";
 import { buildPageMetadata } from "@/lib/seo/page-metadata";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 export const dynamic = "force-dynamic";
 
 // Shared builder-surface SEO: canonical + OpenGraph (no `.md` twin — this is an
 // authed key panel, not a discoverable content page).
+const pageBrand = resolvePlatformBranding();
 export const metadata = buildPageMetadata({
   path: "/build/keys",
-  title: "Developer keys — SeldonFrame for Builders",
-  description:
-    "Mint the workspace bearer your IDE's MCP connector uses to build, test, and sell agents on SeldonFrame.",
+  title: pageBrand.name === "SeldonFrame" ? "Developer keys — SeldonFrame for Builders" : `Workspace API keys | ${pageBrand.name}`,
+  description: pageBrand.name === "SeldonFrame"
+    ? "Mint the workspace bearer your IDE's MCP connector uses to build, test, and sell agents on SeldonFrame."
+    : `Manage workspace API access for ${pageBrand.name}.`,
 });
 
 export default async function BuildKeysPage() {
+  const branding = resolvePlatformBranding();
   const session = await auth();
   const orgId = session?.user?.id ? await getOrgId() : null;
 
   const header = (
     <div className="space-y-2">
       <Link
-        href="/build"
+        href={branding.name === "SeldonFrame" ? "/build" : "/settings/api"}
         className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="h-3.5 w-3.5" /> Back to the builder quickstart
+        <ArrowLeft className="h-3.5 w-3.5" /> {branding.name === "SeldonFrame" ? "Back to the builder quickstart" : "Back to API settings"}
       </Link>
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-        Developer keys
+        {branding.name === "SeldonFrame" ? "Developer keys" : "Workspace API keys"}
       </h1>
       <p className="text-sm text-muted-foreground max-w-2xl">
-        Mint a key, copy it once, and paste it into your IDE&apos;s MCP connector
-        (<code className="font-mono">Authorization: Bearer wst_…</code>). The
-        SeldonFrame MCP then authenticates every build, eval, publish, and
-        pricing call as your workspace — so you can build and sell an agent
-        without opening a dashboard.
+        Mint a key, copy it once, and use it with your configured API or MCP client
+        (<code className="font-mono">Authorization: Bearer wst_…</code>). Requests are
+        scoped to the active workspace.
       </p>
     </div>
   );
@@ -99,6 +101,8 @@ export default async function BuildKeysPage() {
     <main className="mx-auto max-w-3xl px-4 py-10 space-y-6">
       {header}
       <ApiKeyManager
+        appUrl={branding.appUrl}
+        platformName={branding.name}
         keys={userKeys.map((k) => ({
           id: k.id,
           name: k.name?.replace(/^user:/, "") ?? "(unnamed)",

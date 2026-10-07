@@ -31,6 +31,8 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { agents, organizations } from "@/db/schema";
+import { shouldShowPoweredByBadgeForOrg } from "@/lib/billing/public";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 import {
   buildEmbedGoogleFontUrl,
   getArchetypeStyleTokens,
@@ -169,6 +171,8 @@ export async function GET(
       ? themeRaw.logoUrl
       : null;
   const orgName = agentRow.orgName.replace(/[\\`$"<>]/g, "");
+  const platformBrand = resolvePlatformBranding();
+  const showVendorAttribution = await shouldShowPoweredByBadgeForOrg(agentRow.orgId);
 
   const script = renderEmbedScript({
     turnUrl,
@@ -178,6 +182,10 @@ export async function GET(
     orgName,
     logoUrl,
     orgSlug: orgSlugPart,
+    platformName: "SeldonFrame",
+    platformHomeUrl: "https://www.seldonframe.com",
+    licenseUrl: `${platformBrand.appUrl}/license`,
+    showVendorAttribution,
   });
 
   return new NextResponse(script, {
@@ -198,6 +206,10 @@ function renderEmbedScript(input: {
   orgName: string;
   logoUrl: string | null;
   orgSlug: string;
+  platformName: string;
+  platformHomeUrl: string;
+  licenseUrl: string;
+  showVendorAttribution: boolean;
 }): string {
   // bodyFontStack is the CSS font-family value the panel uses. The
   // workspace's body font (from the archetype OR stored theme.fontFamily)
@@ -221,6 +233,10 @@ function renderEmbedScript(input: {
     orgName: input.orgName,
     logoUrl: input.logoUrl,
     orgSlug: input.orgSlug,
+    platformName: input.platformName,
+    platformHomeUrl: input.platformHomeUrl,
+    licenseUrl: input.licenseUrl,
+    showVendorAttribution: input.showVendorAttribution,
   };
   // The embed runs as an IIFE. Self-contained — no framework deps.
   // Renders shadow-DOM-free for max compatibility (works inside iframes,
@@ -381,7 +397,9 @@ function renderEmbedScript(input: {
     '<textarea class="sf-agent-input" id="sf-agent-input" rows="1" placeholder="Type a message..." aria-label="Type a message"></textarea>',
     '<button class="sf-agent-send" type="submit" aria-label="Send message">Send</button>',
     '</form>',
-    '<div class="sf-agent-footer">Powered by <a href="https://seldonframe.com?utm_source=chat_widget&utm_medium=embed&utm_content=' + encodeURIComponent(CFG.orgSlug) + '" target="_blank" rel="noopener">SeldonFrame</a></div>'
+    '<div class="sf-agent-footer">' + (CFG.showVendorAttribution
+      ? 'Powered by <a href="' + escapeAttr(CFG.platformHomeUrl) + '?utm_source=chat_widget&utm_medium=embed&utm_content=' + encodeURIComponent(CFG.orgSlug) + '" target="_blank" rel="noopener">' + escapeHtml(CFG.platformName) + '</a> · '
+      : '') + '<a href="' + escapeAttr(CFG.licenseUrl) + '" target="_blank" rel="noopener">Open-source notices</a></div>'
   ].join("");
 
   function escapeHtml(s){return String(s).replace(/[&<>"']/g, function(c){return ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"})[c];});}

@@ -61,6 +61,7 @@ import {
 import { checkRateLimit } from "@/lib/utils/rate-limit";
 import { assertPublicHttpUrl } from "@/lib/security/ssrf-guard";
 import { createSseStream, SSE_RESPONSE_HEADERS } from "@/lib/web-onboarding/sse";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 
 export const dynamic = "force-dynamic";
 // Pin Node.js runtime (drizzle + node:crypto + SDKs) — matches the authed
@@ -181,7 +182,7 @@ async function runAnonymousBuild(url: string | null): Promise<Response> {
       seedClientContactInAgencyCrm: async () => undefined,
       seedSoulWikiSourceUrl: async () => undefined,
       seedDefaultOutboundTriggers: async () => undefined,
-      workspaceBaseDomain: process.env.WORKSPACE_BASE_DOMAIN ?? "app.seldonframe.com",
+      workspaceBaseDomain: resolveWorkspaceBaseDomain(),
     },
     body: { url },
     sessionUser: null,

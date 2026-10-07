@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { organizations, users } from "@/db/schema";
 import { getPlan } from "@/lib/billing/plans";
 import { canRemoveBranding } from "@/lib/billing/entitlements";
+import { resolvePlatformBranding, shouldShowVendorAttribution } from "@/lib/branding/platform";
 
 function readRemovePoweredBy(rawSettings: unknown) {
   if (!rawSettings || typeof rawSettings !== "object") {
@@ -61,6 +62,14 @@ export async function shouldShowPoweredByBadgeForOrg(orgId: string) {
   const plan = owner?.planId ? getPlan(owner.planId) ?? null : null;
   const removePoweredBy = readRemovePoweredBy(org.settings);
   const canHide = canRemoveBranding(plan);
+
+  if (!shouldShowVendorAttribution({
+    configuredVisible: resolvePlatformBranding().showVendorBranding,
+    entitledToRemove: canHide,
+    workspaceRequestsRemoval: removePoweredBy,
+  })) {
+    return false;
+  }
 
   if (canHide) {
     return removePoweredBy === true ? false : true;

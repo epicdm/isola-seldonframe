@@ -1,10 +1,12 @@
 import Image from "next/image";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 export default function AuthLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const branding = resolvePlatformBranding();
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10">
       <div
@@ -24,7 +26,14 @@ export default function AuthLayout({
               to "SeldonFra…" on render. Widened the viewBox to 400x100
               and updated Image dimensions to the new 4:1 aspect ratio so
               the browser doesn't stretch the SVG. */}
-          <Image src="/brand/seldonframe-wordmark.svg" alt="SeldonFrame" width={200} height={50} priority />
+          {branding.logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={branding.logoUrl} alt={branding.name} className="max-h-[50px] max-w-[240px] object-contain" />
+          ) : branding.name === "SeldonFrame" ? (
+            <Image src="/brand/seldonframe-wordmark.svg" alt="SeldonFrame" width={200} height={50} priority />
+          ) : (
+            <span className="text-xl font-semibold">{branding.name}</span>
+          )}
         </div>
         {children}
       </div>

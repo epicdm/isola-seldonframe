@@ -61,6 +61,12 @@ import { bindingToCtxBooking } from "@/lib/agents/booking/binding-ctx";
 import { captureLlmGeneration } from "@/lib/analytics/llm-capture";
 import { VOICE_PROFILE_NOTE_PATH } from "@/lib/agents/voice-profile/ingest-sent-mail";
 import { buildTurnMessages, type TurnMessage } from "@/lib/agents/turn-messages";
+import {
+  AGENT_NOT_FOUND_FALLBACK,
+  PROVIDER_NOT_CONFIGURED_FALLBACK,
+  TEMPORARY_RUNTIME_ERROR_FALLBACK,
+  WORKSPACE_NOT_FOUND_FALLBACK,
+} from "@/lib/agents/fallback-messages";
 
 const MODEL = process.env.ANTHROPIC_AGENT_MODEL?.trim() || "claude-sonnet-4-5-20250929";
 const MAX_TURN_ITERATIONS = 6; // tool-call cap per single turn (catches loops)
@@ -168,7 +174,7 @@ export async function executeTurn(input: {
     return {
       ok: false,
       reason: "agent_not_found",
-      fallbackMessage: "I'm sorry, this assistant is unavailable. Please contact us directly.",
+      fallbackMessage: AGENT_NOT_FOUND_FALLBACK,
     };
   }
 
@@ -187,7 +193,7 @@ export async function executeTurn(input: {
     return {
       ok: false,
       reason: "org_not_found",
-      fallbackMessage: "I'm sorry, something went wrong. Please contact us directly.",
+      fallbackMessage: WORKSPACE_NOT_FOUND_FALLBACK,
     };
   }
 
@@ -361,6 +367,7 @@ export async function executeTurn(input: {
   // getAIClient's behavior whenever the flag is off or any lookup
   // fails, so this is a no-op today until Max flips the flag.
   const aiResolution = await resolveRuntimeAiClient({ orgId: agent.orgId });
+  const runtimeModel = aiResolution.model ?? MODEL;
 
   // Per-sub-account usage meter (2026-07-08) — Task 4: the "capped" branch
   // (flag SF_USAGE_CAP_PAUSE, D5). An inherited-key sub-account whose agency
@@ -423,7 +430,7 @@ export async function executeTurn(input: {
       ok: false,
       reason: "llm_not_configured",
       fallbackMessage:
-        "I'm not set up to chat yet — the team is finishing my configuration. Please reach out directly and we'll be in touch right away.",
+        PROVIDER_NOT_CONFIGURED_FALLBACK,
     };
   }
   const anthropic: Anthropic = aiResolution.client;
@@ -448,7 +455,7 @@ export async function executeTurn(input: {
   let priorToolError = false;
   // The model actually used for the LAST call this turn — persisted on the
   // assistant turn row so cost/observability reflect what was spent, not MODEL.
-  let lastModelUsed = MODEL;
+  let lastModelUsed = runtimeModel;
 
   for (let iter = 0; iter < MAX_TURN_ITERATIONS; iter++) {
     const turnModel = resolveTurnModel({
@@ -456,7 +463,7 @@ export async function executeTurn(input: {
       toolNamesAvailable,
       priorToolError,
       turnIndex: nextTurnIndex,
-      defaultModel: MODEL,
+      defaultModel: runtimeModel,
     });
     lastModelUsed = turnModel;
     let response: Anthropic.Messages.Message;
@@ -496,7 +503,7 @@ export async function executeTurn(input: {
         fallbackMessage:
           conv.status === "test"
             ? `[runtime error: ${errClass.reason}] ${errClass.operatorHint}`
-            : "I'm having a hiccup. Can I have someone follow up with you? What's your email?",
+            : TEMPORARY_RUNTIME_ERROR_FALLBACK,
       };
     }
 
@@ -747,7 +754,7 @@ export async function executeTurn(input: {
         toolNamesAvailable,
         priorToolError: true,
         turnIndex: nextTurnIndex,
-        defaultModel: MODEL,
+        defaultModel: runtimeModel,
       });
       lastModelUsed = regenModel;
       const regenResponse = await anthropic.messages.create({

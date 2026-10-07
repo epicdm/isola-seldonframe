@@ -60,6 +60,17 @@ describe("resolveTurnModel — SF_ADAPTIVE_RUNTIME_MODEL=off kill switch", () =>
     );
   });
 
+  test("off preserves the resolved DeepSeek model for a file-backed platform client", () => {
+    setEnv("SF_ADAPTIVE_RUNTIME_MODEL", "off");
+    assert.equal(
+      resolveTurnModel({
+        userMessage: "please speak to a person",
+        defaultModel: "deepseek-chat",
+      }),
+      "deepseek-chat",
+    );
+  });
+
   test("off is case-insensitive / whitespace-tolerant", () => {
     setEnv("SF_ADAPTIVE_RUNTIME_MODEL", "  OFF  ");
     assert.equal(

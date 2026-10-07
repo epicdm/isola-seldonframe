@@ -5,6 +5,7 @@ import { apiKeys } from "@/db/schema";
 import { getOrgId, requireAuth } from "@/lib/auth/helpers";
 import { isAdminTokenUserId } from "@/lib/auth/admin-token";
 import { ApiKeyManager } from "@/components/settings/api-key-manager";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 /**
  * P0-4: API key generation + listing.
@@ -20,6 +21,7 @@ import { ApiKeyManager } from "@/components/settings/api-key-manager";
  * the dedicated revoke flow handles them safely.
  */
 export default async function SettingsApiPage() {
+  const branding = resolvePlatformBranding();
   const session = await requireAuth();
   const orgId = await getOrgId();
   const isGuestAdminToken = isAdminTokenUserId(session.user.id);
@@ -80,7 +82,7 @@ export default async function SettingsApiPage() {
         </div>
       ) : null}
 
-      <ApiKeyManager keys={userKeys.map((k) => ({
+      <ApiKeyManager appUrl={branding.appUrl} platformName={branding.name} keys={userKeys.map((k) => ({
         id: k.id,
         name: k.name?.replace(/^user:/, "") ?? "(unnamed)",
         prefix: k.keyPrefix,

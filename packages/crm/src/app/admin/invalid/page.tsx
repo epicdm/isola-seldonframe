@@ -5,6 +5,8 @@
  * server component (no client JS) so it loads instantly and never
  * leaks the original token (we never echo `token` into the response).
  */
+import { resolvePlatformBranding } from "@/lib/branding/platform";
+
 type Props = {
   searchParams: Promise<{ reason?: string }>;
 };
@@ -31,6 +33,10 @@ export default async function AdminInvalidPage({ searchParams }: Props) {
   const params = await searchParams;
   const reason = params.reason ?? "expired-or-unknown";
   const copy = REASON_COPY[reason] ?? REASON_COPY["expired-or-unknown"];
+  const brand = resolvePlatformBranding();
+  const body = brand.name === "SeldonFrame"
+    ? copy.body
+    : "This workspace link is missing or invalid. Sign in and open the workspace from your workspace list, or contact the workspace administrator.";
 
   return (
     <main
@@ -88,7 +94,7 @@ export default async function AdminInvalidPage({ searchParams }: Props) {
             fontSize: 16,
           }}
         >
-          {copy.body}
+          {body}
         </p>
         <p
           style={{
@@ -97,14 +103,16 @@ export default async function AdminInvalidPage({ searchParams }: Props) {
             color: "#999999",
           }}
         >
-          Need help? Run <code>get_workspace_snapshot({})</code> in Claude Code, or visit{" "}
+          {brand.name === "SeldonFrame" ? <>Need help? Run <code>get_workspace_snapshot({"{}"})</code> in Claude Code, or visit{" "}
           <a
             href="https://seldonframe.com/docs/admin-access"
             style={{ color: "#1A1A1A", textDecoration: "underline" }}
           >
             seldonframe.com/docs/admin-access
           </a>
-          .
+          .</> : brand.supportEmail && !brand.supportEmail.endsWith("@seldonframe.com")
+            ? <>Need help? <a href={`mailto:${brand.supportEmail}`} style={{ color: "#1A1A1A", textDecoration: "underline" }}>Contact {brand.name} support</a>.</>
+            : "Contact your workspace administrator if you still need help."}
         </p>
       </div>
     </main>

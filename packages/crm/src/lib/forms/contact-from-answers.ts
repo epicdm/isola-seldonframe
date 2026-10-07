@@ -11,9 +11,19 @@ export type ContactFromAnswers = {
   phone: string | null;
 };
 
+export function emailFromAnswers(data: Record<string, unknown>): string | null {
+  return pick(data, ["email", "workEmail", "work_email"]);
+}
+
 function pick(data: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {
-    const raw = data[key];
+    // v1 form submissions lowercase API field keys (for example, fullName to
+    // fullname). Match each alias case-insensitively while retaining the
+    // caller's semantic alias order above.
+    const matchingKey = Object.keys(data).find(
+      (candidate) => candidate.toLowerCase() === key.toLowerCase(),
+    );
+    const raw = matchingKey === undefined ? undefined : data[matchingKey];
     if (typeof raw === "string" && raw.trim().length > 0) return raw.trim();
   }
   return null;

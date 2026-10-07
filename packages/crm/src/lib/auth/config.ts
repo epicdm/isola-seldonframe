@@ -5,8 +5,8 @@ import { db } from "@/db";
 import { accounts, organizations, users } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { sendNewSignupAlert } from "@/lib/notifications/ops-notifications";
-import { selectPortalEmailTransport } from "@/lib/portal/email-transport";
-import { sendSignInEmailViaSmtp2go } from "./signin-email-smtp2go";
+import { createPlatformVerificationEmailSender, formatBrandedSender, hasPlatformSignInEmailTransport } from "./signin-email";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 // funnel.ts (posthog-node) is imported lazily below, not statically here —
 // config.ts sits in the proxy/middleware module graph (config -> auth ->
 // src/proxy.ts), and a static import would pull posthog-node into that
@@ -17,7 +17,13 @@ const BILLING_PERIODS = ["monthly", "yearly"] as const;
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
 const resendApiKey = (process.env.AUTH_RESEND_KEY ?? process.env.RESEND_API_KEY)?.trim();
-const resendFrom = (process.env.AUTH_RESEND_FROM ?? process.env.DEFAULT_FROM_EMAIL ?? "hello@seldonframe.local").trim();
+const platformBrand = resolvePlatformBranding();
+const resendFrom = (
+  process.env.AUTH_RESEND_FROM ??
+  process.env.DEFAULT_FROM_EMAIL ??
+  process.env.PORTAL_EMAIL_FROM ??
+  `${platformBrand.emailFromName} <${platformBrand.supportEmail}>`
+).trim();
 
 function normalizeBillingStatus(value: string | null | undefined): (typeof BILLING_STATUSES)[number] {
   return BILLING_STATUSES.includes(value as (typeof BILLING_STATUSES)[number])
@@ -56,170 +62,25 @@ if (googleClientId && googleClientSecret) {
   );
 }
 
-/**
- * Render the SeldonFrame-branded sign-in email. Inline styles because email
- * clients (Gmail, Outlook, Apple Mail) strip <style> blocks and ignore most
- * CSS classes. Width capped at 560px for desktop comfort; mobile clients
- * shrink-to-fit. Dark-mode friendly colors via a wash that reads as ink on
- * both light + dark client backgrounds.
- *
- * Wordmark URL points at the production public asset. NEXTAUTH_URL gives us
- * the right host (app.seldonframe.com in prod, localhost in dev).
- */
-function renderSeldonFrameSignInEmail({
-  url,
-  baseUrl,
-}: {
-  url: string;
-  baseUrl: string;
-}): { subject: string; html: string; text: string } {
-  const wordmark = `${baseUrl}/brand/seldonframe-wordmark.svg`;
-  const primary = "#059669"; // matches --primary teal in the design system
-  const ink = "#0a0e1a";
-  const bg = "#f6f7f9";
-  const muted = "#6b7280";
 
-  const subject = "Your SeldonFrame sign-in link";
-
-  const html = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${subject}</title>
-</head>
-<body style="margin:0;padding:0;background:${bg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:${ink};">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${bg};padding:32px 16px;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border-radius:16px;border:1px solid #e5e7eb;overflow:hidden;">
-          <tr>
-            <td style="padding:32px 32px 16px 32px;text-align:center;">
-              <!-- Inline brand wordmark — Gmail/Outlook reliably strip external SVGs
-                   or render them at their native width which can break our layout.
-                   Inline SVG with explicit width + viewBox renders correctly across
-                   Gmail web/mobile + Apple Mail + Outlook. The wordmark text is part
-                   of the SVG, not an external font, so no font-loading issues. -->
-              <svg xmlns="http://www.w3.org/2000/svg" width="220" height="36" viewBox="0 0 240 40" style="display:inline-block;max-width:220px;height:36px;" role="img" aria-label="SeldonFrame">
-                <g fill="none">
-                  <!-- Mark: square outline + dot, matching brand/seldonframe-wordmark.svg -->
-                  <rect x="6" y="8" width="24" height="24" rx="3" stroke="${primary}" stroke-width="2" />
-                  <circle cx="32" cy="8" r="3" fill="${primary}" />
-                </g>
-                <text x="44" y="27" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" font-size="20" font-weight="600" fill="${ink}" letter-spacing="-0.5">SeldonFrame</text>
-              </svg>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:8px 32px 0 32px;text-align:center;">
-              <h1 style="margin:0;font-size:24px;line-height:1.3;font-weight:600;color:${ink};letter-spacing:-0.01em;">Sign in to SeldonFrame</h1>
-              <p style="margin:12px 0 0 0;font-size:15px;line-height:1.5;color:${muted};">
-                Click the button below to sign in. This link is valid for 15 minutes and works once.
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:28px 32px 8px 32px;text-align:center;">
-              <a href="${url}" style="display:inline-block;background:${primary};color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 32px;border-radius:10px;line-height:1;">
-                Sign in to SeldonFrame
-              </a>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:16px 32px 0 32px;text-align:center;">
-              <p style="margin:0;font-size:13px;line-height:1.5;color:${muted};">
-                Button not working? Copy and paste this link into your browser:
-              </p>
-              <p style="margin:8px 0 0 0;font-size:12px;line-height:1.4;color:${muted};word-break:break-all;">
-                <a href="${url}" style="color:${primary};text-decoration:underline;">${url}</a>
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:24px 32px 32px 32px;border-top:1px solid #f1f3f5;margin-top:24px;text-align:center;">
-              <p style="margin:24px 0 0 0;font-size:12px;line-height:1.5;color:${muted};">
-                If you didn't request this email, you can safely ignore it.<br />
-                Questions? Reply to this email or visit <a href="${baseUrl.replace("app.", "")}" style="color:${primary};text-decoration:underline;">seldonframe.com</a>.
-              </p>
-              <p style="margin:16px 0 0 0;font-size:11px;color:${muted};">
-                The open-source Business OS your agency builds for clients in 60 seconds.
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
-
-  const text = `Sign in to SeldonFrame
-
-Click this link to sign in (valid for 15 minutes, single use):
-
-${url}
-
-If you didn't request this email, you can safely ignore it.
-
-— The SeldonFrame team
-seldonframe.com`;
-
-  return { subject, html, text };
-}
-
-if (resendApiKey) {
+if (hasPlatformSignInEmailTransport(process.env)) {
   authProviders.push(
     Resend({
       apiKey: resendApiKey,
-      from: resendFrom,
-      // Override the default NextAuth Resend email with a SeldonFrame-branded
+      from: formatBrandedSender(resendFrom, platformBrand.emailFromName),
+      // Keep provider defaults minimal; the returned callback is replaced below.
       // template. The default ships a generic "Sign in" button with no brand
       // context — on a fresh signup the recipient sees a blue blob from a
       // domain they may not recognize, which trips spam filters and erodes
       // trust on the very first touchpoint.
-      async sendVerificationRequest({ identifier, url, provider }) {
-        const baseUrl = (
-          process.env.NEXTAUTH_URL?.trim() || "https://app.seldonframe.com"
-        ).replace(/\/+$/, "");
-        const { subject, html, text } = renderSeldonFrameSignInEmail({ url, baseUrl });
-
-        // EPIC 2026-10-06: SMTP2GO wins when fully configured (same rule as the portal access code).
-        const transport = selectPortalEmailTransport(process.env);
-        if (transport.transport === "smtp2go") {
-          await sendSignInEmailViaSmtp2go(
-            { to: identifier, subject, html, text },
-            { apiKey: transport.apiKey, from: transport.from },
-          );
-          return;
-        }
-
-        const response = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${provider.apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            from: provider.from,
-            to: identifier,
-            subject,
-            html,
-            text,
-          }),
-        });
-
-        if (!response.ok) {
-          const detail = await response.text().catch(() => "<no-body>");
-          // contract:throw-ok: NextAuth catches provider errors and routes to
-          // its error page. Swallowing here would show "check your inbox" for
-          // an email that was never sent — the never-lies violation.
-          throw new Error(
-            `Failed to send sign-in email (${response.status}): ${detail.slice(0, 200)}`,
-          );
-        }
-      },
     })
   );
+  const emailProvider = authProviders[authProviders.length - 1];
+  if (emailProvider && "sendVerificationRequest" in emailProvider) {
+    // Resend ignores a callback supplied in its options, so replace the
+    // returned provider method that Auth.js actually invokes.
+    emailProvider.sendVerificationRequest = createPlatformVerificationEmailSender();
+  }
 }
 
 export const authConfig = {

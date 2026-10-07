@@ -249,7 +249,7 @@ export default async function BillingSettingsPage({
           <p className="font-medium text-foreground">You&apos;ve reached your workspace limit.</p>
           <p className="mt-1 text-muted-foreground">
             Upgrade to Workspace ($49/mo) for one full business OS, or Agency ($297/mo) for 10 client
-            workspaces (then $10/mo each). Both unlock custom domain, remove SeldonFrame branding, and
+            workspaces (then $10/mo each). Both unlock custom domain, remove platform attribution, and
             add the client portal.
           </p>
         </div>
@@ -266,7 +266,7 @@ export default async function BillingSettingsPage({
           <p className="font-medium text-foreground">No active subscription to manage yet.</p>
           <p className="mt-1 text-muted-foreground">
             You don&apos;t have an active plan. Choose Builder, Workspace, or Agency below to manage your
-            subscription, unlock custom domains, remove SeldonFrame branding, and access the client portal.
+            subscription, unlock custom domains, remove platform attribution, and access the client portal.
           </p>
         </div>
       ) : null}

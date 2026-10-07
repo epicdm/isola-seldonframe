@@ -86,6 +86,8 @@ export type BuildNavInput = {
    *  layout) resolves it and threads it through. Surfaces the Approvals
    *  nav entry when true; absent/false → today's nav, unchanged. */
   draftApprovalsOn?: boolean;
+  /** Hides upstream community/docs destinations on white-label installs. */
+  platformName?: string;
 };
 
 // Block-slug → href map for visibility filtering. Lifted verbatim from
@@ -187,6 +189,7 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
     enabledModules,
     smsLive,
     draftApprovalsOn = false,
+    platformName = "SeldonFrame",
   } = input;
 
   const hiddenHrefs = new Set(hiddenBlocks.map((slug) => hiddenSlugToHref[slug]).filter(Boolean));
@@ -360,8 +363,12 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
         // (Composio: connect Gmail / Calendar / Slack / HubSpot / … so
         // agents can act in the operator's real apps).
         { href: "/integrations", label: "Integrations", icon: "Puzzle" },
-        { href: "/docs", label: "Docs", icon: "BookOpen" },
-        { href: "https://discord.gg/sbVUu976NW", label: "Discord", icon: "MessageCircle", external: true },
+        ...(platformName === "SeldonFrame"
+          ? [
+              { href: "/docs", label: "Docs", icon: "BookOpen" },
+              { href: "https://discord.gg/sbVUu976NW", label: "Discord", icon: "MessageCircle", external: true },
+            ]
+          : []),
         { href: "/settings", label: "Settings", icon: "Settings" },
         ...superAdminItems,
       ]),

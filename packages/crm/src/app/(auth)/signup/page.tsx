@@ -32,6 +32,15 @@ import { isGoogleAuthEnabled } from "@/lib/auth/google-enabled";
 import { isDemoReadonly } from "@/lib/demo/server";
 import { redirectToAppHostIfNeeded } from "@/lib/auth/app-host-redirect";
 import { buildPaidSignupRedirect } from "@/lib/auth/pricing-continuity";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
+import type { Metadata } from "next";
+
+const brand = resolvePlatformBranding();
+export const metadata: Metadata = {
+  title: "Create an account",
+  description: `Create a secure ${brand.name} workspace account.`,
+  alternates: { canonical: "/signup" },
+};
 
 // 2026-07-15 — the app-host pin (normalizeHost/isExemptHost/
 // redirectToAppHostIfNeeded, incl. the 2026-07-04 prod-incident writeup) moved
@@ -103,7 +112,7 @@ export default async function SignupPage({
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="text-center">
-          <h1 className="text-section-title text-foreground">Welcome to SeldonFrame</h1>
+          <h1 className="text-section-title text-foreground">Welcome to {brand.name}</h1>
           <p className="mt-1 text-label text-[hsl(var(--color-text-secondary))]">
             Your website, booking, CRM, and AI receptionist — live in minutes.
           </p>
@@ -128,7 +137,8 @@ export default async function SignupPage({
           <Link href="/terms" className="underline-offset-4 hover:underline">
             Terms of Service
           </Link>
-          <span className="ml-auto">&copy; 2026 SeldonFrame</span>
+          <Link href="/license" className="underline-offset-4 hover:underline">Open-source notices</Link>
+          <span className="ml-auto">&copy; 2026 {brand.name} · Operated by {brand.operatorName}</span>
         </div>
       </footer>
     </div>

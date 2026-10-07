@@ -20,12 +20,14 @@ import {
 } from "@/lib/marketplace/md-analytics";
 import { toInternalRedirectPath } from "@/lib/auth/signup-redirect";
 import { extraAppHosts } from "@/lib/http/app-hosts";
+import { resolvePlatformBranding, resolveWorkspaceBaseDomain, shouldHideVendorMarketingPath, shouldServeBrandedRootPublicly } from "@/lib/branding/platform";
 
 const protectedPrefixes = ["/hub", "/dashboard", "/welcome", "/orgs", "/contacts", "/deals", "/activities", "/forms", "/settings", "/api/v1"];
 const publicPrefixes = ["/api/v1", "/api/auth"];
-const defaultAppHosts = new Set(["app.seldonframe.com", "localhost", "127.0.0.1"]);
+const platformAppUrl = resolvePlatformBranding().appUrl;
+const appHostFallback = new URL(platformAppUrl).host;
+const defaultAppHosts = new Set(["app.seldonframe.com", appHostFallback, "localhost", "127.0.0.1"]);
 const marketingHosts = new Set(["seldonframe.com", "www.seldonframe.com"]);
-const appHostFallback = "app.seldonframe.com";
 // The builder MCP host the /build page's connect snippet + SKILL.md advertise
 // (mirrors SKILL_MD_MCP_URL / MCP_URL — src/lib/build/skill-md.ts,
 // src/components/settings/api-key-manager.tsx). Hardcoded like those two, for
@@ -45,7 +47,7 @@ function getRequestHost(request: NextRequest) {
 }
 
 function resolveWorkspaceSlugFromHost(host: string) {
-  const workspaceBaseDomain = (process.env.WORKSPACE_BASE_DOMAIN?.trim().toLowerCase() || "app.seldonframe.com")
+  const workspaceBaseDomain = resolveWorkspaceBaseDomain().toLowerCase()
     .replace(/^\.+/, "")
     .replace(/\.+$/, "");
 
@@ -95,7 +97,7 @@ function resolveWorkspaceAdminRedirect(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
   if (!isAdminPath) return null;
-  const target = new URL("https://app.seldonframe.com/switch-workspace");
+  const target = new URL("/switch-workspace", platformAppUrl);
   target.searchParams.set("to", orgId);
   target.searchParams.set("next", `${pathname}${search ?? ""}`);
   return target;
@@ -753,6 +755,22 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
   const appHost = isAppHost(host);
   const hostWorkspaceSlug = resolveWorkspaceSlugFromHost(host);
 
+  if ((appHost || hostWorkspaceSlug) && shouldHideVendorMarketingPath(pathname, resolvePlatformBranding().name)) {
+    return new NextResponse(null, { status: 404 });
+  }
+
+  if (!appHost && pathname === "/license") {
+    return NextResponse.next();
+  }
+
+  if (!appHost && hostWorkspaceSlug) {
+    const isWorkspaceAdminPath = pathname === "/admin" || pathname.startsWith("/admin/");
+    if (isWorkspaceAdminPath || pathname === "/switch-workspace") {
+      const target = new URL(`${pathname}${request.nextUrl.search}`, platformAppUrl);
+      return NextResponse.redirect(target, 307);
+    }
+  }
+
   // Builder MCP host — checked FIRST and returns immediately when matched, so
   // mcp.seldonframe.com never reaches the workspace-domain lookup below (which
   // would otherwise treat it as an unrecognized custom domain) or authProxy
@@ -887,6 +905,12 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     return NextResponse.next();
   }
 
+  // Branded self-hosted platforms use the root page as their public entry.
+  // Keep the upstream SeldonFrame app-host root behind its existing auth flow.
+  if (shouldServeBrandedRootPublicly(pathname, resolvePlatformBranding().name)) {
+    return NextResponse.next();
+  }
+
   try {
     return await (authProxy as unknown as (req: NextRequest, event: NextFetchEvent) => Promise<Response | NextResponse>)(
       request,
@@ -913,6 +937,28 @@ export const config = {
     "/login",
     "/signup",
     "/pricing",
+    // White-label route boundary: only the listed upstream marketing families
+    // are intercepted; native marketplace and operational/API routes are not.
+    "/pricing-public/:path*",
+    "/agencies/:path*",
+    "/blog/:path*",
+    "/guides/:path*",
+    "/charts/:path*",
+    "/docs/:path*",
+    "/demo/:path*",
+    "/compare/:path*",
+    "/alternatives/:path*",
+    "/best/:path*",
+    "/tools/:path*",
+    "/alternative-to-:slug",
+    "/alternative-to-:slug.md",
+    "/:slug-pricing",
+    "/:slug-pricing.md",
+    "/.well-known/openai-apps-challenge",
+    "/home.md",
+    "/index.md",
+    "/llms.txt",
+    "/marketplace/build/:path*",
     // Referral-attribution capture ONLY — the early /build branch in proxy()
     // owns this path entirely and returns next() (+ the sf_ref cookie when
     // ?ref= is present) before any other pipeline stage can touch it.

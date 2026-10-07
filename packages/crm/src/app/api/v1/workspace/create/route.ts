@@ -19,6 +19,7 @@ import { buildTierUpsell } from "@/lib/workspace/tier-upsell";
 // are no-ops when the flag is off or the cookie is absent.
 import { readRefCookieFromHeader } from "@/lib/growth/ref-cookie";
 import { recordReferral, buildRealReferralsDeps } from "@/lib/growth/referrals";
+import { resolvePlatformBranding, resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 
 type WorkspaceCreateBody = {
   url?: unknown;
@@ -50,8 +51,7 @@ type WorkspaceCreateBody = {
   include_landing_page?: unknown;
 };
 
-const WORKSPACE_BASE_DOMAIN =
-  process.env.WORKSPACE_BASE_DOMAIN?.trim() || "app.seldonframe.com";
+const WORKSPACE_BASE_DOMAIN = resolveWorkspaceBaseDomain();
 
 function resolveUserIdFromSeldonApiKey(headers: Headers): string | null {
   const providedKey = headers.get("x-seldon-api-key")?.trim();
@@ -520,8 +520,8 @@ export async function POST(request: Request) {
     // Google-paste path's pattern). For auth'd flow, use the session-
     // cookied dashboard URL.
     const dashboardUrl = workspace.bearerToken
-      ? `https://app.seldonframe.com/admin/${workspace.orgId}?token=${workspace.bearerToken}`
-      : `https://app.seldonframe.com/dashboard?workspace=${workspace.orgId}`;
+      ? `${resolvePlatformBranding().appUrl}/admin/${workspace.orgId}?token=${workspace.bearerToken}`
+      : `${resolvePlatformBranding().appUrl}/dashboard?workspace=${workspace.orgId}`;
 
     logEvent(
       "workspace_compile_ready",

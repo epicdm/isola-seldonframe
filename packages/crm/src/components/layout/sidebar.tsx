@@ -25,6 +25,9 @@ export function Sidebar(props: {
   canAccessSeldon: boolean;
   hiddenBlocks?: string[];
   workspaceName: string;
+  platformName?: string;
+  platformOperatorName?: string;
+  platformLogoUrl?: string | null;
   activeWorkspaceId: string | null;
   workspaceOptions: Array<{ id: string; name: string; slug: string; contactCount: number; soulId: string | null }>;
   switchWorkspaceAction: (formData: FormData) => void | Promise<void>;
@@ -95,6 +98,9 @@ export function Sidebar(props: {
   const {
     hiddenBlocks = [],
     workspaceName,
+    platformName = "SeldonFrame",
+    platformOperatorName = "SeldonFrame",
+    platformLogoUrl = null,
     workspaceLogoUrl = null,
     agencyLogoUrl = null,
     activeWorkspaceId,
@@ -148,6 +154,7 @@ export function Sidebar(props: {
     enabledModules,
     smsLive,
     draftApprovalsOn,
+    platformName,
   });
 
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -186,8 +193,13 @@ export function Sidebar(props: {
                   alt={agencyBrandName ? `${agencyBrandName} logo` : "Brand logo"}
                   className="h-full w-full object-contain"
                 />
-              ) : (
+              ) : platformLogoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={platformLogoUrl} alt={`${platformName} logo`} className="h-full w-full object-contain" />
+              ) : platformName === "SeldonFrame" ? (
                 <Image src="/brand/seldonframe-icon.svg" alt="SeldonFrame" width={20} height={20} />
+              ) : (
+                <span aria-hidden="true" className="text-sm font-bold">{platformName.slice(0, 1).toUpperCase()}</span>
               )}
             </div>
             <div className="min-w-0">
@@ -198,7 +210,7 @@ export function Sidebar(props: {
                   AND the agency operator looking at their own dashboard
                   see the agency identity instead of "SeldonFrame". */}
               <p className="text-sm font-semibold tracking-tight text-foreground">
-                {agencyBrandName ?? "SeldonFrame"}
+                {agencyBrandName ?? platformName}
               </p>
               <p className="text-[11px] text-muted-foreground">
                 {agencyBrandName
@@ -207,7 +219,7 @@ export function Sidebar(props: {
                     : isInsideClientWorkspace
                       ? `${workspaceName} workspace`
                       : "Agency dashboard"
-                  : "Operating system for modern teams"}
+                  : platformName === "SeldonFrame" ? "Operating system for modern teams" : `Operated by ${platformOperatorName}`}
               </p>
             </div>
           </div>
@@ -353,6 +365,7 @@ export function Sidebar(props: {
             </div>
             <ChevronsUpDown className="size-3.5 text-muted-foreground" />
           </button>
+          <Link href="/license" className="mt-2 block px-1 text-[10px] text-muted-foreground underline-offset-4 hover:underline">Open-source notices</Link>
         </div>
       </div>
     );

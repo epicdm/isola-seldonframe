@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
+import { guardApiRequest } from "@/lib/api/guard";
 import { seedInitialBlocks } from "@/lib/soul-compiler/blocks";
 import { demoApiBlockedResponse, isDemoReadonly } from "@/lib/demo/server";
 import { logEvent } from "@/lib/observability/log";
@@ -29,6 +30,9 @@ const WORKSPACE_BASE_DOMAIN =
 export async function POST(request: Request) {
   const startedAt = Date.now();
 
+  const guard = await guardApiRequest(request);
+  if ("error" in guard) return guard.error;
+
   if (isDemoReadonly()) {
     return demoApiBlockedResponse();
   }
@@ -41,6 +45,13 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "workspace_id is required" },
       { status: 400 }
+    );
+  }
+
+  if (guard.orgId !== workspaceId) {
+    return NextResponse.json(
+      { error: "workspace_mismatch", message: "Authenticated credentials do not authorize this workspace." },
+      { status: 403 },
     );
   }
 

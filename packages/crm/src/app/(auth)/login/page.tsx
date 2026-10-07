@@ -7,6 +7,15 @@ import { isGoogleAuthEnabled } from "@/lib/auth/google-enabled";
 import { isDemoReadonly } from "@/lib/demo/server";
 import { resolveAppOrigin } from "@/lib/marketplace/buy-box-auth";
 import { extraAppHosts } from "@/lib/http/app-hosts";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
+import type { Metadata } from "next";
+
+const brand = resolvePlatformBranding();
+export const metadata: Metadata = {
+  title: "Sign in",
+  description: `Secure sign-in for ${brand.name}, operated by ${brand.operatorName}.`,
+  alternates: { canonical: "/login" },
+};
 
 // 2026-07-04 — Prod incident: Google OAuth failed with
 // `InvalidCheck: pkceCodeVerifier value could not be parsed` because sign-in
@@ -76,7 +85,7 @@ export default async function LoginPage({
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="text-center">
-          <h1 className="text-section-title text-foreground">Welcome to SeldonFrame</h1>
+          <h1 className="text-section-title text-foreground">Welcome to {brand.name}</h1>
           <p className="mt-1 text-label text-[hsl(var(--color-text-secondary))]">
             The operating system for your business.
           </p>
@@ -101,7 +110,8 @@ export default async function LoginPage({
           <Link href="/terms" className="underline-offset-4 hover:underline">
             Terms of Service
           </Link>
-          <span className="ml-auto">&copy; 2026 SeldonFrame</span>
+          <Link href="/license" className="underline-offset-4 hover:underline">Open-source notices</Link>
+          <span className="ml-auto">&copy; 2026 {brand.name} · Operated by {brand.operatorName}</span>
         </div>
       </footer>
     </div>

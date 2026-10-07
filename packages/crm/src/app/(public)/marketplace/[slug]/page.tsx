@@ -28,6 +28,7 @@ import { buildListingSignInUrl } from "@/lib/marketplace/buy-box-auth";
 import { resolveBuyerSetupUrlForListingSlug } from "@/lib/marketplace/buyer/buyer-deployment";
 import { MarkdownPointer } from "@/components/seo/markdown-pointer";
 import { jobForMarketplaceSlug } from "@/lib/seo/agent-pages";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 import {
   CATEGORY_META,
   SURFACE_META,
@@ -58,22 +59,24 @@ async function loadAgent(slug: string): Promise<{ agent: StorefrontAgent; others
   const catalog = await loadStorefrontCatalog();
   const agent = catalog.find((a) => a.slug === slug) ?? MARKETPLACE_SEED.find((a) => a.slug === slug);
   if (!agent) return null;
+  if (resolvePlatformBranding().name !== "SeldonFrame" && agent.isSeed) return null;
   const others = catalog.filter((a) => a.builder === agent.builder && a.slug !== agent.slug).slice(0, 2);
   return { agent, others };
 }
 
 export async function generateMetadata({ params }: ListingPageProps): Promise<Metadata> {
+  const brand = resolvePlatformBranding();
   const { slug } = await params;
   const found = await loadAgent(slug);
   if (!found) {
-    return { title: "Agent not found — SeldonFrame Marketplace" };
+    return { title: brand.name === "SeldonFrame" ? "Agent not found — SeldonFrame Marketplace" : `Agent not found | ${brand.name}` };
   }
   const { agent } = found;
   const title = `${agent.name} — ${agent.tagline} | SeldonFrame Marketplace`;
   const description = agent.blurb;
   const canonical = `/marketplace/${agent.slug}`;
   return {
-    title,
+    title: brand.name === "SeldonFrame" ? title : `${agent.name} | ${brand.name} Marketplace`,
     description,
     // canonical + the Markdown twin so DOM-parsing crawlers discover the `.md`.
     alternates: { canonical, types: { "text/markdown": `${canonical}.md` } },
@@ -92,6 +95,7 @@ export async function generateMetadata({ params }: ListingPageProps): Promise<Me
 }
 
 export default async function ListingDetailPage({ params, searchParams }: ListingPageProps) {
+  const brand = resolvePlatformBranding();
   const { slug } = await params;
   const { purchased, install, fork_error: forkError } = await searchParams;
   // Stripe Checkout redirects back to ?purchased=true on success — render the
@@ -107,8 +111,8 @@ export default async function ListingDetailPage({ params, searchParams }: Listin
 
   const { agent, others } = found;
   const categoryLabel = CATEGORY_META[agent.category].label;
-  const mcpEndpoint = mcpEndpointFor(agent.slug);
-  const snippet = mcpSnippetFor(agent.slug);
+  const mcpEndpoint = mcpEndpointFor(agent.slug, brand.appUrl);
+  const snippet = mcpSnippetFor(agent.slug, brand.appUrl);
   // Honest price label for the OG/SEO strip: a non-one-time model carries its
   // own label ("$29/mo", "$2 per call"); fall back to the one-time derivation
   // ("Free" / "$N/mo") otherwise. priceLabel(priceCents) alone would force "/mo"
@@ -159,7 +163,7 @@ export default async function ListingDetailPage({ params, searchParams }: Listin
     "@type": "SoftwareApplication",
     name: agent.name,
     applicationCategory: "BusinessApplication",
-    operatingSystem: "SeldonFrame",
+    operatingSystem: brand.name,
     description: agent.blurb,
     offers: {
       "@type": "Offer",
@@ -185,9 +189,9 @@ export default async function ListingDetailPage({ params, searchParams }: Listin
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     itemListElement: [
-      { "@type": "ListItem", position: 1, name: "Home", item: "https://www.seldonframe.com" },
-      { "@type": "ListItem", position: 2, name: "Marketplace", item: "https://www.seldonframe.com/marketplace" },
-      { "@type": "ListItem", position: 3, name: agent.name, item: `https://www.seldonframe.com/marketplace/${agent.slug}` },
+      { "@type": "ListItem", position: 1, name: "Home", item: brand.homeUrl },
+      { "@type": "ListItem", position: 2, name: "Marketplace", item: `${brand.appUrl}/marketplace` },
+      { "@type": "ListItem", position: 3, name: agent.name, item: `${brand.appUrl}/marketplace/${agent.slug}` },
     ],
   };
 

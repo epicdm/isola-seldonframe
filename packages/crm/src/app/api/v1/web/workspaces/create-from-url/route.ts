@@ -65,6 +65,7 @@ import { seedDefaultOutboundTriggers } from "@/lib/messaging/seed-default-trigge
 // signature, same SSE events, same error codes. See markdown-extractor.ts
 // header for the why.
 import { extractBusinessFactsFromUrl } from "@/lib/web-onboarding/markdown-extractor";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 // 2026-06-23 — Programmatic SEO/GEO Deploy-CTA fulfilment. resolveStarterId…
 // maps the canonical agent slug (a starter id OR an /automations archetype id)
 // the visitor clicked on an /ai-agents/* page to the starter to fork; the
@@ -207,7 +208,7 @@ async function dispatchCreateFromUrl(
           ? { ok: true, id: forked.id, starterId }
           : { ok: false, starterId };
       },
-      workspaceBaseDomain: process.env.WORKSPACE_BASE_DOMAIN ?? "app.seldonframe.com",
+      workspaceBaseDomain: resolveWorkspaceBaseDomain(),
     },
     body: {
       url,

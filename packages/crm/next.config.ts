@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 import { withWorkflow } from "workflow/next";
 
 // APP_HOSTS (see src/lib/http/app-hosts.ts): the install's own dashboard hostnames must be allowed Server Action origins.
@@ -17,6 +18,9 @@ const nextConfig: NextConfig = {
   // `pg` (opt-in self-hosted pooled driver, src/db/index.ts) is node-only. A few
   // client components reach `@/db` transitively; keep pg out of browser bundles.
   turbopack: {
+    // Keep the build root inside this repository when the checkout is nested
+    // below an unrelated lockfile on the operator's machine.
+    root: path.resolve(process.cwd(), "../.."),
     resolveAlias: {
       pg: { browser: "./src/db/pg-browser-stub.ts" },
     },
