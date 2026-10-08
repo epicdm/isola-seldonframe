@@ -1,14 +1,19 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { apiKeys, organizations } from "@/db/schema";
+import { apiKeys, landingPages, organizations } from "@/db/schema";
 import { getOrgId, requireAuth } from "@/lib/auth/helpers";
 import { isAdminTokenUserId } from "@/lib/auth/admin-token";
 import { mintWorkspaceToken } from "@/lib/auth/workspace-token";
 import { assertWritable } from "@/lib/demo/server";
 import { COMMON_TIMEZONES, type TimezoneOption } from "@/lib/workspace/timezones";
+import {
+  mutateWorkspaceName,
+  replaceWorkspaceNameInHtml,
+} from "@/lib/blueprint/mutate";
+import type { Blueprint } from "@/lib/blueprint/types";
 
 interface UpdateResult {
   ok: boolean;
@@ -49,14 +54,102 @@ export async function updateWorkspaceSettingsAction(
     return { ok: false, error: "Pick a valid timezone." };
   }
 
-  await db
-    .update(organizations)
-    .set({ name, timezone, updatedAt: new Date() })
-    .where(eq(organizations.id, orgId));
+  const updated = await db.transaction(async (tx) => {
+    const [workspace] = await tx
+      .select({ name: organizations.name })
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
+      .for("update");
+
+    if (!workspace) return false;
+
+    await tx
+      .update(organizations)
+      .set({ name, timezone, updatedAt: new Date() })
+      .where(eq(organizations.id, orgId));
+
+    if (workspace.name === name) return true;
+
+    const pages = await tx
+      .select({
+        id: landingPages.id,
+        blueprintJson: landingPages.blueprintJson,
+        contentHtml: landingPages.contentHtml,
+      })
+      .from(landingPages)
+      .where(eq(landingPages.orgId, orgId));
+
+    for (const page of pages) {
+      let blueprintJson = page.blueprintJson;
+      let blueprintChanged = false;
+
+      if (
+        isWorkspaceBlueprint(blueprintJson) &&
+        blueprintJson.workspace.name === workspace.name
+      ) {
+        const nextBlueprint = mutateWorkspaceName(
+          blueprintJson,
+          name,
+          workspace.name
+        );
+        blueprintJson = JSON.parse(JSON.stringify(nextBlueprint)) as Record<string, unknown>;
+        blueprintChanged = true;
+      }
+
+      const htmlUpdate = replaceWorkspaceNameInHtml(
+        page.contentHtml,
+        workspace.name,
+        name
+      );
+      if (!blueprintChanged && htmlUpdate.replacements === 0) continue;
+
+      await tx
+        .update(landingPages)
+        .set({
+          ...(blueprintChanged ? { blueprintJson } : {}),
+          ...(htmlUpdate.replacements > 0
+            ? { contentHtml: htmlUpdate.contentHtml }
+            : {}),
+          updatedAt: new Date(),
+        })
+        .where(and(eq(landingPages.id, page.id), eq(landingPages.orgId, orgId)));
+    }
+
+    return true;
+  });
+
+  if (!updated) return { ok: false, error: "Workspace not found." };
 
   revalidatePath("/settings/workspace");
   revalidatePath("/dashboard");
   return { ok: true };
+}
+
+function isWorkspaceBlueprint(value: unknown): value is Blueprint {
+  if (value == null || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  const workspace = candidate.workspace;
+  const intake = candidate.intake;
+  const booking = candidate.booking;
+  if (workspace == null || typeof workspace !== "object") return false;
+  if (intake == null || typeof intake !== "object") return false;
+  if (booking == null || typeof booking !== "object") return false;
+  const workspaceName = (workspace as Record<string, unknown>).name;
+  const completion = (intake as Record<string, unknown>).completion;
+  const eventType = (booking as Record<string, unknown>).eventType;
+  const completionMessage =
+    completion != null && typeof completion === "object"
+      ? (completion as Record<string, unknown>).message
+      : undefined;
+  return (
+    typeof workspaceName === "string" &&
+    completion != null &&
+    typeof completion === "object" &&
+    (completionMessage === undefined || typeof completionMessage === "string") &&
+    eventType != null &&
+    typeof eventType === "object" &&
+    typeof (eventType as Record<string, unknown>).title === "string"
+  );
 }
 
 // ─── API key (workspace bearer token) management ──────────────────────

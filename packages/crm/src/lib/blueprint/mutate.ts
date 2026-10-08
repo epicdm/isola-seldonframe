@@ -37,10 +37,64 @@ function cloneBlueprint(bp: Blueprint): Blueprint {
 
 // ─── Workspace-level mutations ────────────────────────────────────────
 
-export function mutateWorkspaceName(bp: Blueprint, name: string): Blueprint {
+export function mutateWorkspaceName(
+  bp: Blueprint,
+  name: string,
+  expectedCurrentName = bp.workspace.name
+): Blueprint {
   const next = cloneBlueprint(bp);
+  if (!expectedCurrentName || next.workspace.name !== expectedCurrentName) {
+    return next;
+  }
+  if (expectedCurrentName === name) return next;
+
+  const replaceName = (value: string | undefined) =>
+    value?.split(expectedCurrentName).join(name);
+
   next.workspace.name = name;
+  if (next.intake.completion.message) {
+    next.intake.completion.message =
+      replaceName(next.intake.completion.message) ?? next.intake.completion.message;
+  }
+  next.booking.eventType.title =
+    replaceName(next.booking.eventType.title) ?? next.booking.eventType.title;
   return next;
+}
+
+/** Replace only literal workspace-name occurrences without regenerating edited HTML. */
+export function replaceWorkspaceNameInHtml(
+  contentHtml: string | null,
+  oldName: string,
+  newName: string
+): { contentHtml: string | null; replacements: number } {
+  if (!contentHtml || !oldName || oldName === newName) {
+    return { contentHtml, replacements: 0 };
+  }
+
+  const escapedOldName = escapeHtmlText(oldName);
+  const escapedNewName = escapeHtmlText(newName);
+  const patterns = [escapedOldName];
+  let nextHtml = contentHtml;
+  let replacements = 0;
+
+  for (const pattern of patterns) {
+    const occurrences = nextHtml.split(pattern).length - 1;
+    if (occurrences > 0) {
+      nextHtml = nextHtml.split(pattern).join(escapedNewName);
+      replacements += occurrences;
+    }
+  }
+
+  return { contentHtml: nextHtml, replacements };
+}
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 export function mutateWorkspaceTagline(bp: Blueprint, tagline: string): Blueprint {
