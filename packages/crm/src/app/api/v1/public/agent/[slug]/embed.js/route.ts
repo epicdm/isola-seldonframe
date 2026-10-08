@@ -274,6 +274,7 @@ function renderEmbedScript(input: {
     } catch(e) { return "anon-" + Date.now().toString(36); }
   })();
   var conversationId = null;
+  var conversationCapability = null;
 
   // 2026-05-22 — inject Google Fonts link into host page BEFORE the
   // panel CSS mounts, so the @font-face declarations are parsed by the
@@ -553,6 +554,7 @@ function renderEmbedScript(input: {
         headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
         body: JSON.stringify({
           conversation_id: conversationId,
+          conversation_capability: conversationCapability,
           anonymous_session_id: sessionId,
           message: msg,
           stream: true,
@@ -567,6 +569,7 @@ function renderEmbedScript(input: {
         // Server fell back to JSON (older route, error, etc.)
         var data = await res.json();
         if (data.conversation_id) conversationId = data.conversation_id;
+        if (data.conversation_capability) conversationCapability = data.conversation_capability;
         typing.remove();
         appendMessage(data.message ? "assistant" : "system",
           data.message || "Something went wrong. Please try again.");
@@ -605,12 +608,14 @@ function renderEmbedScript(input: {
               var json = JSON.parse(payload);
               if (currentEvent === "start" && json.conversation_id) {
                 conversationId = json.conversation_id;
+                if (json.conversation_capability) conversationCapability = json.conversation_capability;
               } else if (currentEvent === "delta" && json.text) {
                 assistantText += json.text;
                 assistantEl.innerHTML = renderMarkdown(assistantText);
                 msgsEl.scrollTop = msgsEl.scrollHeight;
               } else if (currentEvent === "done") {
                 if (json.conversation_id) conversationId = json.conversation_id;
+                if (json.conversation_capability) conversationCapability = json.conversation_capability;
                 // Final markdown re-render to catch any partial-token edges
                 if (assistantText){
                   assistantEl.innerHTML = renderMarkdown(assistantText);

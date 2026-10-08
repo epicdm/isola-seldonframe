@@ -25,13 +25,20 @@
 // alongside the multi-step tool-call streaming story.
 
 import { NextRequest, NextResponse } from "next/server";
+import {
+  authorizePublicConversationContinuation,
+  isValidAnonymousSessionId,
+  isValidPublicConversationId,
+  issuePublicConversationCapability,
+  resolvePublicConversationSecret,
+} from "@/lib/agents/public-conversation-capability";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { agentConversations, agents, organizations } from "@/db/schema";
 import { executeTurn } from "@/lib/agents/runtime";
 import { decidePublicConversationStatus } from "@/lib/agents/public-turn-status";
 import { publicTurnFallbackEvents, publicTurnFallbackResponse } from "@/lib/agents/public-turn-response";
-import { getCurrentUser } from "@/lib/auth/helpers";
+import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import {
   PUBLIC_TURN_RATE_LIMITED_MESSAGE,
   checkPublicTurnAllowed,
@@ -40,8 +47,9 @@ import {
 } from "@/lib/agents/public-turn-limits";
 
 type Body = {
-  conversation_id?: string;
-  anonymous_session_id?: string;
+  conversation_id?: unknown;
+  anonymous_session_id?: unknown;
+  conversation_capability?: unknown;
   message?: string;
   channel_meta?: Record<string, unknown>;
   stream?: boolean;
@@ -66,19 +74,15 @@ const CRITICAL_VALIDATORS = [
 //
 // Origin = "*" is correct here: the chatbot is intentionally embeddable on
 // any operator's site (that's the entire point), and the endpoint serves
-// only public, conversation-scoped data. The downstream agent runtime
-// already enforces per-conversation auth via conversation_id + anonymous
-// session id. Loosening CORS doesn't loosen application authorization.
+// only public, conversation-scoped data. This route validates a server-signed
+// conversation capability bound to the visitor session before the runtime is
+// called. Loosening CORS does not bypass that authorization check.
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Accept",
   "Access-Control-Max-Age": "86400",
 } as const;
-
-function isUuid(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-}
 
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
@@ -157,60 +161,76 @@ export async function POST(
     );
   }
 
-  // Spend protection: this endpoint is anonymous and every turn calls the model provider. Checked BEFORE
-  // any conversation row is created or any model call is made; a limiter error fails closed.
-  const allowed = await checkPublicTurnAllowed({
-    ip: resolvePublicRequestIp(request.headers),
-    agentId: agentRow.id,
-    limits: resolvePublicTurnLimits(),
-  });
-  if (!allowed.ok) {
-    return NextResponse.json(
-      { error: "rate_limited", message: PUBLIC_TURN_RATE_LIMITED_MESSAGE },
-      { status: 429, headers: { ...CORS_HEADERS, "Retry-After": "60" } },
-    );
-  }
-
-  // 2026-05-22 — conversation status decision is now centralized in
-  // decidePublicConversationStatus(). Pre-fix this endpoint copied
-  // `agent.status === "test"` straight onto the conversation, which
-  // caused the runtime testMode plumbing (tools.ts:120, 291) to short-
-  // circuit booking + escalation tools for public visitors talking to
-  // auto-deployed chatbots. Now anonymous callers always get "active";
-  // only authenticated operators sending `x-test-mode: 1` get "test".
-  // The /agents/[id]/test sandbox sends that header explicitly.
+  // A client session id is an identity label, not proof of ownership. Anonymous
+  // continuations also require a server-signed capability bound to this exact
+  // conversation, workspace, agent and session. Authenticated operator test
+  // sessions retain the existing native test-mode path.
   const requestedTestMode =
     request.headers.get("x-test-mode")?.trim() === "1" ||
     request.nextUrl.searchParams.get("dryRun") === "1";
   let isAuthenticatedOperator = false;
   if (requestedTestMode) {
-    // Only resolve the session when the caller is asking for test mode —
-    // avoids paying the auth round-trip on every public turn.
     try {
       const user = await getCurrentUser();
-      isAuthenticatedOperator = Boolean(user?.id);
+      // The test-mode bypass is for the operators OF THIS WORKSPACE only. A signed-in user of another workspace
+      // (or an admin-token guest of another workspace) is treated like any anonymous caller.
+      isAuthenticatedOperator = Boolean(user?.id) && (await getOrgId()) === agentRow.orgId;
     } catch {
-      // Auth resolution failure → treat as anonymous (safe default).
       isAuthenticatedOperator = false;
     }
   }
-  const conversationStatus = decidePublicConversationStatus({
-    agentStatus: agentRow.status,
-    requestedTestMode,
-    isAuthenticatedOperator,
-  });
+  const operatorTestSession = requestedTestMode && isAuthenticatedOperator;
+  const signingSecret = resolvePublicConversationSecret();
 
-  // Get-or-create conversation
-  let conversationId = body.conversation_id;
-  // A supplied conversation id must belong to THIS agent in THIS workspace.
-  // Without this check the id alone selected the conversation, so a caller who
-  // knew a conversation id from another workspace could continue it (and read
-  // the replies) through any public agent endpoint.
+  const rawConversationId = body.conversation_id;
+  if (rawConversationId == null && body.conversation_capability != null) {
+    return NextResponse.json(
+      { error: "conversation_not_found" },
+      { status: 404, headers: CORS_HEADERS },
+    );
+  }
+  if (rawConversationId != null && typeof rawConversationId !== "string") {
+    return NextResponse.json(
+      { error: "conversation_not_found" },
+      { status: 404, headers: CORS_HEADERS },
+    );
+  }
+  if (typeof rawConversationId === "string" && !rawConversationId) {
+    return NextResponse.json(
+      { error: "conversation_not_found" },
+      { status: 404, headers: CORS_HEADERS },
+    );
+  }
+  let conversationId: string | undefined =
+    typeof rawConversationId === "string" ? rawConversationId : undefined;
+  let conversationCapability: string | undefined;
+
+  if (!operatorTestSession) {
+    const validSession = isValidAnonymousSessionId(body.anonymous_session_id);
+    if (!validSession) {
+      return NextResponse.json(
+        { error: conversationId ? "conversation_not_found" : "invalid_anonymous_session" },
+        { status: conversationId ? 404 : 400, headers: CORS_HEADERS },
+      );
+    }
+    if (!signingSecret) {
+      return NextResponse.json(
+        { error: "temporarily_unavailable" },
+        { status: 503, headers: CORS_HEADERS },
+      );
+    }
+  }
+
+  // Resolve and authorize an existing conversation before rate-limit counters,
+  // turn persistence or executeTurn/model access.
   if (conversationId) {
-    const owned = isUuid(conversationId)
+    const owned = isValidPublicConversationId(conversationId)
       ? (
           await db
-            .select({ id: agentConversations.id })
+            .select({
+              id: agentConversations.id,
+              anonymousSessionId: agentConversations.anonymousSessionId,
+            })
             .from(agentConversations)
             .where(
               and(
@@ -228,7 +248,56 @@ export async function POST(
         { status: 404, headers: CORS_HEADERS },
       );
     }
+
+    if (!operatorTestSession) {
+      const sessionId = body.anonymous_session_id as string;
+      const authorized = authorizePublicConversationContinuation({
+        row: {
+          conversationId: owned.id,
+          organizationId: agentRow.orgId,
+          agentId: agentRow.id,
+          anonymousSessionId: owned.anonymousSessionId,
+        },
+        request: {
+          conversationId,
+          organizationId: agentRow.orgId,
+          agentId: agentRow.id,
+          anonymousSessionId: sessionId,
+        },
+        capability: body.conversation_capability,
+        secret: signingSecret,
+      });
+      if (!authorized) {
+        return NextResponse.json(
+          { error: "conversation_not_found" },
+          { status: 404, headers: CORS_HEADERS },
+        );
+      }
+      conversationCapability = body.conversation_capability as string;
+    }
   }
+
+  // Spend protection: this endpoint is anonymous and every turn calls the model provider. Checked BEFORE
+  // any conversation row is created or any model call is made; a limiter error fails closed.
+  const allowed = await checkPublicTurnAllowed({
+    ip: resolvePublicRequestIp(request.headers),
+    agentId: agentRow.id,
+    limits: resolvePublicTurnLimits(),
+  });
+  if (!allowed.ok) {
+    return NextResponse.json(
+      { error: "rate_limited", message: PUBLIC_TURN_RATE_LIMITED_MESSAGE },
+      { status: 429, headers: { ...CORS_HEADERS, "Retry-After": "60" } },
+    );
+  }
+
+  const conversationStatus = decidePublicConversationStatus({
+    agentStatus: agentRow.status,
+    requestedTestMode,
+    isAuthenticatedOperator,
+  });
+
+  // Get-or-create conversation
   if (!conversationId) {
     const [agentForVersion] = await db
       .select({ currentVersion: agents.currentVersion })
@@ -241,7 +310,9 @@ export async function POST(
         agentId: agentRow.id,
         agentVersion: agentForVersion?.currentVersion ?? 1,
         orgId: agentRow.orgId,
-        anonymousSessionId: body.anonymous_session_id ?? null,
+        anonymousSessionId: isValidAnonymousSessionId(body.anonymous_session_id)
+          ? body.anonymous_session_id
+          : null,
         channelMeta: body.channel_meta ?? {},
         status: conversationStatus,
       })
@@ -253,6 +324,17 @@ export async function POST(
       );
     }
     conversationId = created.id;
+    if (!operatorTestSession) {
+      conversationCapability = issuePublicConversationCapability(
+        {
+          conversationId,
+          organizationId: agentRow.orgId,
+          agentId: agentRow.id,
+          anonymousSessionId: body.anonymous_session_id as string,
+        },
+        signingSecret!,
+      );
+    }
 
     // 2026-08-07 — activation-moment analytics. Only for real ("active")
     // conversations — the operator test sandbox routes through this same
@@ -283,13 +365,16 @@ export async function POST(
           );
         };
         try {
-          send("start", { conversation_id: conversationId });
+          send("start", {
+            conversation_id: conversationId,
+            ...(conversationCapability ? { conversation_capability: conversationCapability } : {}),
+          });
           const result = await executeTurn({
             conversationId: conversationId!,
             userMessage: message,
           });
           if (!result.ok) {
-            for (const event of publicTurnFallbackEvents(conversationId!, result)) {
+            for (const event of publicTurnFallbackEvents(conversationId!, result, conversationCapability)) {
               send(event.event, event.data);
             }
             controller.close();
@@ -306,6 +391,7 @@ export async function POST(
           }
           send("done", {
             conversation_id: conversationId,
+            ...(conversationCapability ? { conversation_capability: conversationCapability } : {}),
             validators_critical_failed: result.validators.some(
               (v) => !v.passed && CRITICAL_VALIDATORS.includes(v.name),
             ),
@@ -340,12 +426,13 @@ export async function POST(
   });
 
   if (!result.ok) {
-    return publicTurnFallbackResponse(conversationId, result, CORS_HEADERS);
+    return publicTurnFallbackResponse(conversationId, result, CORS_HEADERS, conversationCapability);
   }
 
   return NextResponse.json(
     {
       conversation_id: conversationId,
+      ...(conversationCapability ? { conversation_capability: conversationCapability } : {}),
       message: result.assistantMessage,
       validators_critical_failed: result.validators.some(
         (v) => !v.passed && CRITICAL_VALIDATORS.includes(v.name),
