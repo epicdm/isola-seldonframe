@@ -31,9 +31,13 @@ test("an unbranded SeldonFrame deployment keeps the upstream behaviour (no host-
   assert.equal(surface.origin, "https://www.seldonframe.com");
 });
 
-test("the proxy matcher admits the three vendor markdown paths so the branded guard actually runs", () => {
+test("the three vendor markdown paths are hidden on branded builds by a build-time rewrite (the proxy matcher stays a whitelist)", () => {
+  const config = read("next.config.ts");
+  for (const p of ["/ai-agents.md", "/build.md", "/SKILL.md"]) assert.ok(config.includes(`"${p}"`), `${p} missing from the branded rewrite list`);
+  assert.match(config, /brandedBuild/);
+  assert.match(config, /beforeFiles/);
   const proxy = read("src/proxy.ts");
-  for (const p of ["/ai-agents.md", "/build.md", "/SKILL.md"]) assert.ok(proxy.includes(`"${p}",`), `${p} missing from the proxy matcher`);
+  assert.ok(!proxy.includes('"/SKILL.md",'), "the proxy matcher must NOT capture /SKILL.md (upstream regression guard)");
 });
 
 test("robots and sitemap are host-aware on branded deployments", () => {

@@ -958,10 +958,6 @@ export const config = {
     "/home.md",
     "/index.md",
     "/llms.txt",
-    // Lane A v4.43: the guard knows these three, but the matcher is a whitelist - without these entries the guard never ran.
-    "/ai-agents.md",
-    "/build.md",
-    "/SKILL.md",
     "/marketplace/build/:path*",
     // Referral-attribution capture ONLY — the early /build branch in proxy()
     // owns this path entirely and returns next() (+ the sf_ref cookie when

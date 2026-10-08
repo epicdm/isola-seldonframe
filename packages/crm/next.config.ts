@@ -8,6 +8,13 @@ const extraAppHosts = (process.env.APP_HOSTS ?? "")
   .map((h) => h.trim())
   .filter(Boolean);
 
+// Branded builds (PLATFORM_NAME set and not "SeldonFrame") do not serve the vendor's marketing markdown. The proxy matcher is a
+// deliberate whitelist (tests/unit/build/skill-md-route-host.spec.ts forbids capturing /SKILL.md there), so these three host-agnostic
+// static routes are hidden with a build-time rewrite to a path that does not exist (404). Unbranded builds are untouched.
+const platformNameAtBuild = (process.env.PLATFORM_NAME ?? "").trim();
+const brandedBuild = platformNameAtBuild !== "" && platformNameAtBuild !== "SeldonFrame";
+const hiddenVendorMarkdown = ["/ai-agents.md", "/build.md", "/SKILL.md"];
+
 const nextConfig: NextConfig = {
   // Pre-existing React 19 / Framer Motion dual @types/react resolution
   // produces spurious ReactNode/ReactPortal errors across UI components.
@@ -56,10 +63,15 @@ const nextConfig: NextConfig = {
   // event captures still survive — they just take one extra redirect hop
   // before this rewrite matches.
   async rewrites() {
-    return [
+    const posthog = [
       { source: "/ingest/static/:path*", destination: "https://us-assets.i.posthog.com/static/:path*" },
       { source: "/ingest/:path*", destination: "https://us.i.posthog.com/:path*" },
     ];
+    if (!brandedBuild) return posthog;
+    return {
+      beforeFiles: hiddenVendorMarkdown.map((source) => ({ source, destination: "/__vendor-markdown-hidden" })),
+      afterFiles: posthog,
+    };
   },
 };
 
