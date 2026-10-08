@@ -1,7 +1,7 @@
 // Agency multi-client deploy — the PURE planner.
 //
 // An agency installs a marketplace agent TEMPLATE (an `agent_templates` row in
-// its builder org) and wants to deploy it as a LIVE, Soul-grounded agent into
+// its builder org) and deploys a non-public test agent, pending evaluation, into
 // MANY of its EXISTING client workspaces at once. The runtime
 // (lib/agents/runtime.ts executeTurn → lib/agents/prompt.ts composeSystemPrompt)
 // reads each client org's OWN `soul` at every turn, so the SAME template
@@ -55,7 +55,7 @@ export function mapTemplateTypeToAgent(
 // to it via run-channel-turn's loadDefaultAgent) and a unique slug otherwise.
 
 export type PlannedClientDeployment = {
-  /** The client workspace to create the live agent in. */
+  /** The client workspace to create the non-public test agent in. */
   orgId: string;
   /** Display name (the template's name — the agency's product). */
   name: string;
@@ -69,8 +69,8 @@ export type PlannedClientDeployment = {
    *  it's injected at runtime from the client org. */
   faq?: AgentBlueprint["faq"];
   greeting?: string;
-  /** Go live immediately so inbound routes to it. */
-  status: "live";
+  /** Deployment is not publication; normal evaluation must precede live status. */
+  status: "test";
   /** Idempotency marker: the template this agent was deployed from. */
   sourceTemplateId: string;
 };
@@ -130,7 +130,7 @@ export function planClientDeployments(
       capabilities,
       faq,
       greeting,
-      status: "live",
+      status: "test",
       sourceTemplateId: template.id,
     });
   }

@@ -1,7 +1,7 @@
 // Agency multi-client deploy — the server action.
 //
 // An agency installs a marketplace agent TEMPLATE (an `agent_templates` row in
-// its builder org) and deploys it as a LIVE agent into MANY of its EXISTING
+// its builder org) and deploys a non-public test agent into MANY of its EXISTING
 // client workspaces at once. Each created agent runs grounded by that client's
 // OWN soul automatically: the runtime (lib/agents/runtime.ts executeTurn →
 // lib/agents/prompt.ts composeSystemPrompt) loads `organizations.soul` for the
@@ -134,7 +134,7 @@ export async function deployAgentTemplateToClientsAction(input: {
   // Execute the plan. The create seam adapts createAgent → {ok, agentId}; the
   // shared runner records already-deployed clients as skipped (idempotency) and
   // soft-fails per client so one bad org never aborts the batch. Each createAgent
-  // writes a LIVE agent into the CLIENT org — its soul is read at runtime, never
+  // creates a non-public test agent in the CLIENT org — its soul is read at runtime, never
   // copied here.
   const { deployed, skipped } = await runClientDeployments({
     targetIds,
@@ -150,7 +150,7 @@ export async function deployAgentTemplateToClientsAction(input: {
         capabilities: item.capabilities,
         faq: item.faq,
         greeting: item.greeting,
-        status: item.status, // 'live'
+        status: item.status, // 'test'; normal publication/evaluation is separate
         sourceTemplateId: item.sourceTemplateId,
       });
       return result.ok

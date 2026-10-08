@@ -46,6 +46,7 @@ import {
   settlePublicTurnSpend,
 } from "@/lib/agents/public-turn-spend";
 import { decidePublicConversationStatus } from "@/lib/agents/public-turn-status";
+import { canAccessAgentTurn } from "@/lib/agents/public-agent-access";
 import {
   PUBLIC_CHAT_CONVERSATION_LIMIT_MESSAGE,
   PUBLIC_CHAT_UNAVAILABLE_MESSAGE,
@@ -168,13 +169,6 @@ export async function POST(
     );
   }
 
-  if (agentRow.status !== "live" && agentRow.status !== "test") {
-    return NextResponse.json(
-      { error: "agent_not_active", status: agentRow.status },
-      { status: 403, headers: CORS_HEADERS },
-    );
-  }
-
   // A client session id is an identity label, not proof of ownership. Anonymous
   // continuations also require a server-signed capability bound to this exact
   // conversation, workspace, agent and session. Authenticated operator test
@@ -194,6 +188,14 @@ export async function POST(
     }
   }
   const operatorTestSession = requestedTestMode && isAuthenticatedOperator;
+  // Public callers may use only the published live agent. The native operator
+  // sandbox sends x-test-mode and is accepted only after same-workspace auth.
+  if (!canAccessAgentTurn(agentRow.status, operatorTestSession)) {
+    return NextResponse.json(
+      { error: "agent_not_active", status: agentRow.status },
+      { status: 403, headers: CORS_HEADERS },
+    );
+  }
   let pilotTarget = resolvePublicPilotTarget(agentRow.orgId, agentRow.id);
   // The environment decides whether a request is metered; a typo in PUBLIC_PILOT_ORG_ID / PUBLIC_PILOT_AGENT_ID must NOT leave
   // the pilot agent public and unmetered. If the database holds a pilot gate row for this agent but the environment does not
