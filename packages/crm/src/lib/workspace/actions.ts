@@ -56,16 +56,33 @@ export async function updateWorkspaceSettingsAction(
 
   const updated = await db.transaction(async (tx) => {
     const [workspace] = await tx
-      .select({ name: organizations.name })
+      .select({ name: organizations.name, soul: organizations.soul })
       .from(organizations)
       .where(eq(organizations.id, orgId))
       .for("update");
 
     if (!workspace) return false;
 
+    // The public page <title>/og/twitter and JSON-LD read the business name from organizations.soul, not from the landing row
+    // (found by Lane A in v4.43 acceptance). Only the two exact name keys are touched, and only when they held the old name.
+    const renamed = workspace.name !== name;
+    const currentSoul = (workspace.soul ?? null) as Record<string, unknown> | null;
+    const soulHoldsOldName =
+      renamed &&
+      currentSoul !== null &&
+      typeof currentSoul === "object" &&
+      (currentSoul.business_name === workspace.name || currentSoul.businessName === workspace.name);
+    const nextSoul = soulHoldsOldName
+      ? {
+          ...currentSoul,
+          ...(currentSoul.business_name === workspace.name ? { business_name: name } : {}),
+          ...(currentSoul.businessName === workspace.name ? { businessName: name } : {}),
+        }
+      : null;
+
     await tx
       .update(organizations)
-      .set({ name, timezone, updatedAt: new Date() })
+      .set({ name, timezone, updatedAt: new Date(), ...(nextSoul ? { soul: nextSoul as typeof organizations.$inferInsert.soul } : {}) })
       .where(eq(organizations.id, orgId));
 
     if (workspace.name === name) return true;
