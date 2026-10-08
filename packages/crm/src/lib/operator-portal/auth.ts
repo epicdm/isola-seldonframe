@@ -43,7 +43,7 @@
 
 "use server";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
@@ -319,8 +319,8 @@ export type InviteWorkspaceOperatorResult =
   | { ok: false; reason: string };
 
 /**
- * Called from Settings > Team by someone who is ALREADY authorised for this workspace (workspace owner, parent-agency owner,
- * platform admin, or an existing owner/admin member). It records the invitee as an admin member of THIS workspace only, then
+ * Called from Settings > Team by someone who is ALREADY authorised for this workspace (workspace owner, parent-agency owner or
+ * platform admin; existing members cannot invite). It records the invitee as an admin member of THIS workspace only, then
  * sends the sign-in link. Because the invitee is now a member, they can request further links themselves from the portal
  * login page. Unlike requestOperatorMagicLinkAction (public, anti-enumeration), this one reports failures to the signed-in
  * inviter, who is already trusted.
@@ -342,12 +342,14 @@ export async function inviteWorkspaceOperatorAction(input: {
   const org = await getOrgBySlug(orgSlug);
   if (!org) return { ok: false, reason: "workspace_not_found" };
 
-  const { ownerEmail, agencyOwnerEmail, memberEmails } = await resolveWorkspaceOwnerEmails(org);
+  // Member management is an OWNER-level right (native roles: an admin has full access except billing and member management), so the
+  // inviter must be the workspace owner, the parent-agency owner or a platform admin. Existing members are deliberately NOT accepted here
+  // (they may still sign in and request their own links through requestOperatorMagicLinkAction).
+  const { ownerEmail, agencyOwnerEmail } = await resolveWorkspaceOwnerEmails(org);
   const allowed = isEmailAuthorizedForWorkspace(inviterEmail, {
     ownerEmail,
     agencyOwnerEmail,
     adminEmails: parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS),
-    memberEmails,
   });
   if (!allowed) return { ok: false, reason: "not_authorized_for_workspace" };
 
@@ -358,6 +360,19 @@ export async function inviteWorkspaceOperatorAction(input: {
       .insert(users)
       .values({ orgId: org.id, email, name: email.split("@")[0] || "Workspace operator", role: "member" })
       .returning({ id: users.id });
+    if (invitee) {
+      // This workspace is the new member's PRIMARY workspace, and the sign-in gates read onboarding state from it. The workspace is already
+      // built, so mark it onboarded for them; without this a normal sign-in loops /dashboard -> /welcome -> /dashboard (the /welcome page
+      // only redirects back). Same stamp the platform applies to new operators in markOperatorOnboarded; idempotent.
+      await db
+        .update(organizations)
+        .set({
+          soulCompletedAt: sql`COALESCE(${organizations.soulCompletedAt}, now())`,
+          settings: sql`COALESCE(${organizations.settings}, '{}'::jsonb) || '{"welcomeShown": true}'::jsonb`,
+        })
+        .where(eq(organizations.id, org.id));
+      await db.update(users).set({ planId: "free" }).where(and(eq(users.id, invitee.id), isNull(users.planId)));
+    }
   }
   if (!invitee) return { ok: false, reason: "invite_failed" };
   await db.insert(orgMembers).values({ orgId: org.id, userId: invitee.id, role: "admin" }).onConflictDoNothing({ target: [orgMembers.orgId, orgMembers.userId] });
