@@ -72,6 +72,6 @@ describe("embed.js route resolves the requested agent, not an arbitrary one of t
 
   test("it still returns a no-op script (not a 404) for a missing or inactive agent", () => {
     assert.match(source, /agent not live or not found/);
-    assert.match(source, /\["live", "test"\]\.includes\(agentRow\.status\)/);
+    assert.match(source, /!isEmbedAgentAccessible\(agentRow\.status\)/);
   });
 });
