@@ -49,6 +49,7 @@ import { cache } from "react";
 import { db } from "@/db";
 import { organizations, users } from "@/db/schema";
 import { normalizeTierId, type BillingTier } from "./features";
+import { isEmailInAllowlist, parseAdminAllowlist } from "@/lib/operator-portal/authorization";
 
 /** Internal: extract a tier from an organizations row's subscription/plan
  *  columns. "inactive" = no active paid plan. */
@@ -80,6 +81,17 @@ export const resolveTierForWorkspace = cache(
       .where(eq(organizations.id, orgId))
       .limit(1);
     if (!org) return "inactive";
+
+    // EPIC 2026-10-08: a workspace owned (or agency-managed) by a platform admin (SF_SUPERADMIN_EMAILS) resolves to the top tier,
+    // so the instance operator is never paywalled on its own platform. Unset env = no extra read and no behaviour change.
+    const platformAdmins = parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS);
+    if (platformAdmins.length > 0) {
+      for (const candidateId of [org.ownerId, org.parentUserId]) {
+        if (!candidateId) continue;
+        const [adminRow] = await db.select({ email: users.email }).from(users).where(eq(users.id, candidateId)).limit(1);
+        if (isEmailInAllowlist(adminRow?.email, platformAdmins)) return "agency_scale";
+      }
+    }
 
     // Step 1+2: the workspace's own subscription/plan takes precedence.
     // A workspace with its OWN paid sub stays on its own tier even if

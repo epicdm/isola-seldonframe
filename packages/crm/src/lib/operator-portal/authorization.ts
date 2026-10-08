@@ -47,6 +47,13 @@ export function parseAdminAllowlist(raw: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+/** True iff `email` (normalized) is in `allowlist` (already-parsed, e.g. from parseAdminAllowlist). Empty/null email is never in it. */
+export function isEmailInAllowlist(email: string | null | undefined, allowlist: readonly string[]): boolean {
+  const candidate = normalizeEmail(email);
+  if (!candidate) return false;
+  return allowlist.some((entry) => normalizeEmail(entry) === candidate);
+}
+
 export interface WorkspaceAuthSources {
   /** organizations.ownerId -> users.email (null if unowned / unresolved). */
   ownerEmail?: string | null;
@@ -54,6 +61,10 @@ export interface WorkspaceAuthSources {
   agencyOwnerEmail?: string | null;
   /** Platform-admin allowlist (e.g. parsed SF_SUPERADMIN_EMAILS). */
   adminEmails?: readonly string[] | null;
+  /** EPIC 2026-10-08: emails of people the workspace owner / agency has ALREADY added to this workspace as owner or admin
+   *  members (org_members). An agency-owned client workspace has exactly one ownerId (the agency), so without this the
+   *  client's own person could never receive a sign-in link. */
+  memberEmails?: readonly string[] | null;
 }
 
 /**
@@ -81,6 +92,10 @@ export function isEmailAuthorizedForWorkspace(
   const admins = sources.adminEmails ?? [];
   for (const admin of admins) {
     if (normalizeEmail(admin) === candidate) return true;
+  }
+
+  for (const member of sources.memberEmails ?? []) {
+    if (normalizeEmail(member) === candidate) return true;
   }
 
   return false;

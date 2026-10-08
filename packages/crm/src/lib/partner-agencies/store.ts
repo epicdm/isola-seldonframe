@@ -25,9 +25,10 @@
 
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { organizations, partnerAgencies } from "@/db/schema";
+import { organizations, partnerAgencies, users } from "@/db/schema";
 import type { PartnerAgency } from "@/db/schema";
 import { planUnlocksAgency } from "./plan-gate";
+import { isEmailInAllowlist, parseAdminAllowlist } from "@/lib/operator-portal/authorization";
 
 // ─── plan gate ─────────────────────────────────────────────────────────────
 
@@ -59,6 +60,21 @@ async function isWorkspaceOnScaleTier(workspaceId: string): Promise<boolean> {
     .where(eq(organizations.id, workspaceId))
     .limit(1);
   return row ? planUnlocksAgency(effectivePlan(row)) : false;
+}
+
+/** EPIC 2026-10-08: platform admins (SF_SUPERADMIN_EMAILS) may always register an active agency. Resolves the agency owner's
+ *  email from the user id, or from the owning workspace's owner. Unset env = false without any read. */
+async function isOwnerPlatformAdmin(ownerUserId?: string, ownerWorkspaceId?: string): Promise<boolean> {
+  const admins = parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS);
+  if (admins.length === 0) return false;
+  let userId = ownerUserId ?? null;
+  if (!userId && ownerWorkspaceId) {
+    const [ws] = await db.select({ ownerId: organizations.ownerId }).from(organizations).where(eq(organizations.id, ownerWorkspaceId)).limit(1);
+    userId = ws?.ownerId ?? null;
+  }
+  if (!userId) return false;
+  const [row] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+  return isEmailInAllowlist(row?.email, admins);
 }
 
 // ─── registerPartnerAgency ─────────────────────────────────────────────────
@@ -135,11 +151,12 @@ export async function registerPartnerAgency(
   // v1.19 — polymorphic plan gate. User identity is preferred when
   // present (real human, owns multiple workspaces possibly); workspace
   // identity is the fallback (anonymous-workspace-as-actor).
-  const onScale = input.ownerUserId
-    ? await isOwnerOnScaleTier(input.ownerUserId)
-    : input.ownerWorkspaceId
-      ? await isWorkspaceOnScaleTier(input.ownerWorkspaceId)
-      : false;
+  const onScale =
+    (input.ownerUserId
+      ? await isOwnerOnScaleTier(input.ownerUserId)
+      : input.ownerWorkspaceId
+        ? await isWorkspaceOnScaleTier(input.ownerWorkspaceId)
+        : false) || (await isOwnerPlatformAdmin(input.ownerUserId, input.ownerWorkspaceId));
 
   const [created] = await db
     .insert(partnerAgencies)

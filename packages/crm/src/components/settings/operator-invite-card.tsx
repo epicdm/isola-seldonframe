@@ -13,7 +13,7 @@
 import { useState, useTransition } from "react";
 import { Copy, Mail, ShieldCheck } from "lucide-react";
 
-import { requestOperatorMagicLinkAction } from "@/lib/operator-portal/auth";
+import { inviteWorkspaceOperatorAction } from "@/lib/operator-portal/auth";
 
 export type OperatorInviteCardProps = {
   orgSlug: string;
@@ -42,7 +42,7 @@ export function OperatorInviteCard({ orgSlug, orgName }: OperatorInviteCardProps
       return;
     }
     startTransition(async () => {
-      const res = await requestOperatorMagicLinkAction({
+      const res = await inviteWorkspaceOperatorAction({
         orgSlug,
         email: email.trim(),
         invitedByName: invitedByName.trim() || undefined,
@@ -149,6 +149,14 @@ function humanizeReason(reason: string): string {
   switch (reason) {
     case "missing_required_field":
       return "Email is required.";
+    case "not_signed_in":
+      return "Your session expired. Sign in again.";
+    case "not_authorized_for_workspace":
+      return "Only the workspace owner, the agency owner or an existing admin can invite operators here.";
+    case "workspace_not_found":
+      return "That workspace was not found.";
+    case "invite_failed":
+      return "We couldn't add that person. Please try again.";
     case "email_send_failed":
       return "We couldn't send the invite. Please try again in a moment.";
     default:
