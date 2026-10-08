@@ -68,10 +68,22 @@ describe("public turn spend protection", () => {
     assert.equal((await checkPublicTurnAllowed({ ip: `ip-${uid()}`, agentId, limits })).ok, false);
   });
 
-  test("the client IP is the first X-Forwarded-For hop, then X-Real-IP, then 'unknown'", () => {
-    assert.equal(resolvePublicRequestIp(new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.2" })), "203.0.113.9");
-    assert.equal(resolvePublicRequestIp(new Headers({ "x-real-ip": "198.51.100.4" })), "198.51.100.4");
-    assert.equal(resolvePublicRequestIp(new Headers()), "unknown");
+  // v4.41: the v4.39 contract (first X-Forwarded-For hop, then X-Real-IP, then "unknown") was the forgeable-key defect:
+  // the ingress APPENDS the real peer, so only the entry the trusted proxy appended may be believed.
+  test("the client IP is the RIGHTMOST X-Forwarded-For entry (one trusted hop); X-Real-IP is ignored; missing/malformed fail closed", () => {
+    const prior = process.env.TRUSTED_PROXY_HOPS;
+    try {
+      process.env.TRUSTED_PROXY_HOPS = "1";
+      assert.equal(resolvePublicRequestIp(new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.2" })), "10.0.0.2");
+      assert.equal(resolvePublicRequestIp(new Headers({ "x-forwarded-for": "10.0.0.2" })), "10.0.0.2");
+      assert.equal(resolvePublicRequestIp(new Headers({ "x-real-ip": "198.51.100.4" })), null);
+      assert.equal(resolvePublicRequestIp(new Headers()), null);
+      assert.equal(resolvePublicRequestIp(new Headers({ "x-forwarded-for": "not-an-ip, 10.0.0.2" })), null);
+      delete process.env.TRUSTED_PROXY_HOPS;
+      assert.equal(resolvePublicRequestIp(new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.2" })), null, "no trusted-hop setting: no address can be trusted");
+    } finally {
+      if (prior === undefined) delete process.env.TRUSTED_PROXY_HOPS; else process.env.TRUSTED_PROXY_HOPS = prior;
+    }
   });
 });
 

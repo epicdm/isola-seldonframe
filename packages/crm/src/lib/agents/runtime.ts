@@ -46,6 +46,11 @@ import {
   type ToolExecuteContext,
 } from "./tools";
 import { resolveTurnModel } from "./runtime/turn-model";
+import {
+  DEEPSEEK_FLASH_PRICING,
+  extractCompletePublicUsage,
+  isPublicPilotRequestWithinInputLimit,
+} from "./public-pilot-controls";
 import { createTtlPromiseCache } from "./runtime/capped-reply-cache";
 import {
   cachedSystemBlocks,
@@ -69,7 +74,7 @@ import {
 } from "@/lib/agents/fallback-messages";
 
 const MODEL = process.env.ANTHROPIC_AGENT_MODEL?.trim() || "claude-sonnet-4-5-20250929";
-const MAX_TURN_ITERATIONS = 6; // tool-call cap per single turn (catches loops)
+const MAX_TURN_ITERATIONS = DEEPSEEK_FLASH_PRICING.loopCalls; // tool-call cap per single turn
 // v1.26.1 — these are Seldon's internal accounting markup for
 // billing-the-operator-for-agent-platform-usage. The OPERATOR pays
 // the LLM bill directly via their BYOK Anthropic key; Seldon makes money
@@ -88,9 +93,12 @@ type ExecuteTurnResult =
       toolResults: AgentToolResult[];
       tokensIn: number;
       tokensOut: number;
+      model: string;
+      usageComplete: boolean;
+      providerCalls: number;
       latencyMs: number;
     }
-  | { ok: false; reason: string; fallbackMessage: string };
+  | { ok: false; reason: string; fallbackMessage: string; providerCalls?: number };
 
 // bindingToCtxBooking (the pure CalendarBinding → ctx.booking mapper) lives in
 // ./booking/binding-ctx — runtime.ts is "use server", and Turbopack's `next
@@ -147,6 +155,8 @@ export async function executeTurn(input: {
    *  Net effect: a persist:false turn writes ZERO agentTurns rows, but its
    *  real token/cost spend is still counted. */
   persist?: boolean;
+  /** Public pilot only: pin the metered provider/model and disable SDK retries. */
+  publicPilotSpend?: boolean;
 }): Promise<ExecuteTurnResult> {
   const t0 = Date.now();
   const persist = input.persist !== false;
@@ -368,6 +378,17 @@ export async function executeTurn(input: {
   // fails, so this is a no-op today until Max flips the flag.
   const aiResolution = await resolveRuntimeAiClient({ orgId: agent.orgId });
   const runtimeModel = aiResolution.model ?? MODEL;
+  if (input.publicPilotSpend && (
+    aiResolution.provider !== "platform" ||
+    runtimeModel !== "deepseek-flash" ||
+    process.env.MODEL_BASE_URL?.replace(/\/+$/, "") !== "https://api.deepseek.com/anthropic"
+  )) {
+    return {
+      ok: false,
+      reason: "llm_not_configured",
+      fallbackMessage: PROVIDER_NOT_CONFIGURED_FALLBACK,
+    };
+  }
 
   // Per-sub-account usage meter (2026-07-08) — Task 4: the "capped" branch
   // (flag SF_USAGE_CAP_PAUSE, D5). An inherited-key sub-account whose agency
@@ -421,6 +442,9 @@ export async function executeTurn(input: {
       toolResults: [],
       tokensIn: 0,
       tokensOut: 0,
+      model: runtimeModel,
+      usageComplete: true,
+      providerCalls: 0,
       latencyMs,
     };
   }
@@ -438,6 +462,8 @@ export async function executeTurn(input: {
   // 6. Loop over LLM ↔ tools until we get a stop_reason of "end_turn"
   let totalTokensIn = 0;
   let totalTokensOut = 0;
+  let usageComplete = true;
+  let providerCalls = 0;
   const allToolCalls: AgentToolCall[] = [];
   const allToolResults: AgentToolResult[] = [];
   let finalText = "";
@@ -458,7 +484,7 @@ export async function executeTurn(input: {
   let lastModelUsed = runtimeModel;
 
   for (let iter = 0; iter < MAX_TURN_ITERATIONS; iter++) {
-    const turnModel = resolveTurnModel({
+    const turnModel = input.publicPilotSpend ? runtimeModel : resolveTurnModel({
       userMessage: input.userMessage,
       toolNamesAvailable,
       priorToolError,
@@ -474,21 +500,36 @@ export async function executeTurn(input: {
       // each; the moving breakpoint on the last message block makes both the
       // next loop iteration and the NEXT TURN's history rebuild a cache READ
       // instead of full-price input. Three markers total (≤ the API's 4).
-      response = await anthropic.messages.create({
+      const requestParams = {
         model: turnModel,
-        max_tokens: 1024,
-        system: cachedSystemBlocks(systemPrompt) as Anthropic.Messages.MessageCreateParams["system"],
-        tools: cachedToolParams(
+        max_tokens: DEEPSEEK_FLASH_PRICING.loopOutputTokens,
+        system: (input.publicPilotSpend ? systemPrompt : cachedSystemBlocks(systemPrompt)) as Anthropic.Messages.MessageCreateParams["system"],
+        tools: (input.publicPilotSpend ?
+          tools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.jsonSchema as Anthropic.Messages.Tool.InputSchema,
+          })) : cachedToolParams(
           tools.map((t) => ({
             name: t.name,
             description: t.description,
             input_schema: t.jsonSchema as Anthropic.Messages.Tool.InputSchema,
           })),
-        ) as Anthropic.Messages.ToolUnion[],
-        messages: withMovingCacheBreakpoint(
+        )) as Anthropic.Messages.ToolUnion[],
+        messages: (input.publicPilotSpend ? messages : withMovingCacheBreakpoint(
           messages as LooseMessage[],
-        ) as Anthropic.Messages.MessageParam[],
-      });
+        )) as Anthropic.Messages.MessageParam[],
+      } satisfies Anthropic.Messages.MessageCreateParams;
+      if (input.publicPilotSpend && !isPublicPilotRequestWithinInputLimit(requestParams)) {
+        return {
+          ok: false,
+          reason: "request_too_large",
+          fallbackMessage: "This conversation has reached its safe context limit. Please start a new chat.",
+          providerCalls,
+        };
+      }
+      providerCalls += 1;
+      response = await anthropic.messages.create(requestParams, input.publicPilotSpend ? { maxRetries: 0 } : undefined);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       const errClass = classifyAnthropicError(detail);
@@ -498,6 +539,7 @@ export async function executeTurn(input: {
       return {
         ok: false,
         reason: errClass.reason,
+        providerCalls,
         // Test-mode = Seldon client testing in sandbox → return real diagnostic.
         // Live/active = end customer talking to agent → return gentle fallback.
         fallbackMessage:
@@ -527,8 +569,13 @@ export async function executeTurn(input: {
       // Never let analytics affect the agent runtime loop.
     }
 
-    totalTokensIn += response.usage?.input_tokens ?? 0;
-    totalTokensOut += response.usage?.output_tokens ?? 0;
+    const usage = extractCompletePublicUsage(response.usage);
+    if (!usage) {
+      usageComplete = false;
+    } else {
+      totalTokensIn += usage.inputTokens;
+      totalTokensOut += usage.outputTokens;
+    }
 
     // Extract text + tool_use blocks
     const textBlocks: string[] = [];
@@ -749,7 +796,7 @@ export async function executeTurn(input: {
       // Regeneration IS a hard turn — the model just produced a critically-
       // failing response and gets one chance to recover. Escalate to premium
       // (priorToolError-equivalent recovery signal). Fail-soft → MODEL.
-      const regenModel = resolveTurnModel({
+      const regenModel = input.publicPilotSpend ? runtimeModel : resolveTurnModel({
         userMessage: input.userMessage,
         toolNamesAvailable,
         priorToolError: true,
@@ -757,9 +804,9 @@ export async function executeTurn(input: {
         defaultModel: runtimeModel,
       });
       lastModelUsed = regenModel;
-      const regenResponse = await anthropic.messages.create({
+      const regenParams = {
         model: regenModel,
-        max_tokens: 512,
+        max_tokens: DEEPSEEK_FLASH_PRICING.regenerationOutputTokens,
         // Deliberately UNCACHED (token economy): this call has no tools, so
         // its prefix can never match the loop's cached [tools, system, …]
         // prefix — a marker here would pay the cache-write premium with no
@@ -769,9 +816,22 @@ export async function executeTurn(input: {
         // another tool-loop iteration. The original turn already
         // resolved any tool calls; we're fixing the FINAL TEXT.
         messages: regenMessages as Anthropic.Messages.MessageParam[],
-      });
-      totalTokensIn += regenResponse.usage?.input_tokens ?? 0;
-      totalTokensOut += regenResponse.usage?.output_tokens ?? 0;
+      } satisfies Anthropic.Messages.MessageCreateParams;
+      if (input.publicPilotSpend && !isPublicPilotRequestWithinInputLimit(regenParams)) {
+        usageComplete = false;
+        // The earlier inference was already billed. Do not make an unbounded
+        // regeneration request; the route keeps the reservation conservative.
+        finalText = selectFinalFallback(failedNames);
+      } else {
+        providerCalls += 1;
+        const regenResponse = await anthropic.messages.create(regenParams, input.publicPilotSpend ? { maxRetries: 0 } : undefined);
+      const regenUsage = extractCompletePublicUsage(regenResponse.usage);
+      if (!regenUsage) {
+        usageComplete = false;
+      } else {
+        totalTokensIn += regenUsage.inputTokens;
+        totalTokensOut += regenUsage.outputTokens;
+      }
       const regenText = regenResponse.content
         .filter(
           (b): b is Anthropic.Messages.TextBlock => b.type === "text",
@@ -814,6 +874,7 @@ export async function executeTurn(input: {
       } else {
         // Regeneration returned no text — shouldn't happen, but fall back.
         finalText = selectFinalFallback(failedNames);
+      }
       }
     } catch (regenErr) {
       console.error(
@@ -906,6 +967,9 @@ export async function executeTurn(input: {
     toolResults: allToolResults,
     tokensIn: totalTokensIn,
     tokensOut: totalTokensOut,
+    model: lastModelUsed,
+    usageComplete,
+    providerCalls,
     latencyMs,
   };
 }

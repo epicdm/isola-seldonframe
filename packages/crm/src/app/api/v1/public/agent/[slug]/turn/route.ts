@@ -24,6 +24,7 @@
 // for typewriter UX. Real Anthropic-streaming-passthrough lands in v1.27
 // alongside the multi-step tool-call streaming story.
 
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import {
   authorizePublicConversationContinuation,
@@ -36,7 +37,20 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { agentConversations, agents, organizations } from "@/db/schema";
 import { executeTurn } from "@/lib/agents/runtime";
+import {
+  agentHasPilotGate,
+  markPublicTurnSpendUncertain,
+  publicConversationAtLimit,
+  releasePublicTurnSpend,
+  reservePublicTurnSpend,
+  settlePublicTurnSpend,
+} from "@/lib/agents/public-turn-spend";
 import { decidePublicConversationStatus } from "@/lib/agents/public-turn-status";
+import {
+  PUBLIC_CHAT_CONVERSATION_LIMIT_MESSAGE,
+  PUBLIC_CHAT_UNAVAILABLE_MESSAGE,
+  resolvePublicPilotTarget,
+} from "@/lib/agents/public-pilot-controls";
 import { publicTurnFallbackEvents, publicTurnFallbackResponse } from "@/lib/agents/public-turn-response";
 import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import {
@@ -180,6 +194,15 @@ export async function POST(
     }
   }
   const operatorTestSession = requestedTestMode && isAuthenticatedOperator;
+  let pilotTarget = resolvePublicPilotTarget(agentRow.orgId, agentRow.id);
+  // The environment decides whether a request is metered; a typo in PUBLIC_PILOT_ORG_ID / PUBLIC_PILOT_AGENT_ID must NOT leave
+  // the pilot agent public and unmetered. If the database holds a pilot gate row for this agent but the environment does not
+  // identify it as the pilot target, fail closed (found by Lane A in acceptance: org-mismatch served the agent unmetered).
+  if (!operatorTestSession && pilotTarget === "other" && (await agentHasPilotGate(agentRow.id))) pilotTarget = "incomplete";
+  if (!operatorTestSession && pilotTarget === "incomplete") {
+    return NextResponse.json({ error: "PUBLIC_CHAT_UNAVAILABLE", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE }, { status: 503, headers: CORS_HEADERS });
+  }
+  const pilotPublicRequest = !operatorTestSession && pilotTarget === "target";
   const signingSecret = resolvePublicConversationSecret();
 
   const rawConversationId = body.conversation_id;
@@ -201,21 +224,21 @@ export async function POST(
       { status: 404, headers: CORS_HEADERS },
     );
   }
-  let conversationId: string | undefined =
-    typeof rawConversationId === "string" ? rawConversationId : undefined;
+  const isNewConversation = rawConversationId == null;
+  let conversationId = typeof rawConversationId === "string" ? rawConversationId : randomUUID();
   let conversationCapability: string | undefined;
 
   if (!operatorTestSession) {
     const validSession = isValidAnonymousSessionId(body.anonymous_session_id);
     if (!validSession) {
       return NextResponse.json(
-        { error: conversationId ? "conversation_not_found" : "invalid_anonymous_session" },
-        { status: conversationId ? 404 : 400, headers: CORS_HEADERS },
+        { error: isNewConversation ? "invalid_anonymous_session" : "conversation_not_found" },
+        { status: isNewConversation ? 400 : 404, headers: CORS_HEADERS },
       );
     }
     if (!signingSecret) {
       return NextResponse.json(
-        { error: "temporarily_unavailable" },
+        { error: "temporarily_unavailable", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE },
         { status: 503, headers: CORS_HEADERS },
       );
     }
@@ -223,7 +246,7 @@ export async function POST(
 
   // Resolve and authorize an existing conversation before rate-limit counters,
   // turn persistence or executeTurn/model access.
-  if (conversationId) {
+  if (!isNewConversation) {
     const owned = isValidPublicConversationId(conversationId)
       ? (
           await db
@@ -277,18 +300,51 @@ export async function POST(
     }
   }
 
-  // Spend protection: this endpoint is anonymous and every turn calls the model provider. Checked BEFORE
-  // any conversation row is created or any model call is made; a limiter error fails closed.
-  const allowed = await checkPublicTurnAllowed({
-    ip: resolvePublicRequestIp(request.headers),
-    agentId: agentRow.id,
-    limits: resolvePublicTurnLimits(),
-  });
-  if (!allowed.ok) {
-    return NextResponse.json(
-      { error: "rate_limited", message: PUBLIC_TURN_RATE_LIMITED_MESSAGE },
-      { status: 429, headers: { ...CORS_HEADERS, "Retry-After": "60" } },
-    );
+  // Public callers require a trustworthy ingress peer and the durable spend
+  // reservation. Authenticated same-workspace operator test mode intentionally
+  // retains native testing even while the public pilot gate is disabled.
+  let spendReservation: { id: string } | null = null;
+  if (!operatorTestSession) {
+    const requestIp = resolvePublicRequestIp(request.headers);
+    if (!requestIp) {
+      return NextResponse.json({ error: "temporarily_unavailable", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE }, { status: 503, headers: CORS_HEADERS });
+    }
+    const allowed = await checkPublicTurnAllowed({
+      ip: requestIp,
+      agentId: agentRow.id,
+      limits: resolvePublicTurnLimits(),
+      // The durable dollar gate is the primary control. The per-IP limiter is process-local unless a
+      // distributed limiter is configured AND the operator opts in to requiring it.
+      failClosed: pilotPublicRequest && process.env.PUBLIC_PILOT_REQUIRE_DISTRIBUTED_LIMITER === "1",
+    });
+    if (!allowed.ok) {
+      if (allowed.scope === "limiter_error") {
+        return NextResponse.json({ error: "temporarily_unavailable", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE }, { status: 503, headers: CORS_HEADERS });
+      }
+      return NextResponse.json(
+        { error: "rate_limited", message: PUBLIC_TURN_RATE_LIMITED_MESSAGE },
+        { status: 429, headers: { ...CORS_HEADERS, "Retry-After": "60" } },
+      );
+    }
+
+    if (pilotPublicRequest) {
+      // Allocate the ID before reservation so first turns count against the
+      // same per-conversation limit as continuations. Write only after reserve.
+      spendReservation = await reservePublicTurnSpend({
+        organizationId: agentRow.orgId,
+        agentId: agentRow.id,
+        conversationId,
+      });
+      if (!spendReservation) {
+        const atLimit = await publicConversationAtLimit(conversationId);
+        return NextResponse.json(
+          atLimit
+            ? { error: "PUBLIC_CHAT_CONVERSATION_LIMIT", message: PUBLIC_CHAT_CONVERSATION_LIMIT_MESSAGE }
+            : { error: "PUBLIC_CHAT_UNAVAILABLE", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE },
+          { status: 503, headers: CORS_HEADERS },
+        );
+      }
+    }
   }
 
   const conversationStatus = decidePublicConversationStatus({
@@ -298,26 +354,38 @@ export async function POST(
   });
 
   // Get-or-create conversation
-  if (!conversationId) {
-    const [agentForVersion] = await db
-      .select({ currentVersion: agents.currentVersion })
-      .from(agents)
-      .where(eq(agents.id, agentRow.id))
-      .limit(1);
-    const [created] = await db
-      .insert(agentConversations)
-      .values({
-        agentId: agentRow.id,
-        agentVersion: agentForVersion?.currentVersion ?? 1,
-        orgId: agentRow.orgId,
-        anonymousSessionId: isValidAnonymousSessionId(body.anonymous_session_id)
-          ? body.anonymous_session_id
-          : null,
-        channelMeta: body.channel_meta ?? {},
-        status: conversationStatus,
-      })
-      .returning({ id: agentConversations.id });
+  if (isNewConversation) {
+    let agentForVersion: { currentVersion: number } | undefined;
+    let created: { id: string } | undefined;
+    try {
+      [agentForVersion] = await db
+        .select({ currentVersion: agents.currentVersion })
+        .from(agents)
+        .where(eq(agents.id, agentRow.id))
+        .limit(1);
+      [created] = await db
+        .insert(agentConversations)
+        .values({
+          id: conversationId,
+          agentId: agentRow.id,
+          agentVersion: agentForVersion?.currentVersion ?? 1,
+          orgId: agentRow.orgId,
+          anonymousSessionId: isValidAnonymousSessionId(body.anonymous_session_id)
+            ? body.anonymous_session_id
+            : null,
+          channelMeta: body.channel_meta ?? {},
+          status: conversationStatus,
+        })
+        .returning({ id: agentConversations.id });
+    } catch {
+      if (spendReservation) await releasePublicTurnSpend(spendReservation.id);
+      return NextResponse.json(
+        { error: "conversation_create_failed" },
+        { status: 500, headers: CORS_HEADERS },
+      );
+    }
     if (!created) {
+      if (spendReservation) await releasePublicTurnSpend(spendReservation.id);
       return NextResponse.json(
         { error: "conversation_create_failed" },
         { status: 500, headers: CORS_HEADERS },
@@ -342,15 +410,19 @@ export async function POST(
     // and that traffic must never count as activation. Fire-and-forget:
     // never awaited, internally swallows every error.
     if (conversationStatus === "active") {
-      const { recordAgentConversationStarted } = await import(
-        "@/lib/analytics/record-agent-activation"
-      );
-      void recordAgentConversationStarted({
-        orgId: agentRow.orgId,
-        agentId: agentRow.id,
-        conversationId,
-        channel: "web",
-      });
+      try {
+        const { recordAgentConversationStarted } = await import(
+          "@/lib/analytics/record-agent-activation"
+        );
+        void recordAgentConversationStarted({
+          orgId: agentRow.orgId,
+          agentId: agentRow.id,
+          conversationId,
+          channel: "web",
+        });
+      } catch {
+        // Analytics is optional and must not block a metered customer turn.
+      }
     }
   }
 
@@ -369,7 +441,9 @@ export async function POST(
             conversation_id: conversationId,
             ...(conversationCapability ? { conversation_capability: conversationCapability } : {}),
           });
-          const result = await executeTurn({
+          const result = await executeBoundedPublicTurn({
+            reservationId: spendReservation?.id,
+            metered: pilotPublicRequest,
             conversationId: conversationId!,
             userMessage: message,
           });
@@ -420,7 +494,9 @@ export async function POST(
   }
 
   // Non-streaming JSON branch (back-compat) ──────────────────────────────
-  const result = await executeTurn({
+  const result = await executeBoundedPublicTurn({
+    reservationId: spendReservation?.id,
+    metered: pilotPublicRequest,
     conversationId,
     userMessage: message,
   });
@@ -440,6 +516,52 @@ export async function POST(
     },
     { headers: CORS_HEADERS },
   );
+}
+
+async function executeBoundedPublicTurn(input: {
+  reservationId?: string;
+  metered: boolean;
+  conversationId: string;
+  userMessage: string;
+}) {
+  let result: Awaited<ReturnType<typeof executeTurn>>;
+  try {
+    result = await executeTurn({
+      conversationId: input.conversationId,
+      userMessage: input.userMessage,
+      publicPilotSpend: input.metered,
+  });
+  } catch (error) {
+    if (input.metered && input.reservationId) await markPublicTurnSpendUncertain(input.reservationId);
+    throw error;
+  }
+
+  if (!result.ok) {
+    if (input.metered && input.reservationId) {
+      if (result.providerCalls === 0 || ["conversation_not_found", "agent_not_found", "org_not_found", "llm_not_configured"].includes(result.reason)) {
+        await releasePublicTurnSpend(input.reservationId);
+      } else {
+        await markPublicTurnSpendUncertain(input.reservationId);
+      }
+    }
+    return result;
+  }
+
+  if (!input.metered || !input.reservationId) return result;
+  if (result.providerCalls === 0) {
+    await releasePublicTurnSpend(input.reservationId);
+    return result;
+  }
+
+  const settled = await settlePublicTurnSpend({
+    reservationId: input.reservationId,
+    model: result.model,
+    inputTokens: result.tokensIn,
+    outputTokens: result.tokensOut,
+    usageComplete: result.usageComplete,
+  });
+  if (!settled) await markPublicTurnSpendUncertain(input.reservationId);
+  return result;
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────

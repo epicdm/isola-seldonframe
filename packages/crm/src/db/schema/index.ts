@@ -106,6 +106,7 @@ export * from "./agency-support-sessions";
 // agent_evals (test scenarios per version). Web chat archetype
 // ships first; voice / SMS / email queued.
 export * from "./agents";
+export * from "./public-turn-spend";
 
 // 2026-05-18 — outbound messaging layer (plan v2):
 // outbound_message_triggers + outbound_message_sends. Symmetric to

@@ -8,6 +8,7 @@
 // The defaults are deliberately modest and can be changed with env vars without a release.
 // A limiter failure FAILS CLOSED: the visitor is told to retry, and no model call is made.
 import { checkRateLimit } from "@/lib/utils/rate-limit";
+import { parseTrustedProxyHops, resolveTrustedClientIp } from "./public-pilot-controls";
 
 export type PublicTurnLimits = {
   perIpPerMinute: number;
@@ -39,11 +40,9 @@ export function resolvePublicTurnLimits(
   };
 }
 
-/** Behind the platform proxy the first X-Forwarded-For hop is the client. */
-export function resolvePublicRequestIp(headers: Headers): string {
-  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  if (forwarded) return forwarded.slice(0, 64);
-  return headers.get("x-real-ip")?.trim().slice(0, 64) || "unknown";
+/** Uses only the trusted XFF suffix; never a caller-controlled leftmost or X-Real-IP value. */
+export function resolvePublicRequestIp(headers: Headers): string | null {
+  return resolveTrustedClientIp(headers, parseTrustedProxyHops(process.env.TRUSTED_PROXY_HOPS));
 }
 
 export type PublicTurnDecision =
@@ -57,17 +56,20 @@ export async function checkPublicTurnAllowed(input: {
   ip: string;
   agentId: string;
   limits: PublicTurnLimits;
+  failClosed?: boolean;
 }): Promise<PublicTurnDecision> {
   try {
     const { ip, agentId, limits } = input;
+    if (!ip) return { ok: false, scope: "limiter_error" };
     // Cheapest and most specific first; a rejected request must not consume the wider budgets.
-    if (!(await checkRateLimit(`public-turn:ip-min:${ip}`, limits.perIpPerMinute, MINUTE))) {
+    const limiterOptions = input.failClosed ? { failClosed: true } : undefined;
+    if (!(await checkRateLimit(`public-turn:ip-min:${ip}`, limits.perIpPerMinute, MINUTE, limiterOptions))) {
       return { ok: false, scope: "ip_minute" };
     }
-    if (!(await checkRateLimit(`public-turn:ip-day:${ip}`, limits.perIpPerDay, DAY))) {
+    if (!(await checkRateLimit(`public-turn:ip-day:${ip}`, limits.perIpPerDay, DAY, limiterOptions))) {
       return { ok: false, scope: "ip_day" };
     }
-    if (!(await checkRateLimit(`public-turn:agent-day:${agentId}`, limits.perAgentPerDay, DAY))) {
+    if (!(await checkRateLimit(`public-turn:agent-day:${agentId}`, limits.perAgentPerDay, DAY, limiterOptions))) {
       return { ok: false, scope: "agent_day" };
     }
     return { ok: true };
