@@ -4,8 +4,8 @@ import { disablePublicPilot, readPublicPilotUsage } from "@/lib/agents/public-tu
 
 const NO_STORE = { "Cache-Control": "no-store, max-age=0" } as const;
 
-/** CSRF guard for the kill switch. Behind the ingress, `request.nextUrl.origin` is the container's own http origin, so the
- * browser's `https://<site>` Origin never matches it (found by Lane A in acceptance: the kill switch always answered 403).
+/** CSRF guard for the kill switch. Behind the ingress, the origin of the parsed request URL is the container's own http origin,
+ * so the browser's `https://<site>` Origin never matches it (found by Lane A in acceptance: the kill switch always answered 403).
  * Compare the Origin HOST with the Host the browser addressed (x-forwarded-host first, as the rest of the app does). A
  * cross-site page cannot forge either header, and the session cookie is still required. */
 function isSameOriginRequest(request: NextRequest): boolean {
