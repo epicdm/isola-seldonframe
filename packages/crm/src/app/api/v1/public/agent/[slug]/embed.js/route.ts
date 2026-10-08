@@ -32,7 +32,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { agents, organizations } from "@/db/schema";
 import { shouldShowPoweredByBadgeForOrg } from "@/lib/billing/public";
-import { resolvePlatformBranding } from "@/lib/branding/platform";
+import { resolvePlatformBranding, resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 import {
   buildEmbedGoogleFontUrl,
   getArchetypeStyleTokens,
@@ -50,6 +50,7 @@ import { applyArchetypeThemeToOrg } from "@/lib/workspace/apply-archetype-theme"
 import {
   buildEmbedTurnUrl,
   isEmbedAgentAccessible,
+  resolveEmbedOrigin,
   resolveRequestedEmbedAgent,
 } from "@/lib/agents/public-embed-resolution";
 
@@ -85,8 +86,16 @@ export async function GET(
 
   // Even if not found, return a no-op script (don't 404 — that
   // would log noise on the operator's website console).
-  const url = new URL(request.url);
-  const turnUrl = buildEmbedTurnUrl(`${url.protocol}//${url.host}`, orgSlugPart, agentSlugPart);
+  // The container sees its internal bind address in request.url (https://0.0.0.0:3000), so the public
+  // origin comes from the proxy headers, validated against this platform's own hosts.
+  const publicOrigin = resolveEmbedOrigin({
+    host: request.headers.get("host"),
+    forwardedHost: request.headers.get("x-forwarded-host"),
+    forwardedProto: request.headers.get("x-forwarded-proto"),
+    appUrl: resolvePlatformBranding().appUrl,
+    workspaceBaseDomain: resolveWorkspaceBaseDomain(),
+  });
+  const turnUrl = buildEmbedTurnUrl(publicOrigin, orgSlugPart, agentSlugPart);
 
   if (!agentRow || !isEmbedAgentAccessible(agentRow.status)) {
     console.warn(JSON.stringify({
