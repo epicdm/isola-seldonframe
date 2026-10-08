@@ -55,6 +55,19 @@ export function isEmailInAllowlist(email: string | null | undefined, allowlist: 
 }
 
 /**
+ * EPIC 2026-10-08: the origin a workspace operator/customer signs in on. On a deployment whose operator host is access-restricted
+ * (Uplink), the app host is unreachable for customers, so the sign-in link must point at the workspace's own host
+ * (https://<slug>.<WORKSPACE_BASE_DOMAIN>, the same shape buildWorkspaceUrls uses for public workspace URLs). Falls back to the app
+ * origin when no base domain is configured or the slug is not a plain host label. Pure so it is unit-testable.
+ */
+export function operatorPortalOrigin(orgSlug: string, workspaceBaseDomain: string | null | undefined, appOrigin: string): string {
+  const base = (workspaceBaseDomain ?? "").trim().toLowerCase().replace(/^\.+/, "").replace(/\.+$/, "");
+  const slug = (orgSlug ?? "").trim().toLowerCase();
+  if (!base || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(slug) || !/^[a-z0-9.-]+$/.test(base)) return appOrigin;
+  return `https://${slug}.${base}`;
+}
+
+/**
  * EPIC 2026-10-08: the platform-admin limit bypass (lib/tier/limits.ts) applies ONLY to the platform operator's own HOME workspace,
  * never to a client workspace the operator merely owns or manages. A client workspace keeps the entitlements it natively inherits
  * from its agency (Scale caps), so a customer working inside one is not lifted above them. Pure so it is unit-testable.

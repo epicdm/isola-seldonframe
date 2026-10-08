@@ -18,9 +18,11 @@ import { inviteWorkspaceOperatorAction } from "@/lib/operator-portal/auth";
 export type OperatorInviteCardProps = {
   orgSlug: string;
   orgName: string;
+  /** Public origin customers sign in on (the workspace's own host). Computed on the server; falls back to this browser's origin. */
+  portalOrigin?: string;
 };
 
-export function OperatorInviteCard({ orgSlug, orgName }: OperatorInviteCardProps) {
+export function OperatorInviteCard({ orgSlug, orgName, portalOrigin }: OperatorInviteCardProps) {
   const [pending, startTransition] = useTransition();
   const [email, setEmail] = useState("");
   const [invitedByName, setInvitedByName] = useState("");
@@ -31,8 +33,9 @@ export function OperatorInviteCard({ orgSlug, orgName }: OperatorInviteCardProps
   >({ kind: "idle" });
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
-  const portalLoginUrl =
-    typeof window !== "undefined"
+  const portalLoginUrl = portalOrigin
+    ? `${portalOrigin}/portal/${orgSlug}/login`
+    : typeof window !== "undefined"
       ? `${window.location.origin}/portal/${orgSlug}/login`
       : `/portal/${orgSlug}/login`;
 

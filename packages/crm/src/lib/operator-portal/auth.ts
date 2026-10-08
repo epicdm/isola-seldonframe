@@ -56,6 +56,7 @@ import { emitSeldonEvent } from "@/lib/events/bus";
 import { trackEvent } from "@/lib/analytics/track";
 import {
   isEmailAuthorizedForWorkspace,
+  operatorPortalOrigin,
   parseAdminAllowlist,
 } from "./authorization";
 import {
@@ -249,9 +250,10 @@ async function issueOperatorMagicLink(
     kind: "magic",
   };
   const token = signOperatorToken(payload);
+  // EPIC 2026-10-08: the link points at the workspace's own host (publicly reachable), not the access-restricted app host.
   const inviteUrl = new URL(
     `/portal/${orgSlug}/magic`,
-    getAppOrigin(),
+    operatorPortalOrigin(orgSlug, process.env.WORKSPACE_BASE_DOMAIN, getAppOrigin()),
   );
   inviteUrl.searchParams.set("token", token);
 

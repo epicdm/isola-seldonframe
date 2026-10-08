@@ -2,7 +2,7 @@
 // helper, (3) the operator sign-in email can be delivered through SMTP2GO. Every negative sits beside a positive control.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isEmailAuthorizedForWorkspace, isEmailInAllowlist, isOperatorHomeWorkspace, parseAdminAllowlist } from "../../src/lib/operator-portal/authorization";
+import { isEmailAuthorizedForWorkspace, isEmailInAllowlist, isOperatorHomeWorkspace, operatorPortalOrigin, parseAdminAllowlist } from "../../src/lib/operator-portal/authorization";
 import { sendOperatorMagicLinkEmail } from "../../src/lib/emails/operator-magic-link";
 
 const base = { ownerEmail: "agency@x.test", agencyOwnerEmail: "agency@x.test", adminEmails: [] as string[] };
@@ -72,4 +72,16 @@ test("platform-admin limit bypass applies to the operator's HOME workspace only,
   assert.equal(isOperatorHomeWorkspace("org-home", null), false);
   assert.equal(isOperatorHomeWorkspace(null, null), false);
   assert.equal(isOperatorHomeWorkspace("", ""), false);
+});
+
+test("sign-in link origin: the workspace's own host when a base domain is configured, the app origin otherwise", () => {
+  const app = "https://uplink.epic.dm";
+  assert.equal(operatorPortalOrigin("acme-plumbing", "uplink.epic.dm", app), "https://acme-plumbing.uplink.epic.dm");
+  assert.equal(operatorPortalOrigin("Acme-Plumbing", " .Uplink.Epic.dm. ", app), "https://acme-plumbing.uplink.epic.dm"); // normalised
+  assert.equal(operatorPortalOrigin("acme", "", app), app); // no base domain configured
+  assert.equal(operatorPortalOrigin("acme", undefined, app), app);
+  assert.equal(operatorPortalOrigin("evil.com/x", "uplink.epic.dm", app), app); // not a plain host label
+  assert.equal(operatorPortalOrigin("a b", "uplink.epic.dm", app), app);
+  assert.equal(operatorPortalOrigin("acme", "up link", app), app); // malformed base domain
+  assert.equal(operatorPortalOrigin("", "uplink.epic.dm", app), app);
 });
