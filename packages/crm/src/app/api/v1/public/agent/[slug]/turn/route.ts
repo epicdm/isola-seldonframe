@@ -32,6 +32,12 @@ import { executeTurn } from "@/lib/agents/runtime";
 import { decidePublicConversationStatus } from "@/lib/agents/public-turn-status";
 import { publicTurnFallbackEvents, publicTurnFallbackResponse } from "@/lib/agents/public-turn-response";
 import { getCurrentUser } from "@/lib/auth/helpers";
+import {
+  PUBLIC_TURN_RATE_LIMITED_MESSAGE,
+  checkPublicTurnAllowed,
+  resolvePublicRequestIp,
+  resolvePublicTurnLimits,
+} from "@/lib/agents/public-turn-limits";
 
 type Body = {
   conversation_id?: string;
@@ -148,6 +154,20 @@ export async function POST(
     return NextResponse.json(
       { error: "agent_not_active", status: agentRow.status },
       { status: 403, headers: CORS_HEADERS },
+    );
+  }
+
+  // Spend protection: this endpoint is anonymous and every turn calls the model provider. Checked BEFORE
+  // any conversation row is created or any model call is made; a limiter error fails closed.
+  const allowed = await checkPublicTurnAllowed({
+    ip: resolvePublicRequestIp(request.headers),
+    agentId: agentRow.id,
+    limits: resolvePublicTurnLimits(),
+  });
+  if (!allowed.ok) {
+    return NextResponse.json(
+      { error: "rate_limited", message: PUBLIC_TURN_RATE_LIMITED_MESSAGE },
+      { status: 429, headers: { ...CORS_HEADERS, "Retry-After": "60" } },
     );
   }
 
