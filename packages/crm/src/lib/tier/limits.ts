@@ -2,6 +2,7 @@ import { count, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { landingPages, organizations, users } from "@/db/schema";
 import { isSuperAdminUser } from "@/lib/auth/super-admin";
+import { isOperatorHomeWorkspace } from "@/lib/operator-portal/authorization";
 import { CLOUD_TIERS, type CloudTierKey } from "./config";
 import { pickEffectivePlan } from "./effective-plan";
 import { resolveTierForWorkspace } from "@/lib/billing/tier-resolver";
@@ -23,12 +24,14 @@ import { resolveTierForWorkspace } from "@/lib/billing/tier-resolver";
 // happens at most once per orgId per process.
 async function isOwnerSuperAdmin(orgId: string): Promise<boolean> {
   const [row] = await db
-    .select({ email: users.email })
+    .select({ email: users.email, homeOrgId: users.orgId })
     .from(organizations)
     .leftJoin(users, eq(users.id, organizations.ownerId))
     .where(eq(organizations.id, orgId))
     .limit(1);
-  return isSuperAdminUser(row?.email ?? null);
+  // EPIC 2026-10-08: the bypass is for the operator's own HOME workspace only (see isOperatorHomeWorkspace). A client workspace the
+  // operator owns keeps the entitlements it inherits from its agency.
+  return (await isSuperAdminUser(row?.email ?? null)) && isOperatorHomeWorkspace(row?.homeOrgId, orgId);
 }
 
 type OrgUsageState = {

@@ -2,7 +2,7 @@
 // helper, (3) the operator sign-in email can be delivered through SMTP2GO. Every negative sits beside a positive control.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isEmailAuthorizedForWorkspace, isEmailInAllowlist, parseAdminAllowlist } from "../../src/lib/operator-portal/authorization";
+import { isEmailAuthorizedForWorkspace, isEmailInAllowlist, isOperatorHomeWorkspace, parseAdminAllowlist } from "../../src/lib/operator-portal/authorization";
 import { sendOperatorMagicLinkEmail } from "../../src/lib/emails/operator-magic-link";
 
 const base = { ownerEmail: "agency@x.test", agencyOwnerEmail: "agency@x.test", adminEmails: [] as string[] };
@@ -63,4 +63,13 @@ test("default transport is still Resend (no behaviour change when transport is o
   const r = await sendOperatorMagicLinkEmail(req, { apiKey: "K", fromAddress: "a@b.test", fetcher });
   assert.equal(url, "https://api.resend.com/emails");
   assert.deepEqual(r, { ok: true, messageId: "r1" });
+});
+
+test("platform-admin limit bypass applies to the operator's HOME workspace only, never a client workspace the operator owns", () => {
+  assert.equal(isOperatorHomeWorkspace("org-home", "org-home"), true); // positive control: the operator's own workspace
+  assert.equal(isOperatorHomeWorkspace("org-home", "org-client"), false); // a client workspace owned by the same operator
+  assert.equal(isOperatorHomeWorkspace(null, "org-client"), false);
+  assert.equal(isOperatorHomeWorkspace("org-home", null), false);
+  assert.equal(isOperatorHomeWorkspace(null, null), false);
+  assert.equal(isOperatorHomeWorkspace("", ""), false);
 });

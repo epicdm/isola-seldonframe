@@ -82,8 +82,17 @@ export const resolveTierForWorkspace = cache(
       .limit(1);
     if (!org) return "inactive";
 
-    // EPIC 2026-10-08: a workspace owned (or agency-managed) by a platform admin (SF_SUPERADMIN_EMAILS) resolves to the top tier,
-    // so the instance operator is never paywalled on its own platform. Unset env = no extra read and no behaviour change.
+    // Step 1+2: the workspace's own subscription/plan takes precedence.
+    // A workspace with its OWN paid sub stays on its own tier even if
+    // the agency owner downgrades. This covers the "white-label resold
+    // to client who pays directly" future case.
+    const ownTier = tierFromOrgRow(org);
+    if (ownTier !== "inactive") return ownTier;
+
+    // EPIC 2026-10-08: a workspace with NO plan of its own that is owned (or agency-managed) by a platform admin (SF_SUPERADMIN_EMAILS)
+    // resolves to the top tier, so the instance operator is never paywalled on its own platform and its client workspaces inherit the
+    // agency's tier exactly as they would from a paying Scale agency. A workspace WITH its own paid plan keeps it (returned above).
+    // Unset env = no extra read and no behaviour change.
     const platformAdmins = parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS);
     if (platformAdmins.length > 0) {
       for (const candidateId of [org.ownerId, org.parentUserId]) {
@@ -92,13 +101,6 @@ export const resolveTierForWorkspace = cache(
         if (isEmailInAllowlist(adminRow?.email, platformAdmins)) return "agency_scale";
       }
     }
-
-    // Step 1+2: the workspace's own subscription/plan takes precedence.
-    // A workspace with its OWN paid sub stays on its own tier even if
-    // the agency owner downgrades. This covers the "white-label resold
-    // to client who pays directly" future case.
-    const ownTier = tierFromOrgRow(org);
-    if (ownTier !== "inactive") return ownTier;
 
     // Step 3: agency-managed workspace. Walk up to the owning user,
     // read THEIR tier from the primary org row OR users.planId.

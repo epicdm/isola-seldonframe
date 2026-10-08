@@ -54,6 +54,15 @@ export function isEmailInAllowlist(email: string | null | undefined, allowlist: 
   return allowlist.some((entry) => normalizeEmail(entry) === candidate);
 }
 
+/**
+ * EPIC 2026-10-08: the platform-admin limit bypass (lib/tier/limits.ts) applies ONLY to the platform operator's own HOME workspace,
+ * never to a client workspace the operator merely owns or manages. A client workspace keeps the entitlements it natively inherits
+ * from its agency (Scale caps), so a customer working inside one is not lifted above them. Pure so it is unit-testable.
+ */
+export function isOperatorHomeWorkspace(ownerHomeOrgId: string | null | undefined, orgId: string | null | undefined): boolean {
+  return Boolean(ownerHomeOrgId) && Boolean(orgId) && ownerHomeOrgId === orgId;
+}
+
 export interface WorkspaceAuthSources {
   /** organizations.ownerId -> users.email (null if unowned / unresolved). */
   ownerEmail?: string | null;
