@@ -70,6 +70,10 @@ const CORS_HEADERS = {
   "Access-Control-Max-Age": "86400",
 } as const;
 
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
 }
@@ -178,6 +182,33 @@ export async function POST(
 
   // Get-or-create conversation
   let conversationId = body.conversation_id;
+  // A supplied conversation id must belong to THIS agent in THIS workspace.
+  // Without this check the id alone selected the conversation, so a caller who
+  // knew a conversation id from another workspace could continue it (and read
+  // the replies) through any public agent endpoint.
+  if (conversationId) {
+    const owned = isUuid(conversationId)
+      ? (
+          await db
+            .select({ id: agentConversations.id })
+            .from(agentConversations)
+            .where(
+              and(
+                eq(agentConversations.id, conversationId),
+                eq(agentConversations.agentId, agentRow.id),
+                eq(agentConversations.orgId, agentRow.orgId),
+              ),
+            )
+            .limit(1)
+        )[0]
+      : undefined;
+    if (!owned) {
+      return NextResponse.json(
+        { error: "conversation_not_found" },
+        { status: 404, headers: CORS_HEADERS },
+      );
+    }
+  }
   if (!conversationId) {
     const [agentForVersion] = await db
       .select({ currentVersion: agents.currentVersion })
