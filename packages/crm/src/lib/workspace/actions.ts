@@ -73,6 +73,8 @@ export async function updateWorkspaceSettingsAction(
     const pages = await tx
       .select({
         id: landingPages.id,
+        title: landingPages.title,
+        seo: landingPages.seo,
         blueprintJson: landingPages.blueprintJson,
         contentHtml: landingPages.contentHtml,
       })
@@ -101,7 +103,13 @@ export async function updateWorkspaceSettingsAction(
         workspace.name,
         name
       );
-      if (!blueprintChanged && htmlUpdate.replacements === 0) continue;
+      // The page <title>, og:title and twitter:title come from landing_pages.title / seo, not from the blueprint or the HTML
+      // (found by Lane A in v4.43 acceptance: after a rename the served metadata still carried the old name).
+      const nextTitle = typeof page.title === "string" ? page.title.split(workspace.name).join(name) : page.title;
+      const titleChanged = nextTitle !== page.title;
+      const nextSeo = replaceNameInJsonStrings(page.seo, workspace.name, name);
+      const seoChanged = JSON.stringify(nextSeo) !== JSON.stringify(page.seo);
+      if (!blueprintChanged && htmlUpdate.replacements === 0 && !titleChanged && !seoChanged) continue;
 
       await tx
         .update(landingPages)
@@ -110,6 +118,8 @@ export async function updateWorkspaceSettingsAction(
           ...(htmlUpdate.replacements > 0
             ? { contentHtml: htmlUpdate.contentHtml }
             : {}),
+          ...(titleChanged ? { title: nextTitle } : {}),
+          ...(seoChanged ? { seo: nextSeo as Record<string, unknown> } : {}),
           updatedAt: new Date(),
         })
         .where(and(eq(landingPages.id, page.id), eq(landingPages.orgId, orgId)));
@@ -123,6 +133,19 @@ export async function updateWorkspaceSettingsAction(
   revalidatePath("/settings/workspace");
   revalidatePath("/dashboard");
   return { ok: true };
+}
+
+/** Replace the literal old name inside every string value of a JSON document (objects and arrays), leaving the shape alone. */
+function replaceNameInJsonStrings(value: unknown, oldName: string, newName: string): unknown {
+  if (!oldName || oldName === newName) return value;
+  if (typeof value === "string") return value.split(oldName).join(newName);
+  if (Array.isArray(value)) return value.map((item) => replaceNameInJsonStrings(item, oldName, newName));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, replaceNameInJsonStrings(item, oldName, newName)]),
+    );
+  }
+  return value;
 }
 
 function isWorkspaceBlueprint(value: unknown): value is Blueprint {
