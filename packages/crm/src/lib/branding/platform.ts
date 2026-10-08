@@ -134,7 +134,15 @@ export function shouldHideVendorMarketingPath(pathname: string, platformName: st
   if (!platformName.trim() || platformName === "SeldonFrame") return false;
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
 
-  if (path === "/.well-known/openai-apps-challenge" || path === "/home.md" || path === "/index.md" || path === "/llms.txt") {
+  if (
+    path === "/.well-known/openai-apps-challenge" ||
+    path === "/home.md" ||
+    path === "/index.md" ||
+    path === "/llms.txt" ||
+    path === "/ai-agents.md" ||
+    path === "/build.md" ||
+    path === "/SKILL.md"
+  ) {
     return true;
   }
 

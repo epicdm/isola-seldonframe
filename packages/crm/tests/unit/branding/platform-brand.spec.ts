@@ -79,12 +79,20 @@ describe("platform branding", () => {
       "/alternative-to-gohighlevel",
       "/gohighlevel-pricing.md",
       "/docs/mcp",
+      "/ai-agents.md",
+      "/build.md",
+      "/SKILL.md",
       "/.well-known/openai-apps-challenge",
       "/marketplace/build",
     ]) {
       assert.equal(shouldHideVendorMarketingPath(path, "Uplink"), true, path);
       assert.equal(shouldHideVendorMarketingPath(path, "SeldonFrame"), false, path);
     }
+
+    assert.equal(shouldHideVendorMarketingPath("/ai-agents.md", "Uplink"), true);
+    assert.equal(shouldHideVendorMarketingPath("/build.md", "Uplink"), true);
+    assert.equal(shouldHideVendorMarketingPath("/SKILL.md", "Uplink"), true);
+    assert.equal(shouldHideVendorMarketingPath("/build.md", "SeldonFrame"), false);
 
     for (const path of [
       "/",
