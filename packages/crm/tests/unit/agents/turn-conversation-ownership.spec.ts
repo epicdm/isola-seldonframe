@@ -21,7 +21,7 @@ describe("public turn route: a supplied conversation_id must belong to the reque
   });
 
   test("a malformed id is rejected before it reaches the database (uuid column)", () => {
-    assert.match(source, /isUuid\(conversationId\)/);
+    assert.match(source, /isValidPublicConversationId\(conversationId\)/);
   });
 
   test("the ownership check runs BEFORE any turn is executed (stream and JSON paths)", () => {
