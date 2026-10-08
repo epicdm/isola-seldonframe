@@ -24,7 +24,9 @@ import { listMarketplaceAgentsFromDb } from "@/lib/marketplace/agent-listings";
 import { MARKETPLACE_SEED } from "@/components/marketplace/marketplace-seed";
 import { GOHIGHLEVEL_COLLECTION_PATH } from "@/lib/seo/gohighlevel-discovery";
 import { canonicalAppOrigin } from "@/lib/http/app-hosts";
-import { sitePublicOrigin } from "@/lib/seo/public-origins";
+import { brandedPublicSurface, sitePublicOrigin } from "@/lib/seo/public-origins";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
+import { headers } from "next/headers";
 
 /** The canonical public base URL — mirrors layout.tsx's metadataBase. */
 export function siteBaseUrl(): string {
@@ -43,6 +45,16 @@ async function marketplaceSlugs(): Promise<string[]> {
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  // Branded deployment: the vendor marketing pages are hidden on this host, so a sitemap that lists them advertises 404s.
+  // A workspace host lists its own home page; every other host lists nothing. Unbranded builds never reach this branch,
+  // so they stay statically generated exactly as upstream.
+  if (resolvePlatformBranding().name !== "SeldonFrame") {
+    const requestHeaders = await headers();
+    const surface = brandedPublicSurface(requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host"));
+    return surface.workspaceSlug
+      ? [{ url: `${surface.origin}/`, lastModified: new Date(), changeFrequency: "weekly", priority: 1 }]
+      : [];
+  }
   const base = siteBaseUrl();
   const now = new Date();
 

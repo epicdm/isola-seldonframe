@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { resolvePlatformBranding, resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
+import { resolveWorkspaceSlugFromHostHeader } from "@/lib/workspace/host-to-slug";
 
 type PublicOriginEnv = Record<string, string | undefined>;
 
@@ -82,4 +83,27 @@ export function workspacePageMetadata(input: {
       ...(image ? { images: [image] } : {}),
     },
   };
+}
+
+/**
+ * The public surface for the HOST a crawler addressed (branded deployments only; an unbranded SeldonFrame host keeps the
+ * upstream behaviour). On a workspace host the surface is that workspace's own origin; anywhere else it is the platform origin.
+ * Lane A (v4.43 acceptance): robots.txt / sitemap.xml used the platform app host for every request, which is restricted
+ * for the public and lists vendor marketing URLs that are hidden on a branded deployment.
+ */
+export function brandedPublicSurface(
+  hostHeader: string | null | undefined,
+  env: PublicOriginEnv = process.env,
+): { branded: boolean; workspaceSlug: string | null; origin: string } {
+  const branded = resolvePlatformBranding(env).name !== "SeldonFrame";
+  const workspaceSlug = branded ? resolveWorkspaceSlugFromHostHeader(hostHeader) : null;
+  let origin = sitePublicOrigin(env);
+  if (workspaceSlug) {
+    try {
+      origin = workspacePublicOrigin(workspaceSlug, env);
+    } catch {
+      // invalid slug: stay on the platform origin
+    }
+  }
+  return { branded, workspaceSlug, origin };
 }

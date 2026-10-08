@@ -21,6 +21,7 @@
 // /llms.txt, /pricing, landing/booking/intake pages) is fully crawlable.
 
 import { siteBaseUrl } from "@/app/sitemap";
+import { brandedPublicSurface } from "@/lib/seo/public-origins";
 import { logMarkdownFetch } from "@/lib/marketplace/md-analytics";
 
 // Was force-static; now reads the request's UA/Referer to MEASURE crawler hits
@@ -53,7 +54,10 @@ export function GET(req: Request): Response {
   // is not in the proxy matcher, so it logs itself.
   logMarkdownFetch(req, { surface: "robots_txt", mode: "explicit_md", path: "/robots.txt" });
 
-  const base = siteBaseUrl();
+  // Branded deployments: the Sitemap line must name a host that is public for THIS request (a workspace host
+  // advertises its own sitemap, not the restricted platform app host). Unbranded keeps the upstream base.
+  const surface = brandedPublicSurface(req.headers.get("x-forwarded-host") ?? req.headers.get("host"));
+  const base = surface.branded ? surface.origin : siteBaseUrl();
   const lines: string[] = [];
 
   lines.push("User-agent: *");
@@ -71,6 +75,7 @@ export function GET(req: Request): Response {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "public, max-age=3600, s-maxage=86400",
+      Vary: "x-forwarded-host, host",
     },
   });
 }
