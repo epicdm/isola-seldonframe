@@ -205,7 +205,7 @@ export default async function WorkspaceReadyPage({ params, searchParams }: Ready
 
   // 2026-05-22 — R1 landing page lookup. Check whether the auto-generated
   // landing page exists for this workspace. We store the existence flag
-  // here; the actual URL is built after APP_BASE is defined below.
+  // here; the actual URL is built below.
   const [r1LandingRow] = await db
     .select({ id: landingPages.id })
     .from(landingPages)
@@ -225,10 +225,14 @@ export default async function WorkspaceReadyPage({ params, searchParams }: Ready
   // We don't use the subdomain shortcuts because proxy.ts's rewrite for
   // /book/* and /forms/* paths is a pass-through — both rely on the
   // orgSlug being in the path, not in the host.
-  const APP_BASE = `https://${WORKSPACE_BASE_DOMAIN}`;
+  // Customer-facing links go on the WORKSPACE host. On this deployment the app
+  // host (the app host) answers 403 to everyone but the operator, so a client who
+  // is handed an app-host link gets a dead page; the workspace host serves the
+  // landing page, /book, /intake and the portal login to the public.
+  const PUBLIC_ORIGIN = `https://${workspace.slug}.${WORKSPACE_BASE_DOMAIN}`;
 
-  // R1 landing URL — public page at /w/[slug].
-  const r1LandingUrl = hasR1Landing ? `${APP_BASE}/w/${workspace.slug}` : null;
+  // R1 landing URL — the workspace host root (same page as the app host's /w/[slug]).
+  const r1LandingUrl = hasR1Landing ? `${PUBLIC_ORIGIN}/` : null;
 
   // 2026-07-13 — Landing-design picker, now shown for EVERY workspace on one of
   // two tracks:
@@ -252,18 +256,14 @@ export default async function WorkspaceReadyPage({ params, searchParams }: Ready
     settings: workspace.settings,
   });
 
-  const publicBookingUrl = bookingTemplateRow
-    ? `${APP_BASE}/book/${workspace.slug}/${bookingTemplateRow.slug}`
-    : null;
-  const publicIntakeUrl = intakeFormRow
-    ? `${APP_BASE}/forms/${workspace.slug}/${intakeFormRow.slug}`
-    : null;
+  const publicBookingUrl = bookingTemplateRow ? `${PUBLIC_ORIGIN}/book` : null;
+  const publicIntakeUrl = intakeFormRow ? `${PUBLIC_ORIGIN}/intake` : null;
 
   // Public customer-portal URL — this is what the SMB client (the
   // agency's customer) will see and use, no signup required. Different
   // from the agency's own CRM admin which is what /switch-workspace +
   // /contacts opens.
-  const publicCustomerPortalUrl = `${APP_BASE}/customer/${workspace.slug}/login`;
+  const publicCustomerPortalUrl = `${PUBLIC_ORIGIN}/customer/${workspace.slug}/login`;
 
   // Chatbot test page — Claude-Code-style live test surface. Opens the
   // workspace's chatbot in a chat-with-it page so the operator can
@@ -663,7 +663,7 @@ export default async function WorkspaceReadyPage({ params, searchParams }: Ready
                         <InviteSmbOwner
                           workspaceSlug={workspace.slug}
                           workspaceName={workspace.name}
-                          portalLoginUrl={`${APP_BASE}/portal/${workspace.slug}/login`}
+                          portalLoginUrl={`${PUBLIC_ORIGIN}/portal/${workspace.slug}/login`}
                           invitedByName={session.user.name ?? undefined}
                         />
                       ) : null}
