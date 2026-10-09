@@ -11,6 +11,7 @@
 
 import type { NextRequest } from "next/server";
 import { auth } from "@/auth";
+import { resolvePlatformWizardKey } from "@/lib/ai/platform-client";
 import { runCreateFromPaste } from "@/lib/web-onboarding/run-create-from-paste";
 import { enforceWorkspaceLimit } from "@/lib/billing/limits";
 import { createFullWorkspace } from "@/lib/workspace/create-full";
@@ -72,7 +73,8 @@ async function dispatchCreateFromPaste(text: unknown, landingTemplate?: unknown,
             return { key: result.key };
           }
         }
-        const platformKey = process.env.ANTHROPIC_API_KEY?.trim();
+        // Managed AI on this deployment may be the mounted-file provider (MODEL_API_KEY_FILE), not ANTHROPIC_API_KEY.
+        const platformKey = process.env.ANTHROPIC_API_KEY?.trim() || (await resolvePlatformWizardKey());
         return platformKey ? { key: platformKey } : null;
       },
       extractBusinessFactsFromPaste,

@@ -18,6 +18,7 @@
 // test in tests/unit/auto-create-website-chatbot.spec.ts can verify the
 // behavior without touching the DB.
 
+import { wizardChatbotStatus } from "@/lib/ai/platform-client";
 import type {
   CreateAgentInput,
   CreateAgentResult,
@@ -81,7 +82,10 @@ export async function autoCreateWebsiteChatbot(
     // "live" makes the runtime treat real conversations as real. The
     // operator-sandbox testMode path is now gated on an explicit header
     // (see lib/agents/public-turn-status.ts).
-    status: "live",
+    // HOTFIX (owner-approved wizard release): a deployment that has not opened customer-facing inference (no funding/authorization yet) sets SF_WIZARD_CHATBOT_STATUS=test,
+    // so the wizard-created chatbot is NOT publicly served (the public turn route serves status "live" only and non-pilot live agents are not covered by the dollar gate).
+    // Operators still test it through the authenticated same-workspace sandbox. Unset = the historical behaviour ("live").
+    status: wizardChatbotStatus(),
   });
 
   if (!result.ok) {

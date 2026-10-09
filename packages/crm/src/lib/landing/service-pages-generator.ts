@@ -18,6 +18,7 @@
 //   - JSON parse in try/catch → on failure return []
 
 import Anthropic from "@anthropic-ai/sdk";
+import { createWizardAnthropic, wizardModelDefault } from "@/lib/ai/platform-client";
 import type { ExtractedBusinessFacts } from "@/lib/web-onboarding/extraction-prompt";
 import type { AestheticArchetypeId } from "@/lib/workspace/aesthetic-archetypes";
 import {
@@ -41,7 +42,7 @@ import { resolveServicePhoto, type ServicePhoto } from "./service-photo-resolver
 const DEFAULT_MODEL =
   process.env.LANDING_SERVICE_PAGES_MODEL?.trim() ||
   process.env.LANDING_PAYLOAD_MODEL?.trim() ||
-  "claude-haiku-4-5";
+  wizardModelDefault("claude-haiku-4-5");
 
 const MAX_TOKENS = 8192;
 
@@ -161,7 +162,7 @@ export async function generateServicePages(
   // ── LLM call ─────────────────────────────────────────────────────────────
 
   const client = (anthropicClient ??
-    new Anthropic({ apiKey: byokKey })) as AnthropicLike;
+    createWizardAnthropic(byokKey)) as AnthropicLike;
   const modelInUse = model ?? DEFAULT_MODEL;
 
   let rawResponse: { content: Array<AnthropicContentBlock>; stop_reason?: string };
