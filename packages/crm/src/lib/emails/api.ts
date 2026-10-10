@@ -5,6 +5,7 @@ import {
   getEmailProvider,
   resolveDefaultFromEmail,
   resolveEmailProvider,
+  resolveSenderForProvider,
   type EmailAttachment,
 } from "./providers";
 import { isEmailSuppressed, normalizeEmail } from "./suppression";
@@ -120,7 +121,7 @@ export async function sendEmailFromApi(params: {
     liveConfig: liveResend,
     store: testStore,
   });
-  const fromEmail = resolved.fromEmail;
+  const fromEmail = resolveSenderForProvider(provider, resolved.fromEmail);
   const isTestMode = resolved.mode === "test";
 
   // 2026-05-18 — workspace branding for the email chrome. We pull

@@ -53,6 +53,13 @@ import {
   resolvePublicPilotTarget,
 } from "@/lib/agents/public-pilot-controls";
 import { publicTurnFallbackEvents, publicTurnFallbackResponse } from "@/lib/agents/public-turn-response";
+import {
+  readRelayContextKey,
+  RELAY_CONTEXT_BINDING_KEY,
+  sameRelayBinding,
+  verifyRelayContext,
+  type TrustedRelayToolContext,
+} from "@/lib/agents/mcp/relay-context";
 import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import {
   PUBLIC_TURN_RATE_LIMITED_MESSAGE,
@@ -229,6 +236,7 @@ export async function POST(
   const isNewConversation = rawConversationId == null;
   let conversationId = typeof rawConversationId === "string" ? rawConversationId : randomUUID();
   let conversationCapability: string | undefined;
+  let existingChannelMeta: unknown;
 
   if (!operatorTestSession) {
     const validSession = isValidAnonymousSessionId(body.anonymous_session_id);
@@ -255,6 +263,7 @@ export async function POST(
             .select({
               id: agentConversations.id,
               anonymousSessionId: agentConversations.anonymousSessionId,
+              channelMeta: agentConversations.channelMeta,
             })
             .from(agentConversations)
             .where(
@@ -273,6 +282,7 @@ export async function POST(
         { status: 404, headers: CORS_HEADERS },
       );
     }
+    existingChannelMeta = owned.channelMeta;
 
     if (!operatorTestSession) {
       const sessionId = body.anonymous_session_id as string;
@@ -300,6 +310,70 @@ export async function POST(
       }
       conversationCapability = body.conversation_capability as string;
     }
+  }
+
+  // A relay proof is an optional signed server-to-server context. It is never
+  // accepted from JSON, persisted as a token, or added to model arguments.
+  // A supplied but invalid proof fails before conversation writes, spend
+  // reservation, and model execution. The ordinary website path is unchanged.
+  const relayProof = request.headers.get("x-isola-relay-context");
+  let trustedRelayToolContext: TrustedRelayToolContext | undefined;
+  if (relayProof !== null) {
+    const relayKey = await readRelayContextKey();
+    const configuredWorkspaceId = process.env.UPLINK_RELAY_WORKSPACE_ID?.trim();
+    const configuredAgentSlug = process.env.UPLINK_RELAY_AGENT_SLUG?.trim();
+    const configuredAccountId = process.env.UPLINK_RELAY_CHATWOOT_ACCOUNT_ID?.trim();
+    const configuredInboxId = process.env.UPLINK_RELAY_CHATWOOT_INBOX_ID?.trim();
+    const canonicalAgentSlug = `${agentRow.orgSlug}--${agentRow.agentSlug}`;
+    const sessionId = body.anonymous_session_id;
+    const verified = relayKey && typeof sessionId === "string"
+      ? verifyRelayContext({
+          token: relayProof,
+          key: relayKey.key,
+          kid: relayKey.kid,
+          message,
+          expected: {
+            accountId: Number(configuredAccountId),
+            inboxId: Number(configuredInboxId),
+            workspaceId: agentRow.orgId,
+            agentId: agentRow.id,
+            agentSlug: canonicalAgentSlug,
+            sessionId,
+            uplinkConversationId: isNewConversation ? null : conversationId,
+          },
+        })
+      : { ok: false as const };
+
+    const claims = verified.ok ? verified.claims : null;
+    const envScopeMatches = relayKey !== null
+      && configuredWorkspaceId === agentRow.orgId
+      && configuredAgentSlug === canonicalAgentSlug
+      && configuredAccountId === String(claims?.accountId ?? "")
+      && configuredInboxId === String(claims?.inboxId ?? "");
+    const expectedBinding = claims ? {
+      accountId: claims.accountId,
+      inboxId: claims.inboxId,
+      chatwootConversationId: claims.chatwootConversationId,
+      workspaceId: claims.workspaceId,
+      agentId: claims.agentId,
+      agentSlug: claims.agentSlug,
+      sessionId: claims.sessionId,
+    } : null;
+    const priorBinding = existingChannelMeta && typeof existingChannelMeta === "object"
+      ? (existingChannelMeta as Record<string, unknown>)[RELAY_CONTEXT_BINDING_KEY]
+      : undefined;
+    const bindingMatches = isNewConversation
+      ? true
+      : expectedBinding !== null && sameRelayBinding(priorBinding, expectedBinding);
+
+    if (!verified.ok || !envScopeMatches || !bindingMatches) {
+      return NextResponse.json({ error: "invalid_channel_context" }, { status: 403, headers: CORS_HEADERS });
+    }
+    trustedRelayToolContext = {
+      kind: "chatwoot",
+      proof: relayProof,
+      binding: verified.binding,
+    };
   }
 
   // Public callers require a trustworthy ingress peer and the durable spend
@@ -375,7 +449,14 @@ export async function POST(
           anonymousSessionId: isValidAnonymousSessionId(body.anonymous_session_id)
             ? body.anonymous_session_id
             : null,
-          channelMeta: body.channel_meta ?? {},
+          channelMeta: (() => {
+            const metadata = body.channel_meta && typeof body.channel_meta === "object" && !Array.isArray(body.channel_meta)
+              ? { ...body.channel_meta }
+              : {};
+            delete metadata[RELAY_CONTEXT_BINDING_KEY];
+            if (trustedRelayToolContext) metadata[RELAY_CONTEXT_BINDING_KEY] = trustedRelayToolContext.binding;
+            return metadata;
+          })(),
           status: conversationStatus,
         })
         .returning({ id: agentConversations.id });
@@ -448,6 +529,7 @@ export async function POST(
             metered: pilotPublicRequest,
             conversationId: conversationId!,
             userMessage: message,
+            trustedRelayToolContext,
           });
           if (!result.ok) {
             for (const event of publicTurnFallbackEvents(conversationId!, result, conversationCapability)) {
@@ -501,6 +583,7 @@ export async function POST(
     metered: pilotPublicRequest,
     conversationId,
     userMessage: message,
+    trustedRelayToolContext,
   });
 
   if (!result.ok) {
@@ -525,6 +608,7 @@ async function executeBoundedPublicTurn(input: {
   metered: boolean;
   conversationId: string;
   userMessage: string;
+  trustedRelayToolContext?: TrustedRelayToolContext;
 }) {
   let result: Awaited<ReturnType<typeof executeTurn>>;
   try {
@@ -532,6 +616,7 @@ async function executeBoundedPublicTurn(input: {
       conversationId: input.conversationId,
       userMessage: input.userMessage,
       publicPilotSpend: input.metered,
+      trustedRelayToolContext: input.trustedRelayToolContext,
   });
   } catch (error) {
     if (input.metered && input.reservationId) await markPublicTurnSpendUncertain(input.reservationId);

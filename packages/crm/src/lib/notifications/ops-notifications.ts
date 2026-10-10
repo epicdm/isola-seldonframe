@@ -28,6 +28,8 @@
 //   joins ops on-call, or during vacation forwarding).
 
 import { resolveDefaultFromEmail } from "@/lib/emails/providers";
+import { sendSignInEmailViaSmtp2go } from "@/lib/auth/signin-email-smtp2go";
+import { selectPortalEmailTransport } from "@/lib/portal/email-transport";
 
 /**
  * Hardcoded fallback recipient when OPS_NOTIFICATION_EMAIL env var is
@@ -164,9 +166,9 @@ function resolveApiKey(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ): string {
   if (typeof override === "string") return override;
-  const envKey = typeof env.RESEND_API_KEY === "string" ? env.RESEND_API_KEY.trim() : "";
-  const authKey = typeof env.AUTH_RESEND_KEY === "string" ? env.AUTH_RESEND_KEY.trim() : "";
-  return envKey || authKey;
+  // AUTH_RESEND_KEY is the NextAuth sign-in provider's key, never a delivery key (see lib/portal/email-transport.ts).
+  // Falling back to it sent every alert to Resend with a rejected key (401) while SMTP2GO was configured.
+  return typeof env.RESEND_API_KEY === "string" ? env.RESEND_API_KEY.trim() : "";
 }
 
 /**
@@ -189,7 +191,30 @@ async function dispatch(params: {
   html: string;
   apiKey: string;
   fetcher: typeof fetch;
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
 }): Promise<void> {
+  // Platform mail goes through SMTP2GO whenever it is configured -- the same rule as portal codes and sign-in links.
+  const smtp = selectPortalEmailTransport(params.env ?? process.env);
+  if (smtp.transport === "smtp2go") {
+    try {
+      await sendSignInEmailViaSmtp2go(
+        { to: params.to, subject: params.subject, html: params.html, text: params.text },
+        { apiKey: smtp.apiKey, from: smtp.from, fetcher: params.fetcher },
+      );
+    } catch (err) {
+      console.warn(
+        JSON.stringify({
+          event: "ops_notification_failed",
+          type: params.event,
+          to: params.to,
+          transport: "smtp2go",
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    }
+    return;
+  }
+
   if (!params.apiKey) {
     console.warn(
       JSON.stringify({
@@ -329,6 +354,7 @@ Reach out within the first hour for highest activation.`;
     html,
     apiKey,
     fetcher,
+    env,
   });
 }
 
@@ -413,6 +439,7 @@ ${signupLine}`;
     html,
     apiKey,
     fetcher,
+    env,
   });
 }
 
@@ -487,6 +514,7 @@ Follow up fast — speed-to-lead wins the job.`;
     html,
     apiKey,
     fetcher,
+    env,
   });
 }
 
@@ -572,6 +600,7 @@ Costs are estimated by SeldonFrame's internal price table — under BYOK the rea
     html,
     apiKey,
     fetcher,
+    env,
   });
 }
 
@@ -647,6 +676,7 @@ Stripe is automatically retrying the charge on the card on file. The client has 
     html,
     apiKey,
     fetcher,
+    env,
   });
 }
 
@@ -761,5 +791,6 @@ This is the daily inbound-chain heartbeat check — it catches a deployment goin
     html,
     apiKey,
     fetcher,
+    env,
   });
 }

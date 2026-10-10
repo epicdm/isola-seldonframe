@@ -71,7 +71,11 @@ export type McpClient = {
   listTools: () => Promise<McpToolDescriptor[]>;
   /** `tools/call` → returns the JSON-RPC `result` (typically `{ content, isError? }`).
    *  Throws on a JSON-RPC error or an `isError:true` tool result. */
-  callTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+  callTool: (
+    name: string,
+    args: Record<string, unknown>,
+    requestMeta?: Record<string, unknown>,
+  ) => Promise<unknown>;
 };
 
 export type CreateMcpClientOptions = {
@@ -307,9 +311,17 @@ export function createMcpClient(options: CreateMcpClientOptions): McpClient {
     });
   }
 
-  async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  async function callTool(
+    name: string,
+    args: Record<string, unknown>,
+    requestMeta?: Record<string, unknown>,
+  ): Promise<unknown> {
     await initialize();
-    const rpc = await send("tools/call", { name, arguments: args ?? {} });
+    const rpc = await send("tools/call", {
+      name,
+      arguments: args ?? {},
+      ...(requestMeta && Object.keys(requestMeta).length > 0 ? { _meta: requestMeta } : {}),
+    });
     const result = (rpc?.result ?? {}) as {
       content?: Array<{ type?: string; text?: string }>;
       isError?: boolean;

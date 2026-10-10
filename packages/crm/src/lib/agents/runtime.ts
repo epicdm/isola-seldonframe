@@ -63,6 +63,7 @@ import {
 import type { CalendarBinding } from "@/lib/agents/booking/calendar-backend";
 import type { BookingPolicy } from "@/lib/agents/booking/booking-policy";
 import { bindingToCtxBooking } from "@/lib/agents/booking/binding-ctx";
+import { persistedChatwootConversationId } from "@/lib/agents/mcp/relay-context";
 import { captureLlmGeneration } from "@/lib/analytics/llm-capture";
 import { VOICE_PROFILE_NOTE_PATH } from "@/lib/agents/voice-profile/ingest-sent-mail";
 import { buildTurnMessages, type TurnMessage } from "@/lib/agents/turn-messages";
@@ -107,6 +108,9 @@ type ExecuteTurnResult =
 export async function executeTurn(input: {
   conversationId: string;
   userMessage: string;
+  /** Server-verified relay proof for a Chatwoot turn; never persisted or
+   *  included in the prompt/tool arguments. */
+  trustedRelayToolContext?: ToolExecuteContext["trustedRelayToolContext"];
   /** Optional blueprint override — used by the eval runner to inject test
    *  fixtures (e.g. poisoned FAQ entries) without mutating the DB. The
    *  override replaces agent.blueprint for this turn only. */
@@ -174,6 +178,10 @@ export async function executeTurn(input: {
       fallbackMessage: "I'm sorry, this chat session has expired. Please refresh the page.",
     };
   }
+  // The public route verifies the signed relay binding against this stored
+  // row before execution. Keep the persisted conversation identity separate
+  // in validator context so tool results cannot select their own PII scope.
+  const currentChatwootConversationId = persistedChatwootConversationId(conv.channelMeta);
 
   const [agent] = await db
     .select()
@@ -659,6 +667,7 @@ export async function executeTurn(input: {
         agentId: agent.id,
         conversationId: conv.id,
         testMode: conv.status === "test",
+        trustedRelayToolContext: input.trustedRelayToolContext,
         // ICP-3 — deployed-agent calendar binding (chat/SMS/email parity with
         // voice). Undefined for workspace agents → ctx.booking stays undefined.
         // Per-client booking policy threaded alongside (P1).
@@ -762,6 +771,10 @@ export async function executeTurn(input: {
     // claims are backed by successful tool calls.
     turnToolCalls: allToolCalls,
     turnToolResults: allToolResults,
+    trustedRelayToolContext: input.trustedRelayToolContext,
+    currentChatwootConversationId,
+    currentAgentId: agent.id,
+    currentWorkspaceId: orgRow.id,
     // v1.40.12 — pass previous turns' successful tool names so the
     // hallucination validator allows legitimate follow-up confirmations.
     recentSuccessfulTools,
@@ -847,6 +860,10 @@ export async function executeTurn(input: {
           conversationContext,
           turnToolCalls: allToolCalls,
           turnToolResults: allToolResults,
+          trustedRelayToolContext: input.trustedRelayToolContext,
+          currentChatwootConversationId,
+          currentAgentId: agent.id,
+          currentWorkspaceId: orgRow.id,
           recentSuccessfulTools,
           blueprint,
           soul: soulForValidators,

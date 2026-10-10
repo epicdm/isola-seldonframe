@@ -96,3 +96,18 @@ test("both bearer AND headers: Authorization + x-api-key both present", async ()
     assert.equal(call.headers["x-api-key"], "key-123");
   }
 });
+
+test("tools/call keeps relay proof in MCP _meta, separate from model arguments", async () => {
+  const { calls, fetchImpl } = recordingFetch();
+  const client = createMcpClient({ endpoint: "https://actions.epic.dm/mcp", bearer: "workspace-connector-secret", fetchImpl });
+  const modelArguments = {};
+  const proof = "v1.synthetic-signed-relay-context";
+  await client.callTool("pl__offer", modelArguments, { "com.epic.uplink/relay-context-v1": proof });
+
+  const request = calls.find((call) => (call.body as { method?: string } | undefined)?.method === "tools/call");
+  assert.ok(request, "expected a tools/call request");
+  const params = (request.body as { params: { arguments: unknown; _meta: unknown } }).params;
+  assert.deepEqual(params.arguments, modelArguments);
+  assert.deepEqual(params._meta, { "com.epic.uplink/relay-context-v1": proof });
+  assert.equal(JSON.stringify(params.arguments).includes(proof), false);
+});
