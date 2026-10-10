@@ -56,5 +56,9 @@ test("a typo in the pilot environment cannot leave the pilot agent public and un
   const route = read("src/app/api/v1/public/agent/[slug]/turn/route.ts");
   const spend = read("src/lib/agents/public-turn-spend.ts");
   assert.match(route, /pilotTarget === "other" && \(await agentHasPilotGate\(agentRow\.id\)\)\) pilotTarget = "incomplete"/);
-  assert.match(spend, /FROM public_turn_spend_gates WHERE agent_id = \$\{agentId\}::uuid LIMIT 1/);
+  // organization-level coverage: the gate row is found through the agent's workspace, so every agent of the pilot workspace fails closed too
+  assert.match(spend, /FROM public_turn_spend_gates g JOIN agents a ON a\.org_id = g\.organization_id WHERE a\.id = \$\{agentId\}::uuid LIMIT 1/);
+  // the in-transaction reservation no longer requires the gate row's agent to equal the requesting agent, but still requires the workspace
+  assert.doesNotMatch(spend, /gate\.agent_id !== input\.agentId/);
+  assert.match(spend, /gate\.organization_id !== input\.organizationId/);
 });

@@ -75,7 +75,13 @@ export function resolvePublicPilotTarget(
   const configuredAgentId = env.PUBLIC_PILOT_AGENT_ID?.trim();
   if (!configuredOrgId || !UUID_RE.test(configuredOrgId) || configuredOrgId !== organizationId) return "other";
   if (!configuredAgentId || !UUID_RE.test(configuredAgentId)) return "incomplete";
-  return configuredAgentId === agentId ? "target" : "other";
+  // ORGANIZATION-LEVEL COVERAGE: once the pilot workspace is identified (PUBLIC_PILOT_ORG_ID) and the configured pilot
+  // agent id is well formed, EVERY agent of that workspace is metered against the one dollar gate. A second live agent
+  // in the pilot workspace (for example the WhatsApp provisioning agent served through the public turn route) can
+  // therefore never be served unmetered. `agentId` is kept for signature stability; agents of other workspaces are
+  // still "other".
+  void agentId;
+  return "target";
 }
 
 /** Resolve the ingress-appended client peer. This is safe only when app ingress
@@ -200,7 +206,8 @@ export function canReservePilotSpend(input: {
   conversationTurns?: number;
 }): boolean {
   const gate = input.gate;
-  if (!gate || !gate.enabled || gate.organizationId !== input.organizationId || gate.agentId !== input.agentId) return false;
+  // Organization-level coverage: the gate row names the configured pilot agent, but it meters every agent of the pilot workspace.
+  if (!gate || !gate.enabled || gate.organizationId !== input.organizationId) return false;
   if (gate.model !== input.model || input.model !== DEEPSEEK_FLASH_PRICING.model) return false;
   if (input.nowMs < gate.startsAtMs || input.nowMs >= gate.expiresAtMs) return false;
   if ((input.conversationTurns ?? 0) >= MAX_PUBLIC_TURNS_PER_CONVERSATION) return false;

@@ -56,17 +56,26 @@ test("public envelope requires bounded valid budget and UTC start/expiry", () =>
   ]) assert.equal(parsePublicPilotEnvelope(env), null);
 });
 
-test("pilot targeting requires the explicit exact workspace and agent IDs", () => {
+test("pilot targeting requires the explicit workspace ID and a well-formed pilot agent ID, and covers EVERY agent of that workspace", () => {
   const env = {
     PUBLIC_PILOT_ORG_ID: "11111111-1111-4111-8111-111111111111",
     PUBLIC_PILOT_AGENT_ID: "22222222-2222-4222-8222-222222222222",
   };
+  const secondAgentInPilotOrg = "33333333-3333-4333-8333-333333333333";
+  // positive controls: the configured pilot agent AND a second agent of the same workspace are metered targets
   assert.equal(isConfiguredPublicPilotTarget(env.PUBLIC_PILOT_ORG_ID, env.PUBLIC_PILOT_AGENT_ID, env), true);
-  assert.equal(isConfiguredPublicPilotTarget(env.PUBLIC_PILOT_ORG_ID, "33333333-3333-4333-8333-333333333333", env), false);
+  assert.equal(isConfiguredPublicPilotTarget(env.PUBLIC_PILOT_ORG_ID, secondAgentInPilotOrg, env), true);
+  assert.equal(resolvePublicPilotTarget(env.PUBLIC_PILOT_ORG_ID, secondAgentInPilotOrg, env), "target");
+  // negatives: no config, malformed org id
   assert.equal(isConfiguredPublicPilotTarget(env.PUBLIC_PILOT_ORG_ID, env.PUBLIC_PILOT_AGENT_ID, {}), false);
   assert.equal(isConfiguredPublicPilotTarget("not-a-uuid", env.PUBLIC_PILOT_AGENT_ID, env), false);
+  // incomplete configuration (pilot agent id missing or invalid) stays "incomplete" for the pilot workspace
   assert.equal(resolvePublicPilotTarget(env.PUBLIC_PILOT_ORG_ID, "wrong-agent", { PUBLIC_PILOT_ORG_ID: env.PUBLIC_PILOT_ORG_ID }), "incomplete");
+  assert.equal(resolvePublicPilotTarget(env.PUBLIC_PILOT_ORG_ID, secondAgentInPilotOrg, { ...env, PUBLIC_PILOT_AGENT_ID: "not-a-uuid" }), "incomplete");
+  // agents of another workspace are unaffected: "other" (positive control above shows the pilot workspace is a target)
   assert.equal(resolvePublicPilotTarget("other-org", "other-agent", env), "other");
+  assert.equal(resolvePublicPilotTarget("44444444-4444-4444-8444-444444444444", secondAgentInPilotOrg, env), "other");
+  assert.equal(isConfiguredPublicPilotTarget("44444444-4444-4444-8444-444444444444", env.PUBLIC_PILOT_AGENT_ID, env), false);
 });
 
 test("serialized request ceiling includes tool/prompt payload and rejects overflow", () => {
@@ -97,7 +106,17 @@ test("aggregate gate denies wrong scope, wrong model, expired, disabled and over
   };
   const ask = { gate, organizationId: "pilot-org", agentId: "live-default-agent", model: "deepseek-flash", reserveMicroUsd: bound, nowMs: 101 };
   assert.equal(canReservePilotSpend(ask), true);
-  assert.equal(canReservePilotSpend({ ...ask, agentId: "test-agent" }), false);
+  // organization-level coverage: a SECOND agent of the pilot workspace shares the same gate and budget (positive control)...
+  assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent" }), true);
+  // ...and is held to the identical limits as the first (disabled, expired, over budget, turn cap, wrong model)
+  assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", gate: { ...gate, enabled: false } }), false);
+  assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", nowMs: 10_000 }), false);
+  assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", gate: { ...gate, spentMicroUsd: BigInt(9950000) } }), false);
+  assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", conversationTurns: 4 }), true);
+  assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", conversationTurns: 5 }), false);
+  assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", model: "deepseek-v4-pro" }), false);
+  // a different WORKSPACE is still refused by the gate
+  assert.equal(canReservePilotSpend({ ...ask, organizationId: "other-org" }), false);
   assert.equal(canReservePilotSpend({ ...ask, model: "deepseek-v4-pro" }), false);
   assert.equal(canReservePilotSpend({ ...ask, nowMs: 10_000 }), false);
   assert.equal(canReservePilotSpend({ ...ask, gate: { ...gate, enabled: false } }), false);

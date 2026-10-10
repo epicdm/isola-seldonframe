@@ -126,7 +126,6 @@ export async function reservePublicTurnSpend(input: {
       if (
         !gate.enabled ||
         gate.organization_id !== input.organizationId ||
-        gate.agent_id !== input.agentId ||
         gate.model !== MODEL ||
         Number(gate.budget_micro_usd) !== Number(expectedBudget) ||
         startsAt !== envelope.startsAtMs ||
@@ -175,12 +174,13 @@ export async function reservePublicTurnSpend(input: {
   }
 }
 
-/** Read-only: true when a pilot gate row exists for this agent (whatever its enabled/expiry state). A missing table or a
- * database error reads as "no gate": the turn itself needs the same database, so it cannot proceed without it. */
+/** Read-only: true when a pilot gate row exists for this agent's WORKSPACE (whatever its enabled/expiry state; the gate meters
+ * every agent of the pilot workspace). A missing table or a database error reads as "no gate": the turn itself needs the same
+ * database, so it cannot proceed without it. */
 export async function agentHasPilotGate(agentId: string): Promise<boolean> {
   if (process.env.DB_DRIVER?.trim().toLowerCase() !== "pg") return false;
   try {
-    const result = await db.execute(sql`SELECT 1 AS present FROM public_turn_spend_gates WHERE agent_id = ${agentId}::uuid LIMIT 1`);
+    const result = await db.execute(sql`SELECT 1 AS present FROM public_turn_spend_gates g JOIN agents a ON a.org_id = g.organization_id WHERE a.id = ${agentId}::uuid LIMIT 1`);
     return returnedRows<{ present: number }>(result).length > 0;
   } catch {
     return false;
