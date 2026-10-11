@@ -47,10 +47,13 @@ export const BUILT_IN_EVENT_TYPE_SUGGESTIONS = [
   "call.missed",
   "call.completed",
   // EPIC 2026-10-11 — Personal Line journey events (signed plsvc ingress, lib/personal-line/events.ts).
+  "pl.signup_started",
   "pl.line_created",
   "pl.app_activated",
   "pl.registration_changed",
   "pl.first_call",
+  "pl.trial_ending",
+  "pl.trial_expired",
   "pl.plan_purchased",
 ] as const;
 

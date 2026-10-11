@@ -192,7 +192,8 @@ const ev = (over: Record<string, unknown> = {}) => JSON.stringify({
 
 test("events: strict parse — unknown type, missing proof fact, extra key, bad version refused; a valid event parses", () => {
   assert.ok(parsePlEvent(ev()));                                                                                   // POSITIVE
-  assert.equal(parsePlEvent(ev({ type: "pl.signup_started" })), null, "intake is the native lead, not a PL event");
+  assert.equal(parsePlEvent(ev({ type: "pl.lead_created" })), null, "intake is the native lead, not a PL event");
+  assert.equal(parsePlEvent(ev({ type: "pl.signup_started", facts: {} }))?.type, "pl.signup_started", "R1 S-a: now accepted");
   assert.equal(parsePlEvent(ev({ type: "pl.app_activated", facts: { registration_now: "unknown" } })), null, "activation needs a live registration");
   assert.equal(parsePlEvent(ev({ type: "pl.app_activated", facts: { registration_now: "registered" } })), null, "activation needs activated_at");
   assert.ok(parsePlEvent(ev({ type: "pl.app_activated", facts: { registration_now: "registered", activated_at: "2026-10-11T12:01:00Z" } })));
@@ -201,7 +202,7 @@ test("events: strict parse — unknown type, missing proof fact, extra key, bad 
   assert.equal(parsePlEvent(ev({ facts: { amount: 5 } })), null);
   assert.equal(parsePlEvent(ev({ version: 0 })), null);
   assert.equal(parsePlEvent(ev({ event_id: "not-a-uuid" })), null);
-  assert.deepEqual([...PL_EVENT_TYPES].sort(), ["pl.app_activated", "pl.first_call", "pl.line_created", "pl.plan_purchased", "pl.registration_changed"]);
+  assert.deepEqual([...PL_EVENT_TYPES].sort(), ["pl.app_activated", "pl.first_call", "pl.line_created", "pl.plan_purchased", "pl.registration_changed", "pl.signup_started", "pl.trial_ending", "pl.trial_expired"]);
 });
 
 test("events: processed once onto the native timeline + bus; a replayed event_id is a no-op", async () => {
@@ -253,7 +254,7 @@ test("WEBHOOK: unconfigured workspace -> 503; unsigned / wrong key / old / other
   // signed with the OTHER workspace's key, sent to ORG's path: refused (a key cannot reach another workspace)
   assert.equal((await handlePersonalLineWebhook(req(signed(keys[OTHER].key)), ORG, deps)).status, 401);
   assert.equal(s.emitted.length, 0, "nothing reached the bus before a valid signature");
-  const bad = ev({ type: "pl.signup_started" });
+  const bad = ev({ type: "pl.lead_created" });
   assert.equal((await handlePersonalLineWebhook(req(signed(KEY.key, ts, bad), bad), ORG, deps)).status, 422);
   const ok = await handlePersonalLineWebhook(req(signed()), ORG, deps);                                         // POSITIVE TWIN
   assert.equal(ok.status, 200); assert.equal(ok.body.status, "processed");

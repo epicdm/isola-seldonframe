@@ -7,6 +7,9 @@
 //   pl.app_activated         first live SIP registration observed (registration now = registered)
 //   pl.registration_changed  live registration state changed (registered / not_registered / unknown)
 //   pl.first_call            first ANSWERED call in the Magnus CDR
+//   pl.signup_started        (R1 S-a) a verified WhatsApp sign-up began - journey fact only, no line yet
+//   pl.trial_ending          (R1 S-a) the trial's own end is near - MUST carry facts.trial_end (the plan source's fact)
+//   pl.trial_expired         (R1 S-a) the trial's end has passed  - MUST carry facts.trial_end
 //   pl.plan_purchased        provider-confirmed payment — TYPE DEFINED ONLY: no payment provider exists yet, so nothing
 //                            emits it, and nothing here may fake it.
 //
@@ -17,12 +20,17 @@
 //   4 one native activity (timeline entry) per event
 //   5 emit the event on the existing SeldonFrame bus (emitSeldonEvent -> workflow_event_log + native automations),
 //     except a STALE pl.registration_changed, which would announce a state that is no longer current
+// The three R1 S-a types are PROJECTED AS ACTIVITY ENTRIES + the bus event only (+ the version-guarded fact merge,
+// where trial_end is the only new fact). They move NO deal and set NO probability: journey progress is not probability.
 // Deal pipeline / probability: deliberately NOT touched here (journey is not probability; the forward-only stage move
 // is the next slice).
 import { linkPersonalLine, PL_PROVIDER, type LinkStore } from "./link";
 import { verifyIngress, type PlKey } from "./signing";
 
-export const PL_EVENT_TYPES = ["pl.line_created", "pl.app_activated", "pl.registration_changed", "pl.first_call", "pl.plan_purchased"] as const;
+export const PL_EVENT_TYPES = [
+  "pl.signup_started", "pl.line_created", "pl.app_activated", "pl.registration_changed", "pl.first_call",
+  "pl.trial_ending", "pl.trial_expired", "pl.plan_purchased",
+] as const;
 export type PlEventType = (typeof PL_EVENT_TYPES)[number];
 
 export type PlFacts = {
@@ -79,15 +87,19 @@ export function parsePlEvent(raw: string): PlEvent | null {
   if (type === "pl.registration_changed" && f.registration_now === undefined) return null;
   if (type === "pl.first_call" && !isIso(f.first_call_at)) return null;
   if (type === "pl.plan_purchased" && f.plan === undefined) return null;
+  if ((type === "pl.trial_ending" || type === "pl.trial_expired") && !isIso(f.trial_end)) return null;
   return { eventId: o.event_id, type, occurredAt: new Date(o.occurred_at as string).toISOString(), version: o.version,
     plAccountId: o.pl_account_id, waId: o.wa_id, facts: f as PlFacts };
 }
 
 const SUBJECT: Record<PlEventType, string> = {
+  "pl.signup_started": "Personal Line: sign-up started",
   "pl.line_created": "Personal Line: line created",
   "pl.app_activated": "Personal Line: app activated",
   "pl.registration_changed": "Personal Line: connection changed",
   "pl.first_call": "Personal Line: first call",
+  "pl.trial_ending": "Personal Line: trial ending",
+  "pl.trial_expired": "Personal Line: trial expired",
   "pl.plan_purchased": "Personal Line: plan purchased",
 };
 
