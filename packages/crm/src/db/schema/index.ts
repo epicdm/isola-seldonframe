@@ -234,3 +234,5 @@ export * from "./eval-run-jobs";
 // external_identities, the trusted external-subject -> contact link written only
 // by the signed Personal Line ingress. See lib/personal-line/link.ts.
 export * from "./external-identities";
+// Migration 0081: pl_event_inbox + pl_account_facts (signed Personal Line journey events). See lib/personal-line/events.ts.
+export * from "./pl-events";

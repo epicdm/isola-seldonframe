@@ -9,6 +9,7 @@ import path from "node:path";
 import { signIngress, signSummaryRequest, verifyIngress, readPlKey } from "../../src/lib/personal-line/signing";
 import { linkPersonalLine, parseLinkBody, PL_PROVIDER, type LinkStore } from "../../src/lib/personal-line/link";
 import { loadPersonalLineCard, makeSummaryFetcher, parseSummaryEnvelope, type CardDeps } from "../../src/lib/personal-line/card";
+import { parsePlEvent, processPlEvent, PL_EVENT_TYPES, type Emit, type EventStore } from "../../src/lib/personal-line/events";
 
 const root = path.resolve(__dirname, "../..");
 const read = (rel: string) => readFileSync(path.join(root, rel), "utf8");
@@ -212,6 +213,105 @@ test("ROUTE: unconfigured -> 503; unsigned / wrong-key / old -> 401; a correctly
   } finally {
     for (const k of ["PL_SF_ORG_ID", "PL_SF_EVENTS_KEY_FILE", "PL_SF_EVENTS_KEY_ID"]) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
   }
+});
+
+// ── journey events (design §2) ───────────────────────────────────────────────
+function eventStore() {
+  const m = memStore();
+  const inbox = new Map<string, { outcome: string | null }>();
+  const facts = new Map<string, { v: number; f: Record<string, unknown> }>();
+  const acts: any[] = [];
+  const store: EventStore = {
+    ...m.store,
+    async claimEvent(_o, e) { if (inbox.has(e.eventId)) return false; inbox.set(e.eventId, { outcome: null }); return true; },
+    async applyFactsIfNewer(o, acc, v, f) { const k = `${o}|${acc}`; const cur = facts.get(k); if (cur && cur.v >= v) return false; facts.set(k, { v, f: { ...(cur?.f ?? {}), ...f } }); return true; },
+    async addActivity(o, c, a) { acts.push({ o, c, ...a }); return true; },
+    async finishEvent(id, _applied, outcome) { inbox.get(id)!.outcome = outcome; },
+  };
+  const emitted: any[] = [];
+  const emit: Emit = async (type, data, orgId) => { emitted.push({ type, data, orgId }); };
+  return { ...m, store, inbox, facts, acts, emitted, emit };
+}
+const ev = (over: Record<string, unknown> = {}) => JSON.stringify({
+  event_id: "0b6f2c1e-6a51-4d6e-9d8e-1f2a3b4c5d6e", type: "pl.line_created", occurred_at: "2026-10-11T12:00:00Z", version: 1,
+  pl_account_id: "accA", wa_id: "17675550101", facts: { plan: "trial", trial_end: "2026-10-18T04:00:00Z" }, ...over,
+});
+
+test("events: strict parse — unknown type, missing proof fact, extra key, bad version refused; a valid event parses", () => {
+  assert.ok(parsePlEvent(ev()));                                                                                   // POSITIVE
+  assert.equal(parsePlEvent(ev({ type: "pl.signup_started" })), null, "intake is the native lead, not a PL event");
+  assert.equal(parsePlEvent(ev({ type: "pl.app_activated", facts: { registration_now: "unknown" } })), null, "activation needs a live registration");
+  assert.equal(parsePlEvent(ev({ type: "pl.app_activated", facts: { registration_now: "registered" } })), null, "activation needs activated_at");
+  assert.ok(parsePlEvent(ev({ type: "pl.app_activated", facts: { registration_now: "registered", activated_at: "2026-10-11T12:01:00Z" } })));
+  assert.equal(parsePlEvent(ev({ type: "pl.first_call", facts: {} })), null, "first_call needs the answered-CDR time");
+  assert.equal(parsePlEvent(ev({ contact_id: "x" })), null);
+  assert.equal(parsePlEvent(ev({ facts: { amount: 5 } })), null);
+  assert.equal(parsePlEvent(ev({ version: 0 })), null);
+  assert.equal(parsePlEvent(ev({ event_id: "not-a-uuid" })), null);
+  assert.deepEqual([...PL_EVENT_TYPES].sort(), ["pl.app_activated", "pl.first_call", "pl.line_created", "pl.plan_purchased", "pl.registration_changed"]);
+});
+
+test("events: processed once onto the native timeline + bus; a replayed event_id is a no-op", async () => {
+  const s = eventStore();
+  const e = parsePlEvent(ev())!;
+  const r1 = await processPlEvent(ORG, e, s.store, s.emit);
+  assert.equal(r1.status, "processed");
+  assert.equal(s.acts.length, 1); assert.equal(s.emitted.length, 1);
+  assert.equal(s.emitted[0].type, "pl.line_created"); assert.equal(s.emitted[0].orgId, ORG);
+  assert.equal(s.emitted[0].data.contactId, (r1 as any).contactId);
+  assert.equal(s.ids.length, 1, "the event attached the subscriber through the trusted link");
+  const r2 = await processPlEvent(ORG, e, s.store, s.emit);
+  assert.deepEqual(r2, { status: "duplicate" });
+  assert.equal(s.acts.length, 1); assert.equal(s.emitted.length, 1);
+});
+
+test("events: an older version never overwrites newer facts; a stale registration_changed is not announced on the bus", async () => {
+  const s = eventStore();
+  const newer = parsePlEvent(ev({ event_id: "11111111-2222-4333-8444-555555555555", type: "pl.registration_changed", version: 5, facts: { registration_now: "registered" } }))!;
+  const older = parsePlEvent(ev({ event_id: "66666666-7777-4888-8999-aaaaaaaaaaaa", type: "pl.registration_changed", version: 4, facts: { registration_now: "not_registered" } }))!;
+  assert.equal(((await processPlEvent(ORG, newer, s.store, s.emit)) as any).factsApplied, true);
+  const r = await processPlEvent(ORG, older, s.store, s.emit);
+  assert.equal((r as any).factsApplied, false);
+  assert.equal((r as any).emitted, false);
+  assert.equal(s.facts.get(`${ORG}|accA`)!.f.registration_now, "registered");
+  assert.equal(s.emitted.length, 1);
+  assert.equal(s.acts.length, 2, "the older update is still on the timeline, marked as such");
+  assert.match(s.acts[1].subject, /older update/);
+  // a stale MILESTONE is still a fact that happened: announced once
+  const firstCall = parsePlEvent(ev({ event_id: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff", type: "pl.first_call", version: 3, facts: { first_call_at: "2026-10-11T13:00:00Z" } }))!;
+  assert.equal(((await processPlEvent(ORG, firstCall, s.store, s.emit)) as any).emitted, true);
+});
+
+test("events ROUTE: unsigned / old refused; a correctly signed request passes auth (422 on an invalid event, before any DB)", async () => {
+  const { POST } = await import("../../src/app/api/v1/integrations/personal-line/events/route");
+  const url = "http://localhost/api/v1/integrations/personal-line/events";
+  const saved = { ...process.env };
+  try {
+    delete process.env.PL_SF_ORG_ID;
+    assert.equal((await POST(new Request(url, { method: "POST", body: "{}" }))).status, 503);
+    const dir = mkdtempSync(path.join(tmpdir(), "ple-"));
+    writeFileSync(path.join(dir, "k"), KEY.key);
+    Object.assign(process.env, { PL_SF_ORG_ID: ORG, PL_SF_EVENTS_KEY_FILE: path.join(dir, "k"), PL_SF_EVENTS_KEY_ID: "ev1" });
+    const body = ev({ type: "pl.signup_started" });
+    const ts = now();
+    const send = (h: Record<string, string>) => POST(new Request(url, { method: "POST", body, headers: h }));
+    assert.equal((await send({})).status, 401);
+    assert.equal((await send({ "x-pl-sf-kid": "ev1", "x-pl-sf-ts": String(ts - 400), "x-pl-sf-sig": signIngress(KEY.key, ts - 400, body) })).status, 401);
+    assert.equal((await send({ "x-pl-sf-kid": "ev1", "x-pl-sf-ts": String(ts), "x-pl-sf-sig": signIngress(KEY.key, ts, body) })).status, 422);
+  } finally {
+    for (const k of ["PL_SF_ORG_ID", "PL_SF_EVENTS_KEY_FILE", "PL_SF_EVENTS_KEY_ID"]) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+});
+
+test("events: the pl.* types are offered to native automations; no code emits pl.plan_purchased (no payment provider yet)", () => {
+  const types = read("src/lib/events/event-types.ts");
+  for (const t of PL_EVENT_TYPES) assert.match(types, new RegExp(`"${t.replace(".", "\\.")}"`));
+  const mentions: string[] = [];
+  const walk = (d: string) => { for (const e of readdirSync(d)) { const f = path.join(d, e); if (statSync(f).isDirectory()) walk(f); else if (/\.(ts|tsx)$/.test(f) && readFileSync(f, "utf8").includes("pl.plan_purchased")) mentions.push(path.relative(root, f).replace(/\\/g, "/")); } };
+  walk(path.join(root, "src"));
+  assert.deepEqual(mentions.sort(), ["src/lib/events/event-types.ts", "src/lib/personal-line/events.ts"]);   // definitions only, no emitter
+  assert.match(read("drizzle/0081_pl_event_inbox.sql"), /CREATE TABLE IF NOT EXISTS pl_event_inbox/);
+  assert.ok(JSON.parse(read("drizzle/meta/_journal.json")).entries.some((x: any) => x.tag === "0081_pl_event_inbox"));
 });
 
 // ── wiring + migration ───────────────────────────────────────────────────────

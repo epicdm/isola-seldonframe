@@ -46,6 +46,12 @@ export const BUILT_IN_EVENT_TYPE_SUGGESTIONS = [
   "portal.resource_viewed",
   "call.missed",
   "call.completed",
+  // EPIC 2026-10-11 — Personal Line journey events (signed plsvc ingress, lib/personal-line/events.ts).
+  "pl.line_created",
+  "pl.app_activated",
+  "pl.registration_changed",
+  "pl.first_call",
+  "pl.plan_purchased",
 ] as const;
 
 const EVENT_TYPE_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
