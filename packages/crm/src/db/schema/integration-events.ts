@@ -1,14 +1,15 @@
-// EPIC 2026-10-11 — Personal Line journey events (design §2). DDL: drizzle/0081_pl_event_inbox.sql (hand-written).
+// EPIC 2026-10-11 — signed integration events (first provider: Personal Line). DDL: drizzle/0081_integration_event_inbox.sql.
 import { sql } from "drizzle-orm";
 import { bigint, boolean, index, jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { organizations } from "./organizations";
 
-export const plEventInbox = pgTable(
-  "pl_event_inbox",
+export const integrationEventInbox = pgTable(
+  "integration_event_inbox",
   {
-    eventId: uuid("event_id").primaryKey(),
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    plAccountId: text("pl_account_id").notNull(),
+    provider: text("provider").notNull(),
+    eventId: text("event_id").notNull(),
+    externalId: text("external_id").notNull(),
     type: text("type").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
     version: bigint("version", { mode: "number" }).notNull(),
@@ -16,17 +17,21 @@ export const plEventInbox = pgTable(
     applied: boolean("applied").notNull().default(false),
     outcome: text("outcome"),
   },
-  (table) => [index("pl_event_inbox_org_account_idx").on(table.orgId, table.plAccountId, table.occurredAt)],
+  (table) => [
+    primaryKey({ columns: [table.orgId, table.provider, table.eventId] }),
+    index("integration_event_inbox_subject_idx").on(table.orgId, table.provider, table.externalId, table.occurredAt),
+  ],
 );
 
-export const plAccountFacts = pgTable(
-  "pl_account_facts",
+export const integrationSubjectFacts = pgTable(
+  "integration_subject_facts",
   {
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
-    plAccountId: text("pl_account_id").notNull(),
+    provider: text("provider").notNull(),
+    externalId: text("external_id").notNull(),
     lastVersion: bigint("last_version", { mode: "number" }).notNull(),
     facts: jsonb("facts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [primaryKey({ columns: [table.orgId, table.plAccountId] })],
+  (table) => [primaryKey({ columns: [table.orgId, table.provider, table.externalId] })],
 );

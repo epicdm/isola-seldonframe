@@ -60,7 +60,7 @@ export default async function CustomerPortalOverview({
       .where(eq(landingPages.orgId, session.orgId))
       .limit(1)
       .then((r) => r[0] ?? null),
-    productionCardDeps()
+    productionCardDeps(session.orgId)
       .then((deps) => loadPersonalLineCard(session, deps))
       .catch((): PlCard => ({ kind: "error" })),
   ]);

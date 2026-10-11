@@ -6,10 +6,11 @@ import test from "node:test";
 import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { signIngress, signSummaryRequest, verifyIngress, readPlKey } from "../../src/lib/personal-line/signing";
-import { linkPersonalLine, parseLinkBody, PL_PROVIDER, type LinkStore } from "../../src/lib/personal-line/link";
+import { signIngress, signSummaryRequest, verifyIngress } from "../../src/lib/personal-line/signing";
+import { resolvePersonalLine, validatePersonalLineSettings, PL_SECRET_EVENTS, PL_SECRET_SUMMARY } from "../../src/lib/personal-line/integration";
+import { linkPersonalLine, PL_PROVIDER, type LinkStore } from "../../src/lib/personal-line/link";
 import { loadPersonalLineCard, makeSummaryFetcher, parseSummaryEnvelope, type CardDeps } from "../../src/lib/personal-line/card";
-import { parsePlEvent, processPlEvent, PL_EVENT_TYPES, type Emit, type EventStore } from "../../src/lib/personal-line/events";
+import { handlePersonalLineWebhook, parsePlEvent, processPlEvent, PL_EVENT_TYPES, type Emit, type EventStore } from "../../src/lib/personal-line/events";
 
 const root = path.resolve(__dirname, "../..");
 const read = (rel: string) => readFileSync(path.join(root, rel), "utf8");
@@ -66,30 +67,6 @@ test("ingress: unsigned / wrong key / wrong kid / old / future / tampered body a
   assert.deepEqual(verifyIngress(H(good), body, null, ts), { ok: false, why: "not_configured" });
   const edge = ts - 300;
   assert.deepEqual(verifyIngress(H({ ...good, "x-pl-sf-ts": String(edge), "x-pl-sf-sig": signIngress(KEY.key, edge, body) }), body, KEY, ts), { ok: true });
-});
-
-test("ingress body is strict: unknown keys, a contact/org id, a bad wa_id are refused; the minimal body parses", () => {
-  assert.deepEqual(parseLinkBody(JSON.stringify({ pl_account_id: "accA", wa_id: "17675550101", display_name: " Ann\u0007 " })), { plAccountId: "accA", waId: "17675550101", displayName: "Ann" });
-  for (const bad of [
-    { pl_account_id: "accA", wa_id: "17675550101", contact_id: "c1" },
-    { pl_account_id: "accA", wa_id: "17675550101", org_id: ORG },
-    { pl_account_id: "accA", wa_id: "+17675550101" },
-    { pl_account_id: "acc A", wa_id: "17675550101" },
-    { wa_id: "17675550101" },
-  ]) assert.equal(parseLinkBody(JSON.stringify(bad)), null, JSON.stringify(bad));
-  assert.equal(parseLinkBody("not json"), null);
-});
-
-test("key reader: a Swarm secret file with kid is read; missing / short / whitespace keys are not", async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "plk-"));
-  const f = path.join(dir, "k");
-  writeFileSync(f, `${KEY.key}\n`);
-  assert.deepEqual(await readPlKey("PL_SF_EVENTS_KEY_FILE", "PL_SF_EVENTS_KEY_ID", { PL_SF_EVENTS_KEY_FILE: f, PL_SF_EVENTS_KEY_ID: "ev1" }), KEY);
-  assert.equal(await readPlKey("PL_SF_EVENTS_KEY_FILE", "PL_SF_EVENTS_KEY_ID", { PL_SF_EVENTS_KEY_FILE: f }), null);
-  writeFileSync(f, "short");
-  assert.equal(await readPlKey("PL_SF_EVENTS_KEY_FILE", "PL_SF_EVENTS_KEY_ID", { PL_SF_EVENTS_KEY_FILE: f, PL_SF_EVENTS_KEY_ID: "ev1" }), null);
-  writeFileSync(f, "has space 0123456789abcdef0123456789abcdef");
-  assert.equal(await readPlKey("PL_SF_EVENTS_KEY_FILE", "PL_SF_EVENTS_KEY_ID", { PL_SF_EVENTS_KEY_FILE: f, PL_SF_EVENTS_KEY_ID: "ev1" }), null);
 });
 
 // ── identity: only the ingress creates links ─────────────────────────────────
@@ -191,30 +168,6 @@ test("a contact with no identity link sees no card and causes no plsvc request",
   assert.deepEqual(asked, []);
 });
 
-// ── the route itself (Law 20: test the path) ─────────────────────────────────
-test("ROUTE: unconfigured -> 503; unsigned / wrong-key / old -> 401; a correctly signed request passes auth (422 on a bad body, before any DB)", async () => {
-  const { POST } = await import("../../src/app/api/v1/integrations/personal-line/link/route");
-  const url = "http://localhost/api/v1/integrations/personal-line/link";
-  const saved = { ...process.env };
-  try {
-    delete process.env.PL_SF_ORG_ID; delete process.env.PL_SF_EVENTS_KEY_FILE; delete process.env.PL_SF_EVENTS_KEY_ID;
-    assert.equal((await POST(new Request(url, { method: "POST", body: "{}" }))).status, 503);
-    const dir = mkdtempSync(path.join(tmpdir(), "plr-"));
-    writeFileSync(path.join(dir, "k"), KEY.key);
-    Object.assign(process.env, { PL_SF_ORG_ID: ORG, PL_SF_EVENTS_KEY_FILE: path.join(dir, "k"), PL_SF_EVENTS_KEY_ID: "ev1" });
-    const body = JSON.stringify({ pl_account_id: "accA", wa_id: "17675550101", contact_id: "smuggled" });
-    const ts = now();
-    const send = (h: Record<string, string>) => POST(new Request(url, { method: "POST", body, headers: h }));
-    assert.equal((await send({})).status, 401);
-    assert.equal((await send({ "x-pl-sf-kid": "ev1", "x-pl-sf-ts": String(ts), "x-pl-sf-sig": signIngress("y".repeat(40), ts, body) })).status, 401);
-    assert.equal((await send({ "x-pl-sf-kid": "ev1", "x-pl-sf-ts": String(ts - 400), "x-pl-sf-sig": signIngress(KEY.key, ts - 400, body) })).status, 401);
-    // POSITIVE TWIN through the route: the signature is accepted, then the strict body refuses the smuggled contact_id
-    assert.equal((await send({ "x-pl-sf-kid": "ev1", "x-pl-sf-ts": String(ts), "x-pl-sf-sig": signIngress(KEY.key, ts, body) })).status, 422);
-  } finally {
-    for (const k of ["PL_SF_ORG_ID", "PL_SF_EVENTS_KEY_FILE", "PL_SF_EVENTS_KEY_ID"]) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
-  }
-});
-
 // ── journey events (design §2) ───────────────────────────────────────────────
 function eventStore() {
   const m = memStore();
@@ -226,7 +179,7 @@ function eventStore() {
     async claimEvent(_o, e) { if (inbox.has(e.eventId)) return false; inbox.set(e.eventId, { outcome: null }); return true; },
     async applyFactsIfNewer(o, acc, v, f) { const k = `${o}|${acc}`; const cur = facts.get(k); if (cur && cur.v >= v) return false; facts.set(k, { v, f: { ...(cur?.f ?? {}), ...f } }); return true; },
     async addActivity(o, c, a) { acts.push({ o, c, ...a }); return true; },
-    async finishEvent(id, _applied, outcome) { inbox.get(id)!.outcome = outcome; },
+    async finishEvent(_o, id, _applied, outcome) { inbox.get(id)!.outcome = outcome; },
   };
   const emitted: any[] = [];
   const emit: Emit = async (type, data, orgId) => { emitted.push({ type, data, orgId }); };
@@ -282,25 +235,55 @@ test("events: an older version never overwrites newer facts; a stale registratio
   assert.equal(((await processPlEvent(ORG, firstCall, s.store, s.emit)) as any).emitted, true);
 });
 
-test("events ROUTE: unsigned / old refused; a correctly signed request passes auth (422 on an invalid event, before any DB)", async () => {
-  const { POST } = await import("../../src/app/api/v1/integrations/personal-line/events/route");
-  const url = "http://localhost/api/v1/integrations/personal-line/events";
-  const saved = { ...process.env };
-  try {
-    delete process.env.PL_SF_ORG_ID;
-    assert.equal((await POST(new Request(url, { method: "POST", body: "{}" }))).status, 503);
-    const dir = mkdtempSync(path.join(tmpdir(), "ple-"));
-    writeFileSync(path.join(dir, "k"), KEY.key);
-    Object.assign(process.env, { PL_SF_ORG_ID: ORG, PL_SF_EVENTS_KEY_FILE: path.join(dir, "k"), PL_SF_EVENTS_KEY_ID: "ev1" });
-    const body = ev({ type: "pl.signup_started" });
-    const ts = now();
-    const send = (h: Record<string, string>) => POST(new Request(url, { method: "POST", body, headers: h }));
-    assert.equal((await send({})).status, 401);
-    assert.equal((await send({ "x-pl-sf-kid": "ev1", "x-pl-sf-ts": String(ts - 400), "x-pl-sf-sig": signIngress(KEY.key, ts - 400, body) })).status, 401);
-    assert.equal((await send({ "x-pl-sf-kid": "ev1", "x-pl-sf-ts": String(ts), "x-pl-sf-sig": signIngress(KEY.key, ts, body) })).status, 422);
-  } finally {
-    for (const k of ["PL_SF_ORG_ID", "PL_SF_EVENTS_KEY_FILE", "PL_SF_EVENTS_KEY_ID"]) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
-  }
+// ── the ONE signed webhook, per workspace (Law 20: the handler the route calls) ──
+test("WEBHOOK: unconfigured workspace -> 503; unsigned / wrong key / old / other workspace's key -> 401; good -> 200 processed; replay -> duplicate", async () => {
+  const s = eventStore();
+  const OTHER = "22222222-2222-4222-8222-222222222222";
+  const keys: Record<string, { kid: string; key: string }> = { [ORG]: KEY, [OTHER]: { kid: "ev1", key: "other-workspace-key-0123456789abcdef-012" } };
+  const deps = { resolveEventsKey: async (o: string) => keys[o] ?? null, store: async () => s.store, emit: s.emit };
+  const body = ev();
+  const ts = now();
+  const req = (h: Record<string, string>, b = body) => new Request("http://localhost/api/webhooks/personal-line/x", { method: "POST", body: b, headers: h });
+  const signed = (k = KEY.key, t = ts, b = body) => ({ "x-pl-sf-kid": "ev1", "x-pl-sf-ts": String(t), "x-pl-sf-sig": signIngress(k, t, b) });
+  assert.equal((await handlePersonalLineWebhook(req(signed()), "33333333-3333-4333-8333-333333333333", deps)).status, 503);
+  assert.equal((await handlePersonalLineWebhook(req(signed()), "not-a-uuid", deps)).status, 503);
+  assert.equal((await handlePersonalLineWebhook(req({}), ORG, deps)).status, 401);
+  assert.equal((await handlePersonalLineWebhook(req(signed("z".repeat(40))), ORG, deps)).status, 401);
+  assert.equal((await handlePersonalLineWebhook(req(signed(KEY.key, ts - 400)), ORG, deps)).status, 401);
+  // signed with the OTHER workspace's key, sent to ORG's path: refused (a key cannot reach another workspace)
+  assert.equal((await handlePersonalLineWebhook(req(signed(keys[OTHER].key)), ORG, deps)).status, 401);
+  assert.equal(s.emitted.length, 0, "nothing reached the bus before a valid signature");
+  const bad = ev({ type: "pl.signup_started" });
+  assert.equal((await handlePersonalLineWebhook(req(signed(KEY.key, ts, bad), bad), ORG, deps)).status, 422);
+  const ok = await handlePersonalLineWebhook(req(signed()), ORG, deps);                                         // POSITIVE TWIN
+  assert.equal(ok.status, 200); assert.equal(ok.body.status, "processed");
+  assert.equal(s.emitted.length, 1); assert.equal(s.emitted[0].orgId, ORG);
+  const again = await handlePersonalLineWebhook(req(signed()), ORG, deps);
+  assert.deepEqual([again.status, again.body.status], [200, "duplicate"]);
+  assert.equal(s.emitted.length, 1);
+});
+
+test("integration config: not connected / invalid -> null (no card, ingress 503); connected -> both keys from the workspace secret store", async () => {
+  const rec = { connected: true, baseUrl: "http://web-acctsum:3005/", eventsKeyId: "ev1", summaryKeyId: "sf1" };
+  const secrets: Record<string, string> = { [PL_SECRET_EVENTS]: KEY.key, [PL_SECRET_SUMMARY]: SKEY };
+  const deps = (r: any, sec = secrets) => ({ readRecord: async () => r, readSecret: async (_o: string, n: string) => sec[n] ?? null });
+  assert.deepEqual(await resolvePersonalLine(ORG, deps(rec)), { baseUrl: rec.baseUrl, events: { kid: "ev1", key: KEY.key }, summary: { kid: "sf1", key: SKEY } });
+  assert.equal(await resolvePersonalLine(ORG, deps(null)), null);
+  assert.equal(await resolvePersonalLine(ORG, deps({ ...rec, connected: false })), null);
+  assert.equal(await resolvePersonalLine(ORG, deps({ ...rec, baseUrl: "ftp://x/" })), null);
+  assert.equal((await resolvePersonalLine(ORG, deps(rec, { [PL_SECRET_EVENTS]: "short" })))?.events, null);
+  assert.equal(validatePersonalLineSettings({ baseUrl: "https://u:p@x/", eventsKeyId: "ev1", summaryKeyId: "sf1" }), "invalid_base_url");
+  assert.equal(validatePersonalLineSettings({ baseUrl: "https://x/", eventsKeyId: "EV 1", summaryKeyId: "sf1" }), "invalid_key_id");
+});
+
+test("CONFORMANCE: no Personal Line env var in the fork; keys come from workspace_secrets; one ingress route", () => {
+  const files = ["src/lib/personal-line/signing.ts", "src/lib/personal-line/card.ts", "src/lib/personal-line/events.ts", "src/lib/personal-line/integration.ts", "src/app/api/webhooks/personal-line/[orgId]/route.ts"];
+  for (const f of files) assert.doesNotMatch(read(f), /process\.env\.PL_|PL_SF_ORG_ID|PL_SUMMARY_BASE_URL/, f);
+  assert.match(read("src/lib/personal-line/integration.ts"), /getSecretValue\(/);
+  assert.match(read("src/lib/personal-line/actions.ts"), /storeSecret\(/);
+  assert.match(read("src/app/(dashboard)/settings/integrations/page.tsx"), /testPersonalLineConnectionAction/);
+  assert.throws(() => read("src/app/api/v1/integrations/personal-line/link/route.ts"));
+  assert.throws(() => read("src/app/api/v1/integrations/personal-line/events/route.ts"));
 });
 
 test("events: the pl.* types are offered to native automations; no code emits pl.plan_purchased (no payment provider yet)", () => {
@@ -310,8 +293,8 @@ test("events: the pl.* types are offered to native automations; no code emits pl
   const walk = (d: string) => { for (const e of readdirSync(d)) { const f = path.join(d, e); if (statSync(f).isDirectory()) walk(f); else if (/\.(ts|tsx)$/.test(f) && readFileSync(f, "utf8").includes("pl.plan_purchased")) mentions.push(path.relative(root, f).replace(/\\/g, "/")); } };
   walk(path.join(root, "src"));
   assert.deepEqual(mentions.sort(), ["src/lib/events/event-types.ts", "src/lib/personal-line/events.ts"]);   // definitions only, no emitter
-  assert.match(read("drizzle/0081_pl_event_inbox.sql"), /CREATE TABLE IF NOT EXISTS pl_event_inbox/);
-  assert.ok(JSON.parse(read("drizzle/meta/_journal.json")).entries.some((x: any) => x.tag === "0081_pl_event_inbox"));
+  assert.match(read("drizzle/0081_integration_event_inbox.sql"), /CREATE TABLE IF NOT EXISTS integration_event_inbox/);
+  assert.ok(JSON.parse(read("drizzle/meta/_journal.json")).entries.some((x: any) => x.tag === "0081_integration_event_inbox"));
 });
 
 // ── wiring + migration ───────────────────────────────────────────────────────

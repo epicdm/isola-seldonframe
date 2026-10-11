@@ -9,6 +9,11 @@ import {
   testTwilioConnectionAction,
   updateIntegrationAction,
 } from "@/lib/integrations/actions";
+import {
+  getPersonalLineSettings,
+  savePersonalLineIntegrationAction,
+  testPersonalLineConnectionAction,
+} from "@/lib/personal-line/actions";
 
 /*
   Square UI class reference (source of truth):
@@ -40,10 +45,11 @@ function renderConnectionBadge(connected: boolean) {
 export default async function IntegrationsSettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ saved?: string; service?: string; twilioTest?: string; resendTest?: string; kitTest?: string; mailchimpTest?: string; beehiivTest?: string }>;
+  searchParams: Promise<{ saved?: string; service?: string; twilioTest?: string; resendTest?: string; kitTest?: string; mailchimpTest?: string; beehiivTest?: string; plTest?: string; plSaved?: string; plError?: string }>;
 }) {
   const params = await searchParams;
   const settings = await getIntegrationSettings();
+  const personalLine = await getPersonalLineSettings();
   const platformBrand = resolvePlatformBranding();
 
   if (!settings) {
@@ -59,6 +65,9 @@ export default async function IntegrationsSettingsPage({
   const beehiivTestMessage =
     params.beehiivTest === "1" ? "Beehiiv connection successful" : params.beehiivTest === "0" ? "Beehiiv connection failed" : null;
 
+  const plMessage =
+    params.plTest === "1" ? "Personal Line connection successful" : params.plTest === "0" ? "Personal Line connection failed" : params.plSaved === "0" ? `Personal Line settings not saved (${params.plError ?? "invalid"})` : null;
+
   return (
     <section className="animate-page-enter space-y-4 sm:space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -73,6 +82,7 @@ export default async function IntegrationsSettingsPage({
       {resendTestMessage ? <p className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">{resendTestMessage}</p> : null}
       {kitTestMessage ? <p className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">{kitTestMessage}</p> : null}
       {mailchimpTestMessage ? <p className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">{mailchimpTestMessage}</p> : null}
+      {plMessage ? <p className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">{plMessage}</p> : null}
       {beehiivTestMessage ? <p className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">{beehiivTestMessage}</p> : null}
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -252,6 +262,58 @@ export default async function IntegrationsSettingsPage({
             </p>
           </div>
         </article>
+
+        {personalLine ? (
+          <article className="rounded-xl border bg-card p-5" data-integration="personal-line">
+            <div className="flex items-center justify-between">
+              <h2 className="text-card-title">Personal Line</h2>
+              {renderConnectionBadge(personalLine.connected)}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Shows each subscriber their own line on the customer portal and receives signed journey events
+              (line created, app activated, first call) onto this workspace&apos;s automations.
+            </p>
+            <form action={savePersonalLineIntegrationAction} className="mt-4 grid gap-3">
+              <div className="space-y-1">
+                <label htmlFor="pl-base-url" className="text-label">Service URL</label>
+                <input id="pl-base-url" name="baseUrl" className="crm-input h-10 w-full px-3" defaultValue={personalLine.baseUrl} placeholder="https://personal-line.example" />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <label htmlFor="pl-events-kid" className="text-label">Events key ID</label>
+                  <input id="pl-events-kid" name="eventsKeyId" className="crm-input h-10 w-full px-3" defaultValue={personalLine.eventsKeyId} placeholder="ev1" />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="pl-events-key" className="text-label">Events signing key</label>
+                  <input id="pl-events-key" name="eventsKey" type="password" autoComplete="off" className="crm-input h-10 w-full px-3"
+                    placeholder={personalLine.hasEventsKey ? "Stored (leave blank to keep)" : "At least 32 characters"} />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="pl-summary-kid" className="text-label">Summary key ID</label>
+                  <input id="pl-summary-kid" name="summaryKeyId" className="crm-input h-10 w-full px-3" defaultValue={personalLine.summaryKeyId} placeholder="sf1" />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="pl-summary-key" className="text-label">Summary signing key</label>
+                  <input id="pl-summary-key" name="summaryKey" type="password" autoComplete="off" className="crm-input h-10 w-full px-3"
+                    placeholder={personalLine.hasSummaryKey ? "Stored (leave blank to keep)" : "At least 32 characters"} />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button type="submit" className="crm-button-primary h-10 px-4">Save Personal Line</button>
+                <button type="submit" formAction={testPersonalLineConnectionAction} className="crm-button-secondary h-10 px-4">Test Connection</button>
+              </div>
+            </form>
+            <div className="mt-4 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground space-y-1">
+              <p className="font-medium text-foreground">Events webhook URL</p>
+              <code className="block break-all rounded bg-muted/40 px-2 py-1 text-[11px] text-foreground">
+                {`${platformBrand.appUrl}/api/webhooks/personal-line/${personalLine.orgId}`}
+              </code>
+              {personalLine.lastCheckedAt ? (
+                <p>Last check {personalLine.lastCheckOk ? "passed" : "failed"} ({personalLine.lastCheckDetail ?? "—"}) at {personalLine.lastCheckedAt}</p>
+              ) : <p>Not checked yet.</p>}
+            </div>
+          </article>
+        ) : null}
 
         <article className="rounded-xl border bg-card p-5">
           <div className="flex items-center justify-between">

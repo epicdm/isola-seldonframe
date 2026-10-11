@@ -1,6 +1,6 @@
 // EPIC 2026-10-11 — Personal Line subscriber account slice (2a): the ONLY writer of external_identities.
 //
-// Called by the signed ingress route after the HMAC verified. The subject is the plsvc liteAccount id; the wa_id is
+// Called by the signed Personal Line webhook (lib/personal-line/events.ts) after the HMAC verified. The subject is the plsvc liteAccount id; the wa_id is
 // Meta-verified by plsvc (server-to-server) and becomes the contact's phone.
 //
 // THE RULE THIS FILE KEEPS: an existing contact is NEVER adopted because its phone (or email) matches. A contact's
@@ -27,29 +27,6 @@ export interface LinkStore {
   /** true = inserted; false = a unique index already held this (subject or contact). */
   insertIdentity(orgId: string, provider: string, externalId: string, contactId: string): Promise<boolean>;
   deleteContact(orgId: string, contactId: string): Promise<void>;
-}
-
-const ACCOUNT_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const WA_RE = /^[1-9][0-9]{6,15}$/;
-
-/** Strict body parse: exactly these keys, nothing a browser-shaped payload could smuggle. */
-export function parseLinkBody(raw: string): LinkInput | null {
-  if (Buffer.byteLength(raw, "utf8") > 2048) return null;
-  let v: unknown;
-  try { v = JSON.parse(raw); } catch { return null; }
-  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
-  const o = v as Record<string, unknown>;
-  if (Object.keys(o).some((k) => !["pl_account_id", "wa_id", "display_name"].includes(k))) return null;
-  if (typeof o.pl_account_id !== "string" || !ACCOUNT_RE.test(o.pl_account_id)) return null;
-  if (typeof o.wa_id !== "string" || !WA_RE.test(o.wa_id)) return null;
-  let displayName: string | null = null;
-  if (o.display_name !== undefined && o.display_name !== null) {
-    if (typeof o.display_name !== "string") return null;
-    // eslint-disable-next-line no-control-regex
-    const cleaned = o.display_name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 80);
-    displayName = cleaned || null;
-  }
-  return { plAccountId: o.pl_account_id, waId: o.wa_id, displayName };
 }
 
 export async function linkPersonalLine(orgId: string, input: LinkInput, store: LinkStore): Promise<LinkResult> {

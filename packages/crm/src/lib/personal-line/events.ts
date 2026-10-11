@@ -19,7 +19,8 @@
 //     except a STALE pl.registration_changed, which would announce a state that is no longer current
 // Deal pipeline / probability: deliberately NOT touched here (journey is not probability; the forward-only stage move
 // is the next slice).
-import { linkPersonalLine, type LinkStore } from "./link";
+import { linkPersonalLine, PL_PROVIDER, type LinkStore } from "./link";
+import { verifyIngress, type PlKey } from "./signing";
 
 export const PL_EVENT_TYPES = ["pl.line_created", "pl.app_activated", "pl.registration_changed", "pl.first_call", "pl.plan_purchased"] as const;
 export type PlEventType = (typeof PL_EVENT_TYPES)[number];
@@ -96,7 +97,7 @@ export interface EventStore extends LinkStore {
   /** Merge facts iff e.version > last_version (or no row). Returns true when applied, false when stale. */
   applyFactsIfNewer(orgId: string, plAccountId: string, version: number, facts: PlFacts): Promise<boolean>;
   addActivity(orgId: string, contactId: string, a: { type: string; subject: string; metadata: Record<string, unknown>; completedAt: Date }): Promise<boolean>;
-  finishEvent(eventId: string, applied: boolean, outcome: string): Promise<void>;
+  finishEvent(orgId: string, eventId: string, applied: boolean, outcome: string): Promise<void>;
 }
 export type Emit = (type: PlEventType, data: Record<string, unknown>, orgId: string) => Promise<void>;
 
@@ -109,7 +110,7 @@ export async function processPlEvent(orgId: string, e: PlEvent, store: EventStor
   if (!(await store.claimEvent(orgId, e))) return { status: "duplicate" };
   const link = await linkPersonalLine(orgId, { plAccountId: e.plAccountId, waId: e.waId, displayName: null }, store);
   if (!link.ok) {
-    await store.finishEvent(e.eventId, false, `link_${link.reason}`);
+    await store.finishEvent(orgId, e.eventId, false, `link_${link.reason}`);
     return { status: "failed", reason: link.reason };
   }
   const factsApplied = await store.applyFactsIfNewer(orgId, e.plAccountId, e.version, e.facts);
@@ -123,43 +124,75 @@ export async function processPlEvent(orgId: string, e: PlEvent, store: EventStor
   if (emitIt) {
     await emit(e.type, { contactId: link.contactId, plAccountId: e.plAccountId, eventId: e.eventId, occurredAt: e.occurredAt, version: e.version, stale: !factsApplied, facts: e.facts }, orgId);
   }
-  await store.finishEvent(e.eventId, true, factsApplied ? "applied" : "stale_facts_kept");
+  await store.finishEvent(orgId, e.eventId, true, factsApplied ? "applied" : "stale_facts_kept");
   return { status: "processed", contactId: link.contactId, factsApplied, emitted: emitIt, activity };
 }
 
-/** Production store: the link store + inbox/facts/activities over drizzle. Lazy imports keep unit tests DB-free. */
+
+// ── the signed webhook (one route: app/api/webhooks/personal-line/[orgId]/route.ts) ───────────────────────────────
+// Modelled on app/api/webhooks/composio/route.ts (raw body -> HMAC + ±300 s -> parse -> emitSeldonEvent), with the
+// secret resolved PER WORKSPACE from that workspace's Personal Line integration (workspace_secrets), never from env.
+export type WebhookDeps = {
+  resolveEventsKey(orgId: string): Promise<PlKey | null>;
+  store(): Promise<EventStore>;
+  emit: Emit;
+  nowS?: () => number;
+};
+const ORG_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function handlePersonalLineWebhook(request: Request, orgId: string, deps: WebhookDeps): Promise<{ status: number; body: Record<string, unknown> }> {
+  const raw = await request.text().catch(() => null);
+  if (raw === null) return { status: 400, body: { ok: false, error: "unreadable_body" } };
+  // Unconfigured and unknown workspaces answer identically (fail loud, like composio's 503, without an org oracle).
+  const key = ORG_UUID.test(orgId) ? await deps.resolveEventsKey(orgId).catch(() => null) : null;
+  if (!key) return { status: 503, body: { ok: false, error: "personal_line_not_configured" } };
+  const check = verifyIngress(request.headers, raw, key, (deps.nowS ?? (() => Math.floor(Date.now() / 1000)))());
+  if (!check.ok) {
+    console.warn(`[pl-webhook] refused: ${check.why}`);
+    return { status: 401, body: { ok: false, error: "invalid_signature" } };
+  }
+  const event = parsePlEvent(raw);
+  if (!event) return { status: 422, body: { ok: false, error: "invalid_event" } };
+  const result = await processPlEvent(orgId, event, await deps.store(), deps.emit);
+  console.info(`[pl-webhook] ${event.type} ${event.eventId} -> ${result.status}`);
+  if (result.status === "failed") return { status: 409, body: { ok: false, error: result.reason } };
+  return { status: 200, body: { ok: true, ...result } };
+}
+
+/** Production store: the link store + generic inbox/facts + native activities over drizzle (lazy imports). */
 export async function drizzleEventStore(): Promise<EventStore> {
   const { drizzleLinkStore } = await import("./link");
   const { db } = await import("@/db");
-  const { activities, organizations, plAccountFacts, plEventInbox, users } = await import("@/db/schema");
+  const { activities, organizations, integrationEventInbox: inbox, integrationSubjectFacts: facts, users } = await import("@/db/schema");
   const { and, eq, lt, sql } = await import("drizzle-orm");
   const base = await drizzleLinkStore();
+  const P = PL_PROVIDER;
   return {
     ...base,
     async claimEvent(orgId, e) {
-      const rows = await db.insert(plEventInbox)
-        .values({ eventId: e.eventId, orgId, plAccountId: e.plAccountId, type: e.type, occurredAt: new Date(e.occurredAt), version: e.version })
+      const rows = await db.insert(inbox)
+        .values({ orgId, provider: P, eventId: e.eventId, externalId: e.plAccountId, type: e.type, occurredAt: new Date(e.occurredAt), version: e.version })
         .onConflictDoNothing()
-        .returning({ id: plEventInbox.eventId });
+        .returning({ id: inbox.eventId });
       if (rows.length === 1) return true;
       // A claim whose processing never finished (crash mid-way) is re-claimable after 30 s, atomically, so a sender
       // retry is not told "duplicate" for an event that was never applied. A finished one (outcome set) never is.
-      const reclaimed = await db.update(plEventInbox)
+      const reclaimed = await db.update(inbox)
         .set({ receivedAt: new Date() })
-        .where(and(eq(plEventInbox.eventId, e.eventId), eq(plEventInbox.orgId, orgId), sql`${plEventInbox.outcome} IS NULL`, lt(plEventInbox.receivedAt, new Date(Date.now() - 30_000))))
-        .returning({ id: plEventInbox.eventId });
+        .where(and(eq(inbox.orgId, orgId), eq(inbox.provider, P), eq(inbox.eventId, e.eventId), sql`${inbox.outcome} IS NULL`, lt(inbox.receivedAt, new Date(Date.now() - 30_000))))
+        .returning({ id: inbox.eventId });
       return reclaimed.length === 1;
     },
-    async applyFactsIfNewer(orgId, plAccountId, version, facts) {
-      const inserted = await db.insert(plAccountFacts)
-        .values({ orgId, plAccountId, lastVersion: version, facts })
+    async applyFactsIfNewer(orgId, plAccountId, version, f) {
+      const inserted = await db.insert(facts)
+        .values({ orgId, provider: P, externalId: plAccountId, lastVersion: version, facts: f })
         .onConflictDoNothing()
-        .returning({ v: plAccountFacts.lastVersion });
+        .returning({ v: facts.lastVersion });
       if (inserted.length === 1) return true;
-      const updated = await db.update(plAccountFacts)
-        .set({ lastVersion: version, facts: sql`${plAccountFacts.facts} || ${JSON.stringify(facts)}::jsonb`, updatedAt: new Date() })
-        .where(and(eq(plAccountFacts.orgId, orgId), eq(plAccountFacts.plAccountId, plAccountId), lt(plAccountFacts.lastVersion, version)))
-        .returning({ v: plAccountFacts.lastVersion });
+      const updated = await db.update(facts)
+        .set({ lastVersion: version, facts: sql`${facts.facts} || ${JSON.stringify(f)}::jsonb`, updatedAt: new Date() })
+        .where(and(eq(facts.orgId, orgId), eq(facts.provider, P), eq(facts.externalId, plAccountId), lt(facts.lastVersion, version)))
+        .returning({ v: facts.lastVersion });
       return updated.length === 1;
     },
     async addActivity(orgId, contactId, a) {
@@ -173,8 +206,8 @@ export async function drizzleEventStore(): Promise<EventStore> {
       await db.insert(activities).values({ orgId, contactId, userId, type: a.type, subject: a.subject, metadata: a.metadata, completedAt: a.completedAt });
       return true;
     },
-    async finishEvent(eventId, applied, outcome) {
-      await db.update(plEventInbox).set({ applied, outcome }).where(eq(plEventInbox.eventId, eventId));
+    async finishEvent(orgId, eventId, applied, outcome) {
+      await db.update(inbox).set({ applied, outcome }).where(and(eq(inbox.orgId, orgId), eq(inbox.provider, P), eq(inbox.eventId, eventId)));
     },
   };
 }

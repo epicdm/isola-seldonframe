@@ -9,7 +9,7 @@
 // identity link gets no card at all.
 import { and, eq } from "drizzle-orm";
 import { PL_PROVIDER } from "./link";
-import { readPlKey, signSummaryRequest, type PlKey } from "./signing";
+import { signSummaryRequest, type PlKey } from "./signing";
 
 export type PlSummary = {
   did: string;
@@ -110,18 +110,19 @@ export function makeSummaryFetcher(opts: {
   };
 }
 
-/** The production deps: drizzle identity lookup + the signed fetcher (PL_SUMMARY_BASE_URL, PL_SF_SUMMARY_KEY_FILE/_ID). */
-export async function productionCardDeps(env: Record<string, string | undefined> = process.env): Promise<CardDeps> {
+/** The production deps for ONE workspace: its Personal Line integration (organizations.integrations.personalLine +
+ *  workspace_secrets) + the drizzle identity lookup + the signed fetcher. A workspace without a connected Personal Line
+ *  integration gets no card and no identity query, so this can never put an error card in front of an unrelated
+ *  business's customers. */
+export async function productionCardDeps(orgId: string): Promise<CardDeps> {
+  const { resolvePersonalLine, productionConfigDeps } = await import("./integration");
+  const cfg = await resolvePersonalLine(orgId, await productionConfigDeps());
+  if (!cfg) return { findAccountForContact: async () => null, fetchSummary: async () => { throw new Error("pl_not_connected"); } };
   const { db } = await import("@/db");
   const { externalIdentities } = await import("@/db/schema");
-  const key = await readPlKey("PL_SF_SUMMARY_KEY_FILE", "PL_SF_SUMMARY_KEY_ID", env);
-  const plOrgId = env.PL_SF_ORG_ID?.trim() || null;
   return {
-    async findAccountForContact(orgId, contactId) {
-      // Only the pinned Personal Line workspace can hold links (the ingress writes nowhere else). Every other workspace
-      // — and every workspace while PL_SF_ORG_ID is unset — gets no card and no query, so this feature can never put an
-      // error card in front of an unrelated business's customers.
-      if (!plOrgId || orgId !== plOrgId) return null;
+    async findAccountForContact(orgIdArg, contactId) {
+      if (orgIdArg !== orgId) return null;
       const [row] = await db
         .select({ externalId: externalIdentities.externalId })
         .from(externalIdentities)
@@ -129,6 +130,6 @@ export async function productionCardDeps(env: Record<string, string | undefined>
         .limit(1);
       return row?.externalId ?? null;
     },
-    fetchSummary: makeSummaryFetcher({ baseUrl: env.PL_SUMMARY_BASE_URL?.trim(), key }),
+    fetchSummary: makeSummaryFetcher({ baseUrl: cfg.baseUrl, key: cfg.summary }),
   };
 }
