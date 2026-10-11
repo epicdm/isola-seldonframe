@@ -229,3 +229,8 @@ export * from "./share-cards";
 // 2026-07-11 — H2 hotfix (migration 0071): eval_run_jobs, an ephemeral poll
 // target for the out-of-request "Run evals" flow (after()). Additive.
 export * from "./eval-run-jobs";
+
+// EPIC 2026-10-11 — Personal Line subscriber account slice 2a (migration 0080):
+// external_identities, the trusted external-subject -> contact link written only
+// by the signed Personal Line ingress. See lib/personal-line/link.ts.
+export * from "./external-identities";
