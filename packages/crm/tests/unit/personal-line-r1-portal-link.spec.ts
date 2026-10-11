@@ -73,6 +73,12 @@ test("signing: the portal-link MAC is domain-separated from the event-ingress MA
   assert.deepEqual(verifyIngress(h(T0, signPortalLinkRequest(KEY.key, T0, raw)), raw, KEY, T0), { ok: false, why: "bad_signature" }); // ... and the reverse
   assert.equal(signPortalLinkRequest(KEY.key, 1_800_000_000, "{}"), signPortalLinkRequest(KEY.key, 1_800_000_000, "{}"));
   assert.notEqual(signPortalLinkRequest(KEY.key, 1_800_000_000, "{}"), signIngress(KEY.key, 1_800_000_000, "{}"));
+  // CROSS-REPO VECTOR (event ingress): the same literal is asserted by isolav2 test/pl-sf-outbox.test.ts (#290), so the sender's
+  // signIngress and this receiver's are pinned to each other from BOTH repos. (The summary read vector is pinned in the 2a spec.)
+  assert.equal(
+    signIngress("unit-events-key-0123456789abcdef-0123456789", 1_800_000_000,
+      '{"event_id":"2d1f6b0e-6a0e-5f43-8f4d-0c5a8a3b9d11","type":"pl.line_created","occurred_at":"2026-10-11T12:00:00.000Z","version":1,"pl_account_id":"accA","wa_id":"17675550101","facts":{"did_masked":"+1 767 *** 5001"}}'),
+    "rmvlNY1vxVwleKiduMiE93T7VWgtaI4O53DBuDQtM8g");
   // CROSS-REPO VECTOR: the literal below is asserted verbatim by isolav2 test/pl-concierge-portal-link.test.ts
   assert.equal(signPortalLinkRequest("portal-link-vector-key-0123456789abcdef", 1_800_000_000, '{"request_id":"0b6f2c1e-6a51-4d6e-9d8e-1f2a3b4c5d01","pl_account_id":"accA"}'), VECTOR);
 });
