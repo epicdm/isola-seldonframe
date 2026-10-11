@@ -23,8 +23,13 @@ async function main() {
   const url = process.env.DATABASE_URL!;
   assert.ok(url, "DATABASE_URL");
   const pool = new Pool({ connectionString: url });
-  await migrate(drizzle(pool), { migrationsFolder: path.resolve(__dirname, "../../drizzle") });
-  console.log("migrations applied");
+  // The repo's drizzle/ directory is a hybrid (baseline + hand-written files) that does not replay from an empty database, so the
+  // runner builds the schema with `drizzle-kit export` and then applies the REAL 0080/0081 files on top (R1_SKIP_MIGRATE=1).
+  // Without that switch, the whole journal is replayed (works only on a database that already has the baseline).
+  if (process.env.R1_SKIP_MIGRATE !== "1") await migrate(drizzle(pool), { migrationsFolder: path.resolve(__dirname, "../../drizzle") });
+  const have = await pool.query(`select to_regclass('public.external_identities') a, to_regclass('public.integration_event_inbox') b, to_regclass('public.integration_subject_facts') c, to_regclass('public.portal_access_codes') d`);
+  assert.ok(have.rows[0].a && have.rows[0].b && have.rows[0].c && have.rows[0].d, "schema is not in place");
+  console.log("schema in place");
   const q = async <T = any>(sql: string, params: any[] = []): Promise<T[]> => (await pool.query(sql, params)).rows as T[];
 
   const { NextRequest } = await import("next/server");
@@ -145,7 +150,9 @@ async function main() {
   });
   await T("S-c real PG: plan gate refuses without minting (twin: restored plan mints); rate limit 3 per contact then 429, other contact unaffected", async () => {
     await clearBudget();
-    await q(`update organizations set plan='free' where id=$1`, [o1.id]);
+    // 'builder' is a known tier WITHOUT the client portal. (Observed: an unresolved plan such as 'free' resolves to a null plan, which
+    // canUseClientPortal() treats as self-hosted = allowed. That is existing behaviour of the shared gate, not changed here.)
+    await q(`update organizations set plan='builder' where id=$1`, [o1.id]);
     const before = (await q(`select count(*)::int n from portal_access_codes where org_id=$1`, [o1.id]))[0].n;
     const g = await postLink(o1.id, lb("accA"));
     assert.deepEqual([g.status, g.json.error], [409, "portal_unavailable"]);
