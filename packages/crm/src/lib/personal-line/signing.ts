@@ -36,16 +36,33 @@ export function signSummaryRequest(key: string, ts: number, account: string): st
   return mac(key, `${SUMMARY_SIG_LABEL}.${ts}.${account}`);
 }
 
+export const PORTAL_LINK_SIG_LABEL = "pl-sf-portal-link-v1";
+
+/** R1 S-c: the portal-link request MAC is domain-separated from the event ingress MAC, so a captured event signature can
+ *  never be replayed as a portal-link request (or the reverse) even though both use the workspace events key. */
+export function signPortalLinkRequest(key: string, ts: number, rawBody: string): string {
+  return mac(key, `${PORTAL_LINK_SIG_LABEL}.${ts}.${rawBody}`);
+}
+
 export type IngressCheck =
   | { ok: true }
   | { ok: false; why: "unsigned" | "malformed" | "unknown_kid" | "bad_signature" | "expired" | "not_configured" };
 
 /** PURE. The signature is checked before freshness, so an unsigned caller learns nothing about the window. */
-export function verifyIngress(
+export function verifyIngress(headers: { get(name: string): string | null }, rawBody: string, key: PlKey | null, nowS: number): IngressCheck {
+  return verifySigned(headers, rawBody, key, nowS, signIngress);
+}
+
+export function verifyPortalLinkRequest(headers: { get(name: string): string | null }, rawBody: string, key: PlKey | null, nowS: number): IngressCheck {
+  return verifySigned(headers, rawBody, key, nowS, signPortalLinkRequest);
+}
+
+function verifySigned(
   headers: { get(name: string): string | null },
   rawBody: string,
   key: PlKey | null,
   nowS: number,
+  macOf: (key: string, ts: number, rawBody: string) => string,
 ): IngressCheck {
   if (!key) return { ok: false, why: "not_configured" };
   const kid = headers.get("x-pl-sf-kid");
@@ -55,7 +72,7 @@ export function verifyIngress(
   if (!/^\d{9,11}$/.test(tsRaw) || !SIG.test(sig)) return { ok: false, why: "malformed" };
   if (kid !== key.kid) return { ok: false, why: "unknown_kid" };
   const ts = Number(tsRaw);
-  if (!macMatches(signIngress(key.key, ts, rawBody), sig)) return { ok: false, why: "bad_signature" };
+  if (!macMatches(macOf(key.key, ts, rawBody), sig)) return { ok: false, why: "bad_signature" };
   if (Math.abs(nowS - ts) > PL_SKEW_S) return { ok: false, why: "expired" };
   return { ok: true };
 }
