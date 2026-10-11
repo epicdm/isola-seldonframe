@@ -400,6 +400,20 @@
       "when": 1791431621650,
       "tag": "0079_public_turn_spend_gate",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1791734400000,
+      "tag": "0080_external_identities",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1791734460000,
+      "tag": "0081_integration_event_inbox",
+      "breakpoints": true
     }
   ]
 }

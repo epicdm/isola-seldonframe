@@ -24,6 +24,8 @@ import { listPortalBookings } from "@/lib/portal/actions";
 import { requirePortalSessionForOrg } from "@/lib/portal/auth";
 import { pickCustomerCopyPack } from "@/lib/customer-portal/copy-packs";
 import { serviceLinksFromSettings } from "@/lib/portal/service-links";
+import { loadPersonalLineCard, productionCardDeps, type PlCard } from "@/lib/personal-line/card";
+import { PersonalLineCard } from "@/components/customer-portal/personal-line-card";
 
 type Booking = Awaited<ReturnType<typeof listPortalBookings>>["upcoming"][number];
 
@@ -38,7 +40,8 @@ export default async function CustomerPortalOverview({
   // Parallel data load. Bookings are scoped to session.contact.id by
   // listPortalBookings; we also need the org's soul (industry copy
   // pack) and the workspace blueprint (tap-to-call phone).
-  const [bookingsResult, orgRow, blueprintRow] = await Promise.all([
+  // EPIC slice 2a: the session's OWN Personal Line (server-side; subject = session contact -> identity link only).
+  const [bookingsResult, orgRow, blueprintRow, personalLine] = await Promise.all([
     listPortalBookings(orgSlug),
     db
       .select({
@@ -57,6 +60,9 @@ export default async function CustomerPortalOverview({
       .where(eq(landingPages.orgId, session.orgId))
       .limit(1)
       .then((r) => r[0] ?? null),
+    productionCardDeps(session.orgId)
+      .then((deps) => loadPersonalLineCard(session, deps))
+      .catch((): PlCard => ({ kind: "error" })),
   ]);
 
   const soul = (orgRow?.soul ?? {}) as { industry?: string };
@@ -96,6 +102,8 @@ export default async function CustomerPortalOverview({
           {copy.welcomeSubtext}
         </p>
       </header>
+
+      <PersonalLineCard card={personalLine} />
 
       {serviceLinks.length > 0 ? (
         <section className="space-y-2 rounded-xl border p-4" style={{ borderColor: "#e5e5e5", background: "#fff" }} aria-label="Your services">

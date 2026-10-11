@@ -71,6 +71,21 @@ export type OrganizationIntegrations = {
     apiKey: string;
     webhookSecret: string;
   };
+  /** EPIC 2026-10-11 — Personal Line (plsvc) workspace integration. NON-SECRET config only: the two HMAC keys live
+   *  in workspace_secrets (service names "personal-line-events" and "personal-line-summary", lib/secrets.ts), set and
+   *  rotated through the Personal Line card on settings/integrations (lib/personal-line/integration.ts). */
+  personalLine?: {
+    connected: boolean;
+    /** plsvc origin the portal card reads the subscriber summary from (server-to-server). */
+    baseUrl: string;
+    /** key id plsvc sends in X-PL-SF-Kid when it signs journey events to /api/webhooks/personal-line/[orgId]. */
+    eventsKeyId: string;
+    /** key id this workspace sends when it signs the summary read to plsvc. */
+    summaryKeyId: string;
+    lastCheckedAt?: string;
+    lastCheckOk?: boolean;
+    lastCheckDetail?: string;
+  };
 };
 
 export type OrganizationSubscription = {
