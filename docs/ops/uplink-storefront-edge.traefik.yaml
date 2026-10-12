@@ -1,0 +1,44 @@
+# Uplink storefront: public edge exception for the root page ONLY.
+#
+# WHY: the app host (uplink.epic.dm) is protected at the edge by the EasyPanel domain
+# middleware `uplink-operators` (Traefik ipAllowList). Anything not covered by an explicit
+# public domain entry returns a plain 403 "Forbidden" from Traefik before the app is reached
+# (measured 2026-10-12 from the non-allow-listed deepseek host: / /login /api/* /_next/static/*
+# are 403; /license and the workspace host are 200). The storefront at `/` therefore cannot
+# render for the public until the edge lets `/` and its static assets through.
+#
+# WHY NOT EASYPANEL DOMAIN ENTRIES: an EasyPanel domain `path` is a PathPrefix. `/` as a prefix
+# would match every route and open /login, /dashboard and /api to the world. Exact-match `/`
+# needs a Traefik Path() rule, so it goes in the Traefik file provider.
+#
+# WHERE: /etc/easypanel/traefik/config/custom.yaml on the host serving uplink.epic.dm
+# (EasyPanel custom Traefik configuration, https://easypanel.io/docs/guides/custom-traefik-config).
+# Merge into any existing custom.yaml; Traefik reloads file-provider changes without a restart.
+#
+# VERIFY BEFORE APPLYING (names are the host's, not assumed): the https entryPoint name, the
+# certResolver name, and the Swarm service DNS name/port of uplink-app-prod, all as they appear
+# in /etc/easypanel/traefik/config/main.yaml for the existing uplink.epic.dm router.
+#
+# WHAT STAYS PROTECTED: every route not matched below keeps the existing uplink-operators
+# restriction (/login, /dashboard, /settings, /api/*, /operators, /admin, /_next/data, ...).
+# No middleware is attached here on purpose: the matched paths are static or the public page.
+#
+# ROLLBACK: delete this router from custom.yaml (or the file); Traefik reloads; / is 403 again.
+#
+# Locked by packages/crm/tests/unit/branding/storefront-edge.spec.ts (rule paths and the
+# matrix of public vs protected paths).
+http:
+  routers:
+    uplink-storefront-public:
+      rule: "Host(`uplink.epic.dm`) && (Path(`/`) || PathPrefix(`/_next/static/`) || Path(`/favicon.ico`) || Path(`/manifest.webmanifest`))"
+      priority: 10000
+      entryPoints:
+        - https
+      service: uplink-storefront-public-svc
+      tls:
+        certResolver: letsencrypt
+  services:
+    uplink-storefront-public-svc:
+      loadBalancer:
+        servers:
+          - url: "http://uplink_uplink-app-prod:3000"

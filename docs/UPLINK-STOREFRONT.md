@@ -50,3 +50,34 @@ that path is restored and accepted), voice AI, any date.
 
 The test `platform-storefront.spec.tsx` fails if the page contains `coming soon`, `incoming`, `fiserv`, `unlimited`,
 `seldonframe`, `voice ai`, or `stay tuned`, and carries a control proving the pattern fires.
+
+## Why the upstream landing page is not the base (section by section)
+
+The upstream landing (`UnifiedLanding`, still intact for a default install) is a sales page for SeldonFrame's agency
+product ("Sell AI front offices. Deploy them in minutes."). The v4.33 P1 defect was its CONTENT on the Uplink host, not
+its design, so this storefront keeps the DESIGN (the `.lp-root` parchment tokens, deep-green CTA and closing slab,
+display serif headlines, mono eyebrows, bordered cards, Hanken/Newsreader fonts) and replaces the content.
+
+| Upstream section | Verdict for Uplink |
+|---|---|
+| Nav (Log in, Start for free, For agencies, Docs, Pricing) | Chrome pattern kept (logo left, one action right). Links dropped: `/agencies`, `/docs`, `/pricing-public` are hidden (404) on a branded host; "Start for free" enters the vendor URL builder |
+| Hero ("Sell AI front offices", paste-a-URL builder, demo marquee) | Not usable: vendor pitch; the builder runs unauthenticated generation Uplink does not offer (P2 defect on generate-landing-page) |
+| IDE strip (Claude, Cursor, Windsurf install) | Not usable: links `/build#install`, not an Uplink offer |
+| Agent orbit (integrations) | Not usable: integration claims not backed by Port |
+| Build steps (describe it / record it) | Not usable: `/record` builder flow, not offered |
+| Agency ownership + math ("Own everything", GoHighLevel price comparison, 0% GMV) | Not usable: vendor pricing and comparative claims; links `/pricing` (hidden) |
+| Modules and Agents (CRM, booking, intake, receptionist that books, missed-call text-back, review requester) | Not usable: missed-call recovery and voice receptionist are explicitly NOT OFFERED in Port (offer-missed-call-recovery-not-offered) |
+| Pricing section | Not usable: vendor tiers and GMV fees |
+| Proof strip, FAQ | Not usable: vendor claims; the FAQ ACCORDION pattern could be reused later with Port-backed Q&A |
+| Final CTA slab | Pattern kept (deep-green closing slab) with our contact route |
+| Footer | Pattern kept (alternate-band footer); vendor links dropped, `/license` notices kept |
+
+## Public edge (why a non-admin address got 403)
+
+The root is blocked at the EASYPANEL/TRAEFIK edge, not by app code: the app host carries the `uplink-operators`
+ipAllowList middleware, so a non-allow-listed address gets a plain 403 "Forbidden" for `/`, `/login`, `/api/*` and
+`/_next/static/*`, while `/license`, the embed/turn routes and the workspace host are separate public domain entries
+(ev-lane-a-uplink-personal-line-public-pilot-OPENED-2026-10-08). `docs/ops/uplink-storefront-edge.traefik.yaml` is the
+minimal exception (exact `/` plus static assets only, a Traefik file-provider router because an EasyPanel domain path is
+a prefix and `/` would open everything). Locked by `storefront-edge.spec.ts` (positive control + protected-route matrix).
+Apply it only in the executor's window, after the app is built and deployed; it is NOT applied by this change.
