@@ -48,3 +48,8 @@ This is equivalent to the CRM package's `next start` script and does not invoke 
 Auth.js sign-in keeps the existing Resend provider registration but replaces the returned provider's actual `sendVerificationRequest` function. SMTP2GO is selected ahead of Resend when its key and sender are configured, and the configured Uplink email identity is used. This path was exercised through Auth.js with a mock transport only; no live email was sent.
 
 Dashboard and settings copy uses the configured platform identity and workspace base domain. Public URLs and the Stripe Connect webhook use configured Uplink origins. Existing plan gates, attribution entitlements, API identifiers and legal notices are preserved. Authenticated page rendering and database-backed writes remain unverified pending an isolated synthetic PostgreSQL runtime.
+
+## Storefront and Personal Line sign-up switch
+
+The root page of a branded host is the platform storefront. The Personal Line sign-up CTA is controlled by the runtime value PLATFORM_PERSONAL_LINE_SIGNUP (open restores it; unset or anything else shows an honest unavailable notice). See docs/UPLINK-STOREFRONT.md for the switch, claim sources and what is deliberately not claimed.
+
