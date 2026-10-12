@@ -58,6 +58,8 @@ import { resolveLandingMode } from "./landing-mode";
 // promise can't drift between the human page and the Markdown.
 import { POSITIONING_ONE_LINER } from "./home-copy";
 import { buildPlatformOrganizationWebsiteGraph, resolvePlatformBranding } from "@/lib/branding/platform";
+import { resolveStorefront } from "@/lib/branding/storefront";
+import { PlatformStorefront } from "@/components/branding/platform-storefront";
 
 const platformBrand = resolvePlatformBranding();
 const homeTitle = platformBrand.name === "SeldonFrame"
@@ -65,7 +67,7 @@ const homeTitle = platformBrand.name === "SeldonFrame"
   : `${platformBrand.name}, operated by ${platformBrand.operatorName}`;
 const homeDescription = platformBrand.name === "SeldonFrame"
   ? POSITIONING_ONE_LINER
-  : `${platformBrand.name} is ${platformBrand.operatorName}'s workspace entry for internet and telephone services. Contact ${platformBrand.operatorName} to confirm service availability and setup.`;
+  : `${platformBrand.name} is ${platformBrand.operatorName}'s service platform for phone and internet services: a personal calling line, business services, and workspace sign-in.`;
 
 export const metadata: Metadata = {
   title: homeTitle,
@@ -135,23 +137,14 @@ export default async function PublicHomePage({
   if (platformBrand.name !== "SeldonFrame") {
     const jsonLd = JSON.stringify({ "@context": "https://schema.org", "@graph": siteGraph })
       .replace(/</g, "\\u003c");
+    // EPIC 2026-10-12: branded hosts get the platform storefront (see
+    // components/branding/platform-storefront.tsx). The Personal Line sign-up CTA is
+    // controlled by PLATFORM_PERSONAL_LINE_SIGNUP, read per request (lib/branding/storefront.ts).
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col justify-center gap-8 px-6 py-16">
+      <>
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
-        <header className="space-y-3">
-          <p className="text-sm font-medium text-muted-foreground">Operated by {platformBrand.operatorName}</p>
-          {platformBrand.logoUrl ? <img className="max-h-12 max-w-56 object-contain object-left" src={platformBrand.logoUrl} alt={platformBrand.name} /> : null}
-          <h1 className="text-4xl font-semibold tracking-tight">{platformBrand.name}</h1>
-          <p className="max-w-2xl text-lg text-muted-foreground">
-            {platformBrand.operatorName} provides internet and telephone services. Sign in to your {platformBrand.name} workspace, or contact {platformBrand.operatorName} to confirm service availability and setup.
-          </p>
-        </header>
-        <nav className="flex flex-wrap items-center gap-4">
-          <a className="inline-flex items-center rounded-md bg-primary px-5 py-3 font-medium text-primary-foreground" href={`${platformBrand.appUrl}/login`}>Sign in</a>
-          <a className="text-sm underline underline-offset-4" href={`mailto:${platformBrand.supportEmail}`}>Contact {platformBrand.operatorName}</a>
-          <a className="text-sm underline underline-offset-4" href="/license">Open-source notices</a>
-        </nav>
-      </main>
+        <PlatformStorefront brand={platformBrand} config={resolveStorefront(platformBrand)} />
+      </>
     );
   }
 
