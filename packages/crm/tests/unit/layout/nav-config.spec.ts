@@ -383,7 +383,6 @@ describe("buildNavGroups — enabledModules (simple-home nav filter)", () => {
     {
       title: "SYSTEM",
       items: [
-        { href: "/phone-whatsapp", label: "Phone & WhatsApp", icon: "Phone" },
         { href: "/integrations", label: "Integrations", icon: "Puzzle" },
         { href: "/settings", label: "Settings", icon: "Settings" },
       ],

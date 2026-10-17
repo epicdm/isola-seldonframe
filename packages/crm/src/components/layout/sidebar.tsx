@@ -91,6 +91,8 @@ export function Sidebar(props: {
    *  server-side by the dashboard layout. Surfaces the Approvals nav
    *  entry. See nav-config.ts's BuildNavInput.draftApprovalsOn doc. */
   draftApprovalsOn?: boolean;
+  /** Phone & WhatsApp exposure, resolved server-side by the dashboard layout. See nav-config.ts's BuildNavInput.phoneWhatsappOn. */
+  phoneWhatsappOn?: boolean;
 }) {
   const {
     hiddenBlocks = [],
@@ -111,6 +113,7 @@ export function Sidebar(props: {
     enabledModules = null,
     smsLive = false,
     draftApprovalsOn = false,
+    phoneWhatsappOn = false,
   } = props;
   const labels = useLabels();
   const pathname = usePathname();
@@ -148,6 +151,7 @@ export function Sidebar(props: {
     enabledModules,
     smsLive,
     draftApprovalsOn,
+    phoneWhatsappOn,
   });
 
   const [mobileOpen, setMobileOpen] = useState(false);
