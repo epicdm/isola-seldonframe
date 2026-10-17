@@ -273,6 +273,7 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
       {
         title: "SYSTEM",
         items: filterHidden([
+          { href: "/phone-whatsapp", label: "Phone & WhatsApp", icon: "Phone" },
           { href: "/integrations", label: "Integrations", icon: "Puzzle" },
           { href: "/settings", label: "Settings", icon: "Settings" },
           ...superAdminItems,
@@ -359,6 +360,7 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
         // Integrations — the in-product managed-OAuth Connect surface
         // (Composio: connect Gmail / Calendar / Slack / HubSpot / … so
         // agents can act in the operator's real apps).
+        { href: "/phone-whatsapp", label: "Phone & WhatsApp", icon: "Phone" },
         { href: "/integrations", label: "Integrations", icon: "Puzzle" },
         { href: "/docs", label: "Docs", icon: "BookOpen" },
         { href: "https://discord.gg/sbVUu976NW", label: "Discord", icon: "MessageCircle", external: true },
