@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { renderToString } from "react-dom/server";
 
+import PhoneWhatsappLoading from "../../../src/app/(dashboard)/phone-whatsapp/loading";
 import { PhoneWhatsappView } from "../../../src/app/(dashboard)/phone-whatsapp/view";
 import { buildLineView } from "../../../src/lib/phone-whatsapp/view-model";
 import type { PageView } from "../../../src/lib/phone-whatsapp/types";
@@ -59,6 +60,26 @@ describe("<PhoneWhatsappView>", () => {
     const html = render(lines(buildLineView(LINK, ok({ ...e, magnus: { ...e.magnus, lastCalls: [] } }), opts)));
     assert.match(html, /Configured; no answered call on record/);
     assert.match(html, /No call record found for this number/);
+  });
+
+  test("eligibility passing is never presented as an acceptance call: separate row, always Unknown, with an explicit caveat", () => {
+    const html = render(lines(buildLineView(LINK, ok(), opts)));
+    assert.match(html, /Eligible: all 6 checks pass/); // positive control: the all-green state is on screen
+    assert.match(html, /data-testid="row-Acceptance call"/);
+    const row = html.slice(html.indexOf('data-testid="row-Acceptance call"'));
+    assert.match(row.slice(0, 900), /Unknown/);
+    assert.match(row, /No customer acceptance call is recorded/);
+    assert.match(html, /does not mean a customer acceptance call has passed/);
+    assert.doesNotMatch(row.slice(0, 900), />OK</); // the acceptance row can never be green in this version
+  });
+
+  test("loading state: static status message, no data, no inputs, names what it is waiting for", () => {
+    const html = renderToString(<PhoneWhatsappLoading />);
+    assert.match(html, /role="status"/);
+    assert.match(html, /aria-busy="true"/);
+    assert.match(html, /Reading live status from Meta/);
+    for (const tag of [/<form/i, /<input/i, /<button/i, /<a/i]) assert.doesNotMatch(html, tag);
+    assert.doesNotMatch(html, /wa\.me|Eligible|OK</);
   });
 
   test("no linked number: honest empty state with the staff-assisted action, no line cards", () => {

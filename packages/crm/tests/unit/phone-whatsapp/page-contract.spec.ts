@@ -10,6 +10,7 @@ const root = process.cwd();
 const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\s\/\/ .*$/gm, "");
 const page = stripComments(readFileSync(join(root, "src/app/(dashboard)/phone-whatsapp/page.tsx"), "utf8"));
 const view = stripComments(readFileSync(join(root, "src/app/(dashboard)/phone-whatsapp/view.tsx"), "utf8"));
+const loading = stripComments(readFileSync(join(root, "src/app/(dashboard)/phone-whatsapp/loading.tsx"), "utf8"));
 const libFiles = ["types.ts", "view-model.ts", "evidence-provider.ts", "link-store.ts", "service.ts", "server.ts"].map((f) => [f, stripComments(readFileSync(join(root, "src/lib/phone-whatsapp", f), "utf8"))] as const);
 
 test("identity comes only from the server session: getOrgId is used; no params, searchParams, cookies, headers or request input", () => {
@@ -18,7 +19,7 @@ test("identity comes only from the server session: getOrgId is used; no params, 
 });
 
 test("the page has no write path: no server action, no form, no input, no POST/PUT, and the destination button is disabled", () => {
-  for (const [name, src] of [["page", page], ["view", view]] as const)
+  for (const [name, src] of [["page", page], ["view", view], ["loading", loading]] as const)
     for (const forbidden of [/["']use server["']/, /<form\b/i, /<input\b/i, /<select\b/i, /<textarea\b/i, /method=["']post/i, /fetch\(/, /action=/]) assert.doesNotMatch(src, forbidden, `${name} contains ${forbidden}`);
   assert.match(view, /data-testid="change-destination-disabled"/);
   assert.match(view, /<button type="button" disabled/);

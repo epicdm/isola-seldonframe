@@ -3,6 +3,17 @@
 import { formatUtc } from "@/lib/phone-whatsapp/view-model";
 import type { Fact, LineView, PageView, Tone } from "@/lib/phone-whatsapp/types";
 
+// Eligibility checks are Meta's settings for the number. They are NOT an acceptance call, and this version does not record
+// acceptance calls, so the acceptance row is always Unknown. It exists so the two are never read as the same thing.
+const ACCEPTANCE: Fact = {
+  tone: "unknown",
+  headline: "Not recorded. No customer acceptance call is recorded for this number.",
+  detail:
+    "The eligibility checks above only say Meta reports the number set up for calling. They do not show that a call works. An acceptance call is a real test call made with EPIC staff after routing is set up.",
+  observedAt: null,
+  source: "Acceptance calls are not tracked in this version",
+};
+
 const TONE: Record<Tone, { label: string; cls: string }> = {
   ok: { label: "OK", cls: "text-positive" },
   attention: { label: "Needs attention", cls: "text-caution" },
@@ -77,6 +88,9 @@ function Line({ line, waNumber }: { line: LineView; waNumber: string | null }) {
               ))}
             </ul>
           )}
+          <p className="text-xs text-muted-foreground" data-testid="eligibility-caveat">
+            Checks passing means Meta reports this number is set up for calling. It does not mean a customer acceptance call has passed.
+          </p>
           <p className="text-xs text-muted-foreground">
             {line.eligibility.observedAt ? `As of ${formatUtc(line.eligibility.observedAt)}` : "No evidence time"} · {line.eligibility.source}
           </p>
@@ -85,6 +99,7 @@ function Line({ line, waNumber }: { line: LineView; waNumber: string | null }) {
       <Row title="Call destination" fact={line.destination} />
       <Row title="Routing readiness" fact={line.routing} />
       <Row title="Last call" fact={line.lastCall} />
+      <Row title="Acceptance call" fact={ACCEPTANCE} />
       <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-3">
         <StaffAction waNumber={waNumber} what={`WhatsApp number ${line.displayNumber ?? line.phoneNumberId}: setup or change`} />
         <button type="button" disabled className="crm-button-secondary h-9 cursor-not-allowed px-4 text-sm opacity-60" title="Changing where calls go is done by EPIC staff." data-testid="change-destination-disabled">
@@ -100,7 +115,7 @@ const STEPS = [
   { n: 2, title: "Select number", state: "Staff-assisted today. This page lists the numbers linked to your workspace." },
   { n: 3, title: "Configure destination", state: "Staff-assisted today. This page shows the configured destination; it cannot change it." },
   { n: 4, title: "Verify routing", state: "Shown below as evidence: configured, or proven by an answered call." },
-  { n: 5, title: "Acceptance call", state: "Staff-assisted today. Your last call record appears below once a call is made." },
+  { n: 5, title: "Acceptance call", state: "Staff-assisted today. Not yet recorded here: passing eligibility checks is not an acceptance call." },
 ];
 
 export function PhoneWhatsappView({ view, waNumber }: { view: PageView; waNumber: string | null }) {
