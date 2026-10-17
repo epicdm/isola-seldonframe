@@ -126,29 +126,39 @@ const toIso = (s) => {
   return Number.isFinite(d.getTime()) ? d.toISOString() : null;
 };
 
-export async function readMagnus(cfg, did, fetchImpl = fetch) {
+// A "source" answers three questions about one number. Two implementations exist: the Magnus REST API (restSource, signed `read`
+// requests) and a database account that can only SELECT (magnus-sql.mjs). The shaping below is shared so both give identical facts.
+export function restSource(cfg, fetchImpl = fetch) {
+  return {
+    did: async (did) => (await magnusRead(cfg, "did", [{ field: "did", value: did, type: "string" }], { limit: 5 }, fetchImpl)).rows,
+    destinations: async (idDid) => (await magnusRead(cfg, "diddestination", [{ field: "id_did", value: String(idDid), type: "numeric" }], { limit: 5 }, fetchImpl)).rows,
+    calls: async (did) => (await magnusRead(cfg, "call", [{ field: "calledstation", value: did, type: "string" }], { limit: 5, sort: "starttime", dir: "DESC" }, fetchImpl)).rows,
+  };
+}
+
+export async function readMagnusFrom(source, did) {
   if (!isId(did)) return { ok: false, error: "no display number to look up (Meta read failed)" };
   try {
-    const didRead = await magnusRead(cfg, "did", [{ field: "did", value: did, type: "string" }], { limit: 5 }, fetchImpl);
-    if (didRead.rows.length > 1) throw new Error(`ambiguous: ${didRead.rows.length} DID rows match`);
-    const row = didRead.rows[0] ?? null;
+    const didRows = await source.did(did);
+    if (didRows.length > 1) throw new Error(`ambiguous: ${didRows.length} DID rows match`);
+    const row = didRows[0] ?? null;
     let destination = null;
     if (row) {
-      const d = await magnusRead(cfg, "diddestination", [{ field: "id_did", value: String(row.id), type: "numeric" }], { limit: 5 }, fetchImpl);
-      const first = d.rows[0] ?? null;
+      const destRows = await source.destinations(row.id);
+      const first = destRows[0] ?? null;
       destination = first ? {
         value: String(first.destination ?? "").slice(0, 120),
         kind: /^PJSIP\//i.test(String(first.destination ?? "")) ? "pjsip_trunk" : (Number(first.id_sip) > 0 ? "sip_account" : "other"),
         activated: String(first.activated) === "1",
-        count: d.rows.length,
+        count: destRows.length,
       } : null;
     }
-    const calls = await magnusRead(cfg, "call", [{ field: "calledstation", value: did, type: "string" }], { limit: 5, sort: "starttime", dir: "DESC" }, fetchImpl);
+    const callRows = await source.calls(did);
     return {
       ok: true,
       did: row ? { activated: String(row.activated) === "1", reserved: String(row.reserved) === "1" } : null,
       destination,
-      lastCalls: calls.rows.map((c) => ({
+      lastCalls: callRows.map((c) => ({
         startedAt: toIso(c.starttime),
         durationSec: Number(c.sessiontime ?? 0),
         answered: Number(c.sessiontime ?? 0) > 0 && Number(c.terminatecauseid ?? 0) === 1,
@@ -161,10 +171,12 @@ export async function readMagnus(cfg, did, fetchImpl = fetch) {
   }
 }
 
+export const readMagnus = (cfg, did, fetchImpl = fetch) => readMagnusFrom(restSource(cfg, fetchImpl), did);
+
 export async function collectLineEvidence(cfg, { wabaId, phoneNumberId }, fetchImpl = fetch, now = () => new Date()) {
   if (!isId(wabaId) || !isId(phoneNumberId)) throw Object.assign(new Error("invalid ids"), { code: "bad_request" });
   const { meta, calling } = await readMeta(cfg, wabaId, phoneNumberId, fetchImpl);
   const did = meta?.ok ? String(meta.displayNumber ?? "").replace(/\D/g, "") : "";
-  const magnus = await readMagnus(cfg, did, fetchImpl);
+  const magnus = cfg.magnusSource ? await readMagnusFrom(cfg.magnusSource, did) : await readMagnus(cfg, did, fetchImpl);
   return { schema: SCHEMA, wabaId, phoneNumberId, observedAt: now().toISOString(), meta, calling, magnus };
 }

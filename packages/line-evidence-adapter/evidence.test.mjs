@@ -122,7 +122,7 @@ test("invalid ids are rejected before any upstream call", async () => {
 });
 
 // ---- server -------------------------------------------------------------------------------------------------------
-const env = { ADAPTER_TOKEN: rnd("adapter").padEnd(32, "x"), META_WA_TOKEN: rnd("m"), MAGNUS_URL: "https://magnus.test/mbilling", MAGNUS_API_KEY: rnd("k"), MAGNUS_API_SECRET: rnd("s") };
+const env = { MAGNUS_MODE: "rest", ADAPTER_TOKEN: rnd("adapter").padEnd(32, "x"), META_WA_TOKEN: rnd("m"), MAGNUS_URL: "https://magnus.test/mbilling", MAGNUS_API_KEY: rnd("k"), MAGNUS_API_SECRET: rnd("s") };
 function call(handler, { method = "GET", url, headers = {} }) {
   return new Promise((resolve) => {
     const res = { writeHead(c) { this.code = c; }, end(b) { resolve({ code: this.code, body: b ? JSON.parse(b) : null }); } };

@@ -1,0 +1,9 @@
+{
+  "name": "line-evidence-adapter-runtime",
+  "private": true,
+  "type": "module",
+  "description": "Runtime dependency pin for the line-evidence adapter container. Deliberately NOT in packages/*: the adapter is not a pnpm workspace member.",
+  "dependencies": {
+    "mysql2": "3.24.5"
+  }
+}
