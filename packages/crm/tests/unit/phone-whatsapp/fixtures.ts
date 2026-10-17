@@ -13,7 +13,7 @@ export function evidence(over: Partial<LineEvidence> = {}): LineEvidence {
     wabaId: WABA,
     phoneNumberId: PNID,
     observedAt: "2026-10-17T18:59:50.000Z",
-    meta: { ok: true, displayNumber: "+1 555-010-0001", verifiedName: "ACME", status: "CONNECTED", codeVerification: "VERIFIED", quality: "GREEN", nameStatus: "APPROVED", platformType: "CLOUD_API", messagingLimitTier: "TIER_2K", canReceiveCallSip: "AVAILABLE", extraFieldsError: null },
+    meta: { ok: true, displayNumber: "+1 555-010-0001", verifiedName: "EPIC", status: "CONNECTED", codeVerification: "VERIFIED", quality: "GREEN", nameStatus: "APPROVED", platformType: "CLOUD_API", messagingLimitTier: "TIER_2K", canReceiveCallSip: "AVAILABLE", extraFieldsError: null },
     calling: { ok: true, status: "ENABLED", sipStatus: "ENABLED", sipHost: "voice.example.test", sipPort: 5061, callIconVisibility: "DEFAULT" },
     magnus: {
       ok: true,
