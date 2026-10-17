@@ -21,7 +21,7 @@ function world(o = {}) {
       if (p.startsWith(`${WABA}/phone_numbers`)) return json({ data: o.notOnWaba ? [{ id: "999" }] : [{ id: "1" }, { id: PNID }] });
       if (p === `${PNID}/settings?fields=calling`) return o.callingFail ? json({ error: { message: "no settings" } }, 400) : json({ calling: { status: o.callingStatus ?? "ENABLED", sip: { status: "ENABLED", servers: [{ hostname: "voice.example.test", port: 5061 }] } } });
       if (p.startsWith(`${PNID}?fields=platform_type`)) return o.extraFail ? json({ error: { message: "(#100) field not available" } }, 400) : json({ platform_type: "CLOUD_API", whatsapp_business_manager_messaging_limit: "TIER_2K", health_status: { can_send_message: "AVAILABLE", entities: [{ entity_type: "WABA", id: WABA, can_send_message: "AVAILABLE" }, { entity_type: "PHONE_NUMBER", id: PNID, can_send_message: "AVAILABLE", can_receive_call_sip: "AVAILABLE" }] } });
-      if (p.startsWith(`${PNID}?fields=id`)) return json({ id: PNID, display_phone_number: "+1 555-010-0001", verified_name: "ACME", status: "CONNECTED", code_verification_status: "VERIFIED", quality_rating: "GREEN", name_status: "APPROVED" });
+      if (p.startsWith(`${PNID}?fields=id`)) return json({ id: PNID, display_phone_number: "+1 555-010-0001", verified_name: "EPIC", status: "CONNECTED", code_verification_status: "VERIFIED", quality_rating: "GREEN", name_status: "APPROVED" });
     }
     if (u.startsWith(cfg.magnusUrl)) {
       const mod = u.split("/").slice(-2)[0];

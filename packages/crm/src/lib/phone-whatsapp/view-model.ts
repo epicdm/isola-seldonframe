@@ -107,7 +107,7 @@ function eligibilityFact(meta: MetaFacts, calling: CallingFacts, observedAt: str
   const source = "Meta WhatsApp Business API";
   if (bad) return { tone: "attention", headline: `Not eligible yet: ${bad} of ${checks.length} checks need attention`, detail: unk ? `${unk} more could not be confirmed.` : "Staff can fix these with you.", observedAt, source, checks };
   if (unk) return { tone: "unknown", headline: `Cannot confirm eligibility: ${unk} of ${checks.length} checks have no evidence`, detail: "No check has failed, but eligibility is not shown until every check is confirmed.", observedAt: meta.ok ? observedAt : null, source, checks };
-  return { tone: "ok", headline: `Eligible: all ${checks.length} checks pass`, detail: "Every check above was read from Meta just now.", observedAt, source, checks };
+  return { tone: "ok", headline: `Eligible: all ${checks.length} checks pass`, detail: "Every check above was read from Meta at the time shown.", observedAt, source, checks };
 }
 
 function destinationFact(m: MagnusFacts, observedAt: string): Fact {
@@ -153,8 +153,8 @@ function routingFact(link: LineLink, calling: CallingFacts, magnus: MagnusFacts,
   if (problems.length) return { tone: "attention", headline: "Routing is not complete", detail: `${problems.join("; ")}.`, observedAt, source };
   const windowMs = (o.proofWindowDays ?? 30) * 86400000;
   const proof = magnus.lastCalls.find((c) => c.answered && c.startedAt && o.now.getTime() - new Date(c.startedAt).getTime() <= windowMs);
-  if (proof) return { tone: "ok", headline: "Proven by a recent answered call", detail: `Configuration is complete and an answered call was recorded ${formatUtc(proof.startedAt)}. Records do not show the caller's channel, so run the acceptance call to prove WhatsApp specifically.`, observedAt, source };
-  return { tone: "unknown", headline: "Configured, not yet proven", detail: `Configuration is complete, but no answered call is recorded in the last ${o.proofWindowDays ?? 30} days. Readiness is shown as proven only after a call is answered.`, observedAt, source };
+  if (proof) return { tone: "ok", headline: "Configured; a recent call was answered", detail: `Configuration is complete and an answered call is on record at ${formatUtc(proof.startedAt)}. The record does not show who called or by which channel (it can be a monitoring or test call), so run the acceptance call to prove WhatsApp specifically.`, observedAt, source };
+  return { tone: "unknown", headline: "Configured; no answered call on record", detail: `Configuration is complete, but no answered call is recorded in the last ${o.proofWindowDays ?? 30} days. Routing is shown as working only after a call is answered.`, observedAt, source };
 }
 
 const SOURCE_UNAVAILABLE = (result: EvidenceResult) =>

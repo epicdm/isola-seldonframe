@@ -17,7 +17,7 @@ describe("<PhoneWhatsappView>", () => {
     const html = render(lines(buildLineView(LINK, ok(), opts)));
     for (const row of ["WhatsApp connection", "Calling eligibility", "Call destination", "Routing readiness", "Last call"]) assert.match(html, new RegExp(row));
     assert.match(html, /Eligible: all 6 checks pass/);
-    assert.match(html, /Proven by a recent answered call/);
+    assert.match(html, /Configured; a recent call was answered/);
     assert.match(html, /As of 2026-10-17 18:59:50 UTC/);
     assert.match(html, /2026-10-17 12:57:27 UTC/);
     assert.match(html, /PJSIP\/15550100001@pbx-trunk/);
@@ -53,11 +53,11 @@ describe("<PhoneWhatsappView>", () => {
     }
   });
 
-  test("calling configured but no answered call: 'Configured, not yet proven' and the no-record last-call text", () => {
+  test("calling configured but no answered call: 'Configured; no answered call on record' and the no-record last-call text", () => {
     const e = evidence();
     if (!e.magnus.ok) throw new Error("fixture");
     const html = render(lines(buildLineView(LINK, ok({ ...e, magnus: { ...e.magnus, lastCalls: [] } }), opts)));
-    assert.match(html, /Configured, not yet proven/);
+    assert.match(html, /Configured; no answered call on record/);
     assert.match(html, /No call record found for this number/);
   });
 

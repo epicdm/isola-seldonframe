@@ -17,7 +17,7 @@ test("all evidence present and passing: eligible, destination configured, routin
   assert.equal(v.destination.tone, "ok");
   assert.match(v.destination.headline, /PJSIP\/15550100001@pbx-trunk/);
   assert.equal(v.routing.tone, "ok");
-  assert.match(v.routing.headline, /Proven by a recent answered call/);
+  assert.match(v.routing.headline, /Configured; a recent call was answered/);
   assert.match(v.lastCall.headline, /2026-10-17 12:57:27 UTC/);
   assert.match(v.lastCall.headline, /answered, 3 s/);
   assert.equal(v.lastCall.observedAt, "2026-10-17T18:59:50.000Z");
@@ -95,7 +95,7 @@ test("RULE: complete configuration with NO answered call is 'configured, not pro
   if (!e.magnus.ok) throw new Error("fixture");
   const v = view({ ...e, magnus: { ...e.magnus, lastCalls: [] } });
   assert.equal(v.routing.tone, "unknown");
-  assert.match(v.routing.headline, /Configured, not yet proven/);
+  assert.match(v.routing.headline, /Configured; no answered call on record/);
   assert.equal(v.lastCall.tone, "unknown");
   assert.match(v.lastCall.headline, /No call record found/);
 });

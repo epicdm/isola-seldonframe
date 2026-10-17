@@ -63,7 +63,7 @@ export async function readMeta(cfg, wabaId, phoneNumberId, fetchImpl = fetch) {
     };
   } catch (e) {
     out.meta = { ok: false, error: errText(e) };
-    out.calling = { ok: false, error: "not read: the number could not be confirmed at Meta" };
+    out.calling = { ok: false, error: "the number could not be confirmed at Meta" };
     return out;
   }
   // 2) calling / SIP settings
