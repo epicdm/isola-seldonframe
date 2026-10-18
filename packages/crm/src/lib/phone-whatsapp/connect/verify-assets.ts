@@ -5,6 +5,7 @@
 // Every refusal has a stable code so the UI can say something true and the tests can pin each one.
 
 export type RefusalCode =
+  | "platform_unverified"
   | "bad_input"
   | "token_invalid"
   | "wrong_app"
@@ -104,10 +105,15 @@ export async function verifyClaimedAssets(
   if (!found) return refuse("phone_not_on_waba", "That number is not on the WhatsApp account you authorised.");
 
   // Coexistence is derived from Meta, never from anything the browser said.
-  if (found.isOnBizApp === true || (found.platformType ?? "").toUpperCase() === "NOT_APPLICABLE_BUSINESS_APP") {
+  const platform = (found.platformType ?? "").toUpperCase();
+  if (found.isOnBizApp === true || platform === "NOT_APPLICABLE_BUSINESS_APP") {
     return refuse("coexistence_not_supported_here", "This number is also used in the WhatsApp Business app. That setup is handled separately.");
   }
-  if (found.platformType !== null && found.platformType.toUpperCase() !== "CLOUD_API") {
+  // Fail closed: a missing platform is not evidence of Cloud API eligibility (Codex review). Accepted: CLOUD_API, and NOT_APPLICABLE,
+  // the value expected for a number that is on the WABA but not yet registered (this check runs before registration). The first live
+  // connection verifies that expectation; if Meta reports something else, nothing has been registered or stored.
+  if (!platform) return refuse("platform_unverified", "Meta did not report this number's platform, so it was not connected. Nothing was registered.");
+  if (platform !== "CLOUD_API" && platform !== "NOT_APPLICABLE") {
     return refuse("not_cloud_api", "This number is not on the WhatsApp Cloud API.");
   }
 
