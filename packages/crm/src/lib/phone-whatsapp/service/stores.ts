@@ -72,8 +72,9 @@ export function makeAgentDirectory(): AgentDirectory {
 export const readCallEvents = async (workspaceId: string, phone: string) => (await readPath<MetaCallEvent[]>(workspaceId, ["phoneWhatsapp", "callEvents", phone])) ?? [];
 export const readAcceptance = async (workspaceId: string, phone: string) => (await readPath<Array<Attestation & { evidence: unknown }>>(workspaceId, ["phoneWhatsapp", "acceptance", phone])) ?? [];
 
-async function append(workspaceId: string, key: string, phone: string, item: unknown, cap: number) {
-  // atomic append + cap, scoped to the one workspace row
+async function append(workspaceId: string, key: string, phone: string, item: unknown, cap: number, unlessCallId?: string) {
+  // atomic append + cap, scoped to the one workspace row. With unlessCallId the row is updated only if no element carries that call id: the
+  // condition is re-checked on the latest row version when two deliveries race, so a call id is stored at most once (Codex review).
   await db.execute(sql`
     update organizations set settings = jsonb_set(
       jsonb_set(${ensurePw}, ARRAY['phoneWhatsapp',${key}]::text[], coalesce(settings #> ARRAY['phoneWhatsapp',${key}], '{}'::jsonb), true),
@@ -81,9 +82,11 @@ async function append(workspaceId: string, key: string, phone: string, item: unk
       (select coalesce(jsonb_agg(e order by n), '[]'::jsonb) from (
          select e, n from jsonb_array_elements(coalesce(settings #> ARRAY['phoneWhatsapp',${key},${phone}], '[]'::jsonb) || ${JSON.stringify([item])}::jsonb) with ordinality as t(e, n)
          order by n desc limit ${cap}) s), true)
-    where id = ${workspaceId}::uuid`);
+    where id = ${workspaceId}::uuid
+      and (${unlessCallId ?? null}::text is null
+           or not coalesce(settings #> ARRAY['phoneWhatsapp',${key},${phone}], '[]'::jsonb) @> jsonb_build_array(jsonb_build_object('callId', ${unlessCallId ?? null}::text)))`);
 }
-export const appendCallEvent = (w: string, phone: string, ev: MetaCallEvent) => append(w, "callEvents", phone, ev, 20);
+export const appendCallEvent = (w: string, phone: string, ev: MetaCallEvent) => append(w, "callEvents", phone, ev, 20, ev.callId);
 export const appendAcceptance = (w: string, phone: string, a: unknown) => append(w, "acceptance", phone, a, 50);
 
 /** Who holds this number (linked line or unfinished connection): used to derive the workspace for service-to-service events. */

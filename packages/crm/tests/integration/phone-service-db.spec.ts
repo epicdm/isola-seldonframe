@@ -44,6 +44,15 @@ describe("service stores (database-backed)", { skip: !enabled && "scratch databa
     await assert.rejects(ledger.recordStep({ workspaceId: WS2, phoneNumberId: PHONE, step: "did", rec: { done: true } }));
   });
 
+  test("two simultaneous deliveries of the SAME call id store it once (Codex review); twin: a different call id is stored", async () => {
+    const P = "900000000000509";
+    const ev = (id: string) => ({ callId: id, phoneNumberId: P, at: "2026-10-18T10:00:00.000Z" });
+    await Promise.all([st.appendCallEvent(WS, P, ev("dup-1")), st.appendCallEvent(WS, P, ev("dup-1")), st.appendCallEvent(WS, P, ev("dup-1"))]);
+    assert.deepEqual((await st.readCallEvents(WS, P)).map((e) => e.callId), ["dup-1"]);
+    await st.appendCallEvent(WS, P, ev("dup-2"));
+    assert.deepEqual((await st.readCallEvents(WS, P)).map((e) => e.callId), ["dup-1", "dup-2"]);
+  });
+
   test("call events and acceptance keep the newest N in time order (oldest first), per number", async () => {
     for (let i = 1; i <= 25; i++) await st.appendCallEvent(WS, PHONE, { callId: `c${i}`, phoneNumberId: PHONE, at: new Date(1_800_000_000_000 + i * 1000).toISOString() });
     const ev = await st.readCallEvents(WS, PHONE);

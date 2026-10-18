@@ -20,7 +20,7 @@ function world(over: { connection?: ServiceDeps["connectionStatus"] extends (...
   const t = {
     ledger: new Map<string, AttachLedgerRecord>(), events: [] as MetaCallEvent[], accept: [] as StoredAttestation[],
     routeTarget: null as string | null, didActive: false, cdrs: [] as Array<{ startedAt: string; durationSec: number; answered: boolean }>, provCalls: 0,
-    now: new Date("2026-10-18T10:00:00Z"), claimants: over.claimants ?? [WS_A],
+    now: new Date("2026-10-18T10:00:00Z"), claimants: over.claimants ?? [WS_A], destCount: 1,
   };
   const ledger: AttachLedger = {
     get: async (w, p) => t.ledger.get(`${w}|${p}`) ?? null,
@@ -40,7 +40,7 @@ function world(over: { connection?: ServiceDeps["connectionStatus"] extends (...
       schema: "line-evidence/v1", wabaId: WABA, phoneNumberId: PHONE, observedAt: t.now.toISOString(),
       meta: { ok: true, displayNumber: "+1 555 010 0100", verifiedName: "Test", status: "CONNECTED", codeVerification: "VERIFIED", quality: "GREEN", nameStatus: "APPROVED", platformType: "CLOUD_API", messagingLimitTier: "TIER_250", canReceiveCallSip: "AVAILABLE", extraFieldsError: null },
       calling: { ok: true, status: "ENABLED", sipStatus: "ENABLED", sipHost: "voice.example.test", sipPort: 5061, callIconVisibility: "DEFAULT" },
-      magnus: { ok: true, did: t.didActive ? { activated: true, reserved: true } : null, destination: t.routeTarget ? { value: t.routeTarget, kind: "x", activated: true, count: 1 } : null, lastCalls: t.cdrs.map((c) => ({ startedAt: c.startedAt, durationSec: c.durationSec, answered: c.answered, terminateCauseId: 1 })) },
+      magnus: { ok: true, did: t.didActive ? { activated: true, reserved: true } : null, destination: t.routeTarget ? { value: t.routeTarget, kind: "x", activated: true, count: t.destCount } : null, lastCalls: t.cdrs.map((c) => ({ startedAt: c.startedAt, durationSec: c.durationSec, answered: c.answered, terminateCauseId: 1 })) },
     } as LineEvidence;
   };
   const deps: ServiceDeps = {
@@ -198,4 +198,17 @@ describe("call events from the BFF", () => {
     assert.equal(none.t.events.length + two.t.events.length, 0);
     assert.equal((await ingestCallEvent(PHONE, "", "bad", w.deps)).ok, false);
   });
+});
+
+describe("routing verification needs exactly one destination row (Codex review)", () => {
+  for (const count of [2, 5]) {
+    test(`${count} destination rows whose first matches: never 'verified' and never ready; twin: exactly 1 row is verified`, async () => {
+      const w = world(); await setUp(w);
+      assert.equal((await serviceView(WS_A, PHONE, w.deps)).states.routing, "verified");
+      w.t.destCount = count;
+      const v = await serviceView(WS_A, PHONE, w.deps);
+      assert.notEqual(v.states.routing, "verified");
+      assert.equal(v.states.ready, false);
+    });
+  }
 });

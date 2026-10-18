@@ -43,7 +43,10 @@ async function gather(ws: string, phone: string, deps: ServiceDeps): Promise<Fac
   let routing: Facts["routing"] = null; let cdrs: CdrFact[] = [];
   if (evidence?.magnus.ok) {
     const m = evidence.magnus;
-    routing = { didActive: !!m.did?.activated, destinationActive: !!m.destination?.activated, destinationTarget: normTarget(m.destination?.value) };
+    // Exactly ONE destination row, or routing is not verified: with duplicates or a conflicting second row the adapter shows only the first,
+    // which could otherwise read as the requested route (Codex review).
+    const single = m.destination?.count === 1;
+    routing = { didActive: !!m.did?.activated, destinationActive: single && !!m.destination?.activated, destinationTarget: single ? normTarget(m.destination?.value) : null };
     cdrs = m.lastCalls.map((c) => ({ answered: c.answered, billedSeconds: c.durationSec, startedAt: c.startedAt ?? "", calledNumberMatchesLine: true }));
   }
   const number = evidence?.meta.ok ? digits(evidence.meta.displayNumber) || null : null;
