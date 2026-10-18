@@ -26,6 +26,8 @@ export type ServiceDeps = {
 };
 
 const digits = (s: string | null | undefined) => (s ?? "").replace(/\D/g, "");
+/** The voice platform reports a SIP destination as "PJSIP/<ext>@<trunk>"; the catalog names it "<trunk>/<ext>". Compare in one form. */
+export const normTarget = (v: string | null | undefined) => { const m = /^PJSIP\/([^@]+)@(.+)$/.exec(v ?? ""); return m ? `${m[2]}/${m[1]}` : (v ?? null); };
 export const versionOf = (d: DestinationOption) => `${d.id}@${targetString(d)}`;
 
 type Facts = {
@@ -41,7 +43,7 @@ async function gather(ws: string, phone: string, deps: ServiceDeps): Promise<Fac
   let routing: Facts["routing"] = null; let cdrs: CdrFact[] = [];
   if (evidence?.magnus.ok) {
     const m = evidence.magnus;
-    routing = { didActive: !!m.did?.activated, destinationActive: !!m.destination?.activated, destinationTarget: m.destination?.value ?? null };
+    routing = { didActive: !!m.did?.activated, destinationActive: !!m.destination?.activated, destinationTarget: normTarget(m.destination?.value) };
     cdrs = m.lastCalls.map((c) => ({ answered: c.answered, billedSeconds: c.durationSec, startedAt: c.startedAt ?? "", calledNumberMatchesLine: true }));
   }
   const number = evidence?.meta.ok ? digits(evidence.meta.displayNumber) || null : null;
@@ -61,6 +63,8 @@ export type ServiceView = {
   current: { destinationId: string; label: string; version: string } | null;
   acceptance: { current: StoredAttestation[]; historical: Array<StoredAttestation & { why: string }> };
   missing: string[];
+  /** When the routing facts behind these states were read. "Ready" is a statement about the configuration verified at this time only. */
+  observedAt: string | null;
 };
 
 export async function serviceView(ws: string, phone: string, deps: ServiceDeps): Promise<ServiceView> {
@@ -75,7 +79,7 @@ export async function serviceView(ws: string, phone: string, deps: ServiceDeps):
     ...a, why: version && a.destinationVersion === version ? "routing is not currently verified for this destination" : "accepted for an earlier route; it is not proof for the current route",
   }));
   const selectable = (await selectableDestinations(catalog, ws, deps.agents)).map(({ id, label, kind }) => ({ id, label, kind }));
-  return { states, selectable, current: f.dest ? { destinationId: f.dest.id, label: f.dest.label, version: versionOf(f.dest) } : null, acceptance: { current, historical }, missing: states.acceptance === "not_applicable" ? [] : ev.missing };
+  return { states, selectable, current: f.dest ? { destinationId: f.dest.id, label: f.dest.label, version: versionOf(f.dest) } : null, acceptance: { current, historical }, missing: states.acceptance === "not_applicable" ? [] : ev.missing, observedAt: f.evidence?.observedAt ?? null };
 }
 
 export async function attach(ws: string, phone: string, destinationId: string, deps: ServiceDeps): Promise<AttachResult> {

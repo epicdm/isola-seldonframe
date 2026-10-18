@@ -10,9 +10,21 @@ import { isPhoneWhatsappEnabled } from "../exposure";
 import { getServiceDeps } from "../server";
 import { makeProvisionerClient, signBody } from "./provisioner-client";
 import { activeLinesOf, appendAcceptance, appendCallEvent, claimantsOf, connectionStatusOf, makeAgentDirectory, makeAttachLedger, readAcceptance, readCallEvents, readDestinationCatalog } from "./stores";
+import type { DestinationOption } from "./destinations";
 import type { ServiceDeps, StoredAttestation } from "./orchestrate";
 
 export const isServiceEnabled = (orgId: string | null | undefined) => isPhoneWhatsappEnabled(orgId, process.env.PHONE_SERVICE_ENABLED_ORGS);
+
+/**
+ * FIXED, operator-set destinations (PHONE_SERVICE_FIXED_DESTINATIONS_JSON): for the first live slice the one authorised PBX destination is configuration,
+ * not a customer-editable catalog. Each entry names the ONE workspace it belongs to; entries for other workspaces are never offered. Malformed config = none.
+ */
+export function fixedDestinations(workspaceId: string, raw = process.env.PHONE_SERVICE_FIXED_DESTINATIONS_JSON): DestinationOption[] {
+  try {
+    const list = JSON.parse(raw ?? "[]") as DestinationOption[];
+    return Array.isArray(list) ? list.filter((d) => d && d.workspaceId === workspaceId && d.status === "active" && typeof d.id === "string") : [];
+  } catch { return []; }
+}
 
 export function makeServiceDeps(): ServiceDeps | null {
   const baseUrl = (process.env.PHONE_PROVISIONER_URL ?? "").replace(/\/+$/, "");
@@ -24,7 +36,7 @@ export function makeServiceDeps(): ServiceDeps | null {
     connectionStatus: connectionStatusOf,
     claimants: claimantsOf,
     line: async (ws, phone) => (await activeLinesOf(ws)).find((l) => l.phoneNumberId === phone) ?? null,
-    catalog: readDestinationCatalog,
+    catalog: async (ws) => [...fixedDestinations(ws), ...(await readDestinationCatalog(ws))],
     agents: makeAgentDirectory(),
     ledger: makeAttachLedger(),
     evidence: async (line) => { const r = await base.provider({ wabaId: line.wabaId, phoneNumberId: line.phoneNumberId }); return r.kind === "evidence" ? r.evidence : null; },

@@ -44,7 +44,9 @@ const NEXT: Record<ServiceStates["next"], string> = {
   none: "Nothing left to do.",
 };
 
-export function ServiceStatesCard({ states }: { states: ServiceStates }) {
+const utc = (iso: string) => `${iso.slice(0, 16).replace("T", " ")} UTC`;
+
+export function ServiceStatesCard({ states, observedAt = null }: { states: ServiceStates; observedAt?: string | null }) {
   const rows = [
     ["Connection to Meta", TEXT.connection[states.connection]],
     ["Calling service setup", TEXT.setup[states.setup]],
@@ -53,7 +55,14 @@ export function ServiceStatesCard({ states }: { states: ServiceStates }) {
   ] as const;
   return (
     <section className="crm-card space-y-2 p-4" data-testid="service-states" aria-label="Calling service status">
-      <h2 className="text-lg font-semibold">{states.ready ? "Calling service is ready" : "Calling service is not ready yet"}</h2>
+      <h2 className="text-lg font-semibold">
+        {states.ready ? (observedAt ? `Calling service verified ready as of ${utc(observedAt)}` : "Calling service verified ready") : "Calling service is not ready yet"}
+      </h2>
+      {states.ready ? (
+        <p className="text-xs text-muted-foreground" data-testid="service-ready-scope">
+          This describes the configuration checked at that time. It is re-checked each time this page loads; it is not monitored continuously, and a route changed and changed back between two checks would not be noticed.
+        </p>
+      ) : null}
       <ul className="space-y-1 text-sm">
         {rows.map(([label, [text, tone]]) => (
           <li key={label} data-tone={tone}>

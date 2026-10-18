@@ -14,12 +14,14 @@ describe("<ServiceStatesCard>", () => {
     assert.match(html, /Connected to Meta/);
     assert.match(html, /Calling service not set up yet/);
     assert.match(html, /Calling service is not ready yet/);
-    assert.doesNotMatch(html, /Calling service is ready/);
+    assert.doesNotMatch(html, /verified ready/);
+    assert.doesNotMatch(html, /not monitored continuously/);
     assert.match(html, /Choose where calls are answered/);
   });
-  test("all four good: the only state that says ready (positive control)", () => {
-    const html = renderToString(<ServiceStatesCard states={deriveServiceStates({ connectionStatus: "active", ledger: attached, routing: routed, expectedTarget: "t/1", acceptance: "accepted" })} />);
-    assert.match(html, /Calling service is ready/);
+  test("all four good: the only state that says ready, and it says ready AS OF the stated time, not continuously (positive control)", () => {
+    const html = renderToString(<ServiceStatesCard observedAt="2026-10-18T05:21:00.000Z" states={deriveServiceStates({ connectionStatus: "active", ledger: attached, routing: routed, expectedTarget: "t/1", acceptance: "accepted" })} />);
+    assert.match(html, /verified ready as of 2026-10-18 05:21 UTC/);
+    assert.match(html, /not monitored continuously/);
     assert.match(html, /worked in both directions/);
   });
   test("four separate labelled rows are always present", () => {

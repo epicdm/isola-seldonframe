@@ -152,6 +152,17 @@ describe("attachService", () => {
     assert.deepEqual([!r2.ok && r2.code, h.calls.length], ["needs_review", before]);
   });
 
+  test("an UNEXPIRED provisioner lease (an earlier attempt still finishing) is reported as retry_pending, not as a failure; the later retry completes", async () => {
+    const h = harness(); const real = h.prov.ensureServiceAccount.bind(h.prov); let busy = true;
+    const prov = { ...h.prov, ensureServiceAccount: async (a: Parameters<Provisioner["ensureServiceAccount"]>[0]) => { if (busy) { busy = false; throw Object.assign(new Error("provisioner 409 busy"), { code: "busy" }); } return real(a); } } as Provisioner;
+    const r1 = await attachService({ workspaceId: WS_A, phoneNumberId: PHONE, number: "15550100100", destinationId: D_QUEUE.id, pre: pre() }, { ledger: h.led.ledger, prov, now: () => NOW });
+    assert.deepEqual([r1.ok, !r1.ok && r1.code, !r1.ok && r1.retriable], [false, "retry_pending", true]);
+    assert.match(!r1.ok ? r1.message : "", /has failed permanently/);
+    assert.deepEqual(counts(h), [0, 0, 0]);
+    const r2 = await attachService({ workspaceId: WS_A, phoneNumberId: PHONE, number: "15550100100", destinationId: D_QUEUE.id, pre: pre() }, { ledger: h.led.ledger, prov, now: () => NOW });
+    assert.equal(r2.ok, true); // twin: a genuine failure is still step_failed (tests above)
+  });
+
   test("read-back unavailable: step_failed (retriable), not 'attached'", async () => {
     const h = harness({ readBackThrows: true });
     const r = await run(h);

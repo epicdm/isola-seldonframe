@@ -57,7 +57,7 @@ export type Preconditions = {
 
 export type AttachRefusal =
   | "not_connected" | "number_not_yours" | "destination_not_allowed" | "destination_change_requires_explicit_action"
-  | "attach_in_progress" | "step_failed" | "needs_review" | "bad_input";
+  | "attach_in_progress" | "retry_pending" | "step_failed" | "needs_review" | "bad_input";
 export type AttachResult =
   | { ok: true; resumed: boolean; refs: Partial<Record<AttachStepName, string>> }
   | { ok: false; code: AttachRefusal; step?: AttachStepName; retriable: boolean; message: string };
@@ -71,6 +71,7 @@ const MESSAGES: Record<AttachRefusal, string> = {
   destination_not_allowed: "That destination is not available to this workspace.",
   destination_change_requires_explicit_action: "This number already has a destination. Changing it is a separate, explicit action.",
   attach_in_progress: "Setup for this number is already running. Nothing was started twice.",
+  retry_pending: "An earlier setup attempt is still being finished. Nothing has failed permanently and nothing was duplicated; try again in about a minute.",
   step_failed: "Setup stopped part-way. Nothing was duplicated; you can retry and it will continue from where it stopped.",
   needs_review: "Setup finished its steps but the result did not match what was requested. Nothing was undone or deleted; EPIC will check it.",
   bad_input: "The request was incomplete.",
@@ -114,6 +115,12 @@ export async function attachService(
       await save(step, { done: true, ref, at: deps.now().toISOString() });
       return null;
     } catch (e) {
+      // The provisioner reports "busy" while an earlier attempt still holds its lease (e.g. a crashed process whose lease has not expired):
+      // that is a PENDING retry, not a failure. Nothing was written by this call.
+      if ((e as { code?: unknown } | null)?.code === "busy") {
+        await deps.ledger.finish({ workspaceId: p.workspaceId, phoneNumberId: p.phoneNumberId, status: "step_failed" }).catch(() => undefined);
+        return refuse("retry_pending", true, step);
+      }
       // The call MAY have happened. The retry uses the same key, so it cannot duplicate. Only the error class is kept.
       await save(step, { done: false, error: e instanceof Error ? e.name : "error", at: deps.now().toISOString() }).catch(() => undefined);
       await deps.ledger.finish({ workspaceId: p.workspaceId, phoneNumberId: p.phoneNumberId, status: "step_failed" }).catch(() => undefined);

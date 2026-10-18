@@ -3,6 +3,9 @@
 import crypto from "node:crypto";
 import http from "node:http";
 
+import fs from "node:fs";
+
+import { magnusApiPort } from "./magnus-api-port.mjs";
 import { httpPort } from "./magnus-http-port.mjs";
 import { makeProvisioner, ProvisionerError } from "./provisioner.mjs";
 import { openStore } from "./store.mjs";
@@ -43,7 +46,10 @@ if (process.argv[1] && process.argv[1].endsWith("server.mjs")) {
   const crashOnce = process.env.FAULT_CRASH_AFTER_WRITE === "1";
   const store = openStore(process.env.PROV_DB || "/data/prov.sqlite");
   const prov = makeProvisioner({
-    store, port: httpPort(need("UPSTREAM_URL")),
+    // UPSTREAM_KIND=magnus-api selects the production-shaped port; its key and secret are read from FILES (mounted secrets), never from env values.
+    store, port: process.env.UPSTREAM_KIND === "magnus-api"
+      ? magnusApiPort({ baseUrl: need("MAGNUS_API_URL"), key: fs.readFileSync(need("MAGNUS_API_KEY_FILE"), "utf8").trim(), secret: fs.readFileSync(need("MAGNUS_API_SECRET_FILE"), "utf8").trim(), serviceAccount: JSON.parse(need("SERVICE_ACCOUNT_JSON")) })
+      : httpPort(need("UPSTREAM_URL")),
     leaseMs: Number(process.env.LEASE_MS || 30_000), callTimeoutMs: Number(process.env.CALL_TIMEOUT_MS || 5_000),
     hooks: { afterUpstreamWrite: async () => { if (crashOnce) { console.error("FAULT: crashing after an upstream write"); process.exit(1); } } },
   });
