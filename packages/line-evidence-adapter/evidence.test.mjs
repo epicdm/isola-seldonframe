@@ -115,6 +115,30 @@ test("Magnus failure is reported, Meta facts survive; no DID row = did:null (not
   assert.equal(none.ok, true); assert.equal(none.did, null); assert.equal(none.destination, null);
 });
 
+test("ingress alias: the Magnus DID and call lookups use wa<number>; the Meta identity stays the number (unaliased twin unchanged)", async () => {
+  const aliased = world();
+  const ev = await collectLineEvidence({ ...cfg, magnusDidAliases: { [DID]: `wa${DID}` } }, { wabaId: WABA, phoneNumberId: PNID }, aliased.f);
+  const looked = aliased.calls.filter((c) => /\/(did|call)\/read$/.test(c.url)).map((c) => decodeURIComponent(c.body));
+  assert.ok(looked.length >= 2 && looked.every((b) => b.includes(`"value":"wa${DID}"`)), "both DID and CDR lookups used the alias");
+  assert.equal(ev.magnus.ingressKey, `wa${DID}`); assert.equal(ev.meta.displayNumber, "+1 555-010-0001");
+  const plain = world();
+  const ev2 = await collectLineEvidence(cfg, { wabaId: WABA, phoneNumberId: PNID }, plain.f);
+  const looked2 = plain.calls.filter((c) => /\/(did|call)\/read$/.test(c.url)).map((c) => decodeURIComponent(c.body));
+  assert.ok(looked2.length >= 2 && looked2.every((b) => b.includes(`"value":"${DID}"`)), "control: no alias = the number itself");
+  assert.equal(ev2.magnus.ingressKey, undefined);
+});
+
+test("ingress alias can never point a number at ANOTHER number's records", async () => {
+  const w = world();
+  const ev = await collectLineEvidence({ ...cfg, magnusDidAliases: { [DID]: "wa15550109999" } }, { wabaId: WABA, phoneNumberId: PNID }, w.f);
+  assert.equal(ev.magnus.ok, false); assert.match(ev.magnus.error, /does not belong to this number/);
+  assert.equal(w.calls.filter((c) => c.url.startsWith(cfg.magnusUrl)).length, 0, "nothing read under a foreign key");
+  assert.throws(() => configFromEnv({ ...env, MAGNUS_DID_ALIASES_JSON: JSON.stringify({ [DID]: "wa15550109999" }) }), /the same digits/);
+  assert.throws(() => configFromEnv({ ...env, MAGNUS_DID_ALIASES_JSON: JSON.stringify({ [DID]: "15550109999" }) }), /the same digits/);
+  assert.throws(() => configFromEnv({ ...env, MAGNUS_DID_ALIASES_JSON: "{not json" }), /not JSON/);
+  assert.deepEqual(configFromEnv({ ...env, MAGNUS_DID_ALIASES_JSON: JSON.stringify({ [DID]: `wa${DID}` }) }).magnusDidAliases, { [DID]: `wa${DID}` }); // positive twin
+});
+
 test("invalid ids are rejected before any upstream call", async () => {
   const w = world();
   await assert.rejects(collectLineEvidence(cfg, { wabaId: "x; drop", phoneNumberId: PNID }, w.f), /invalid ids/);

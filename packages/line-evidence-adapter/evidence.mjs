@@ -136,10 +136,16 @@ export function restSource(cfg, fetchImpl = fetch) {
   };
 }
 
-export async function readMagnusFrom(source, did) {
+// A WhatsApp number that is not itself a Magnus DID (e.g. a mobile) is routed on the voice platform through a DID row
+// keyed "wa<number>", because Magnus treats any dialed number equal to a DID row as a call to that DID. Only that exact
+// form is accepted, so an alias can never point one number at another number's records.
+export const ingressKeyOk = (did, key) => key === did || key === `wa${did}`;
+
+export async function readMagnusFrom(source, did, key = did) {
   if (!isId(did)) return { ok: false, error: "no display number to look up (Meta read failed)" };
+  if (!ingressKeyOk(did, key)) return { ok: false, error: "voice-platform key does not belong to this number" };
   try {
-    const didRows = await source.did(did);
+    const didRows = await source.did(key);
     if (didRows.length > 1) throw new Error(`ambiguous: ${didRows.length} DID rows match`);
     const row = didRows[0] ?? null;
     let destination = null;
@@ -153,9 +159,10 @@ export async function readMagnusFrom(source, did) {
         count: destRows.length,
       } : null;
     }
-    const callRows = await source.calls(did);
+    const callRows = await source.calls(key);
     return {
       ok: true,
+      ...(key !== did ? { ingressKey: key } : {}),
       did: row ? { activated: String(row.activated) === "1", reserved: String(row.reserved) === "1" } : null,
       destination,
       lastCalls: callRows.map((c) => ({
@@ -177,6 +184,7 @@ export async function collectLineEvidence(cfg, { wabaId, phoneNumberId }, fetchI
   if (!isId(wabaId) || !isId(phoneNumberId)) throw Object.assign(new Error("invalid ids"), { code: "bad_request" });
   const { meta, calling } = await readMeta(cfg, wabaId, phoneNumberId, fetchImpl);
   const did = meta?.ok ? String(meta.displayNumber ?? "").replace(/\D/g, "") : "";
-  const magnus = cfg.magnusSource ? await readMagnusFrom(cfg.magnusSource, did) : await readMagnus(cfg, did, fetchImpl);
+  const key = cfg.magnusDidAliases?.[did] ?? did;
+  const magnus = cfg.magnusSource ? await readMagnusFrom(cfg.magnusSource, did, key) : await readMagnusFrom(restSource(cfg, fetchImpl), did, key);
   return { schema: SCHEMA, wabaId, phoneNumberId, observedAt: now().toISOString(), meta, calling, magnus };
 }

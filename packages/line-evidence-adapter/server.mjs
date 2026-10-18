@@ -2,7 +2,8 @@
 //   GET /v1/lines/:phoneNumberId?waba=<wabaId>     -> line-evidence/v1
 //   GET /healthz                                   -> {ok:true}   (no upstream calls)
 // Env (names only; values come from the runtime secret mount): ADAPTER_TOKEN (>= 24 chars), META_WA_TOKEN, MAGNUS_URL,
-// MAGNUS_API_KEY, MAGNUS_API_SECRET; optional META_API_BASE, PORT, BIND, EVIDENCE_CACHE_SECONDS, EVIDENCE_RPM.
+// MAGNUS_API_KEY, MAGNUS_API_SECRET; optional META_API_BASE, PORT, BIND, EVIDENCE_CACHE_SECONDS, EVIDENCE_RPM,
+// MAGNUS_DID_ALIASES_JSON ({"<number>":"wa<number>"} for WhatsApp numbers routed through a prefixed Magnus DID row).
 import http from "node:http";
 import crypto from "node:crypto";
 import { collectLineEvidence, isId } from "./evidence.mjs";
@@ -18,7 +19,16 @@ export function configFromEnv(env = process.env) {
   if (env.ADAPTER_TOKEN.length < 24) throw new Error("refusing to start: ADAPTER_TOKEN shorter than 24 characters");
   if (mode === "sql" && (env.MAGNUS_API_KEY || env.MAGNUS_API_SECRET)) throw new Error("refusing to start: a Magnus API key is present in sql mode (a write-capable credential must not be in this service)");
   if (mode === "sql" && /^(root|mbillingUser)$/i.test(env.MAGNUS_DB_USER)) throw new Error("refusing to start: MAGNUS_DB_USER must be the dedicated SELECT-only account");
+  // Optional {"<number>":"wa<number>"} for numbers whose WhatsApp-call ingress uses a prefixed Magnus DID row. Malformed = refuse.
+  let magnusDidAliases;
+  if (env.MAGNUS_DID_ALIASES_JSON) {
+    try { magnusDidAliases = JSON.parse(env.MAGNUS_DID_ALIASES_JSON); } catch { throw new Error("refusing to start: MAGNUS_DID_ALIASES_JSON is not JSON"); }
+    const ok = magnusDidAliases && typeof magnusDidAliases === "object" && !Array.isArray(magnusDidAliases)
+      && Object.entries(magnusDidAliases).every(([n, k]) => isId(n) && k === `wa${n}`);
+    if (!ok) throw new Error("refusing to start: MAGNUS_DID_ALIASES_JSON entries must be \"<digits>\": \"wa<the same digits>\"");
+  }
   return {
+    magnusDidAliases,
     adapterToken: env.ADAPTER_TOKEN,
     metaToken: env.META_WA_TOKEN,
     metaBase: (env.META_API_BASE || "https://graph.facebook.com/v25.0").replace(/\/$/, ""),
