@@ -57,9 +57,11 @@ describe("navigation entry follows the same flag", () => {
 
 describe("the nav entry and the page are gated by the SAME function on the SAME field", () => {
   const root = process.cwd();
-  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\s\/\/ .*$/gm, "");
-  const layout = strip(readFileSync(join(root, "src/app/(dashboard)/layout.tsx"), "utf8"));
-  const page = strip(readFileSync(join(root, "src/app/(dashboard)/phone-whatsapp/page.tsx"), "utf8"));
+  // Whole-line comments are dropped so a commented-out call cannot satisfy the check. Block-comment stripping is deliberately NOT used on the
+  // layout: it is a large file whose string literals contain "/*" and would swallow real code.
+  const noLineComments = (s: string) => s.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+  const layout = noLineComments(readFileSync(join(root, "src/app/(dashboard)/layout.tsx"), "utf8"));
+  const page = noLineComments(readFileSync(join(root, "src/app/(dashboard)/phone-whatsapp/page.tsx"), "utf8"));
   test("layout and page both call isPhoneWhatsappEnabled(orgId, process.env.PHONE_WHATSAPP_ENABLED_ORGS)", () => {
     const call = /isPhoneWhatsappEnabled\(\s*orgId\s*,\s*process\.env\.PHONE_WHATSAPP_ENABLED_ORGS\s*\)/;
     assert.match(layout, call);

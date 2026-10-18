@@ -78,6 +78,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
     const { makeMysqlQuery, sqlSource } = await import("./magnus-sql.mjs");
     cfg.magnusSource = sqlSource(await makeMysqlQuery(cfg.magnusDb));
   }
+  for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => process.exit(0)); // as PID 1 a container would otherwise ignore the stop signal
   http.createServer(makeHandler(cfg)).listen(Number(process.env.PORT ?? 8787), process.env.BIND ?? "127.0.0.1", () =>
     console.log(`line-evidence adapter listening (read-only); cache ${cfg.cacheSeconds}s, ${cfg.rpm} rpm`));
 }

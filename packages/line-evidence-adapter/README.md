@@ -33,6 +33,12 @@ Tested in isolation (scratch MariaDB with TLS; throwaway sshd): the integration 
 engine refusing writes, DDL, file output, privilege changes, other tables, other columns, `SELECT *` and non-TLS connections, each with a
 positive control; an over-broad grant makes it fail. Nothing here creates an account or installs a key: staff do that from the release packet.
 
+Container entrypoint (`deploy/entrypoint.sh`): reads these secrets from files under `/run/secrets` (`lev_adapter_token`, `lev_meta_token`, `lev_db_password`,
+`lev_ssh_key`, `lev_known_hosts`), refuses to start if any is missing or if the known-hosts pin is empty, opens the restricted SSH forward bound to the container's own
+loopback (`StrictHostKeyChecking=yes`, key-only, reconnect loop), then runs the adapter. Plain settings: `TUNNEL_HOST` (required), `TUNNEL_PORT` (22), `TUNNEL_USER` (levfwd),
+`MAGNUS_DB_USER` (line_evidence_ro). The server exits on SIGTERM, so a container stop is clean even without an init process.
+Tested end to end in isolation: pinned forward up and reading through it, a wrong pin never brings the forward up, missing secrets exit 78, no write-capable key in the environment.
+
 Container: `deploy/Dockerfile` (build context = this directory). The one runtime dependency, `mysql2`, is pinned exactly with a lockfile in `deploy/`,
 which is deliberately outside `packages/*` so the adapter is not a pnpm workspace member.
 
