@@ -1,0 +1,67 @@
+// Presentational only (no data access, no actions): the four SEPARATE states of a number's calling service. "Connected to Meta" is one row among four and
+// is never worded as "ready". Not yet wired into the page: wiring is the next increment, behind the same exposure flags.
+import type { ServiceStates } from "@/lib/phone-whatsapp/service/states";
+
+const TEXT = {
+  connection: {
+    not_connected: ["Not connected to Meta", "attention"],
+    in_progress: ["Connection not finished", "attention"],
+    needs_review: ["Connection needs EPIC to check it", "attention"],
+    connected: ["Connected to Meta", "ok"],
+  },
+  setup: {
+    not_started: ["Calling service not set up yet", "attention"],
+    in_progress: ["Calling service setup is running", "attention"],
+    step_failed: ["Calling service setup stopped part-way; you can retry", "attention"],
+    needs_review: ["Calling service setup needs EPIC to check it", "attention"],
+    set_up: ["Calling service account and destination set up", "ok"],
+  },
+  routing: {
+    unknown: ["Routing could not be checked right now", "unknown"],
+    not_routed: ["Calls are not being sent anywhere yet", "attention"],
+    routed_other_destination: ["Calls go to a different destination than the one you chose", "attention"],
+    verified: ["Calls are routed to your chosen destination", "ok"],
+  },
+  acceptance: {
+    not_applicable: ["Acceptance call comes after setup and routing", "unknown"],
+    not_recorded: ["No acceptance call yet", "attention"],
+    routing_not_verified: ["Routing must be verified before an acceptance call", "attention"],
+    call_seen_unconfirmed: ["A call was seen; an admin must confirm two-way audio", "attention"],
+    failed: ["The last acceptance call did not work; place another", "attention"],
+    accepted: ["An acceptance call worked in both directions", "ok"],
+  },
+} as const;
+
+const NEXT: Record<ServiceStates["next"], string> = {
+  connect: "Connect your WhatsApp number.",
+  resolve_connection: "Finish or review the connection first.",
+  choose_destination_and_set_up: "Choose where calls are answered, then set up the calling service.",
+  retry_setup: "Retry the setup; it continues from where it stopped.",
+  staff_review_setup: "EPIC will check the setup; nothing has been undone.",
+  wait_for_routing: "Waiting for routing to show your destination.",
+  make_acceptance_call: "Place an acceptance call to the number.",
+  confirm_acceptance: "Confirm that the call had audio in both directions.",
+  none: "Nothing left to do.",
+};
+
+export function ServiceStatesCard({ states }: { states: ServiceStates }) {
+  const rows = [
+    ["Connection to Meta", TEXT.connection[states.connection]],
+    ["Calling service setup", TEXT.setup[states.setup]],
+    ["Routing", TEXT.routing[states.routing]],
+    ["Acceptance call", TEXT.acceptance[states.acceptance]],
+  ] as const;
+  return (
+    <section className="crm-card space-y-2 p-4" data-testid="service-states" aria-label="Calling service status">
+      <h2 className="text-lg font-semibold">{states.ready ? "Calling service is ready" : "Calling service is not ready yet"}</h2>
+      <ul className="space-y-1 text-sm">
+        {rows.map(([label, [text, tone]]) => (
+          <li key={label} data-tone={tone}>
+            <span className="font-medium">{label}:</span> {text}
+          </li>
+        ))}
+      </ul>
+      <p className="text-sm text-muted-foreground" data-testid="service-next">Next: {NEXT[states.next]}</p>
+    </section>
+  );
+}
