@@ -78,8 +78,8 @@ async function append(workspaceId: string, key: string, phone: string, item: unk
     update organizations set settings = jsonb_set(
       jsonb_set(${ensurePw}, ARRAY['phoneWhatsapp',${key}]::text[], coalesce(settings #> ARRAY['phoneWhatsapp',${key}], '{}'::jsonb), true),
       ARRAY['phoneWhatsapp',${key},${phone}]::text[],
-      (select coalesce(jsonb_agg(e), '[]'::jsonb) from (
-         select e from jsonb_array_elements(coalesce(settings #> ARRAY['phoneWhatsapp',${key},${phone}], '[]'::jsonb) || ${JSON.stringify([item])}::jsonb) with ordinality as t(e, n)
+      (select coalesce(jsonb_agg(e order by n), '[]'::jsonb) from (
+         select e, n from jsonb_array_elements(coalesce(settings #> ARRAY['phoneWhatsapp',${key},${phone}], '[]'::jsonb) || ${JSON.stringify([item])}::jsonb) with ordinality as t(e, n)
          order by n desc limit ${cap}) s), true)
     where id = ${workspaceId}::uuid`);
 }

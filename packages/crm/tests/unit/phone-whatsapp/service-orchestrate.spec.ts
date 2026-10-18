@@ -118,6 +118,15 @@ describe("acceptance capture", () => {
     assert.equal(w.t.accept.length, 0);
     assert.equal((await recordAcceptance(WS_A, PHONE, admin, true, w.deps)).ok, true);
   });
+  test("the stored evidence names the NEWEST call that has both a Meta event and a matching answered record (an older or unpaired call is not used)", async () => {
+    const w = world(); await setUp(w);
+    callAt(w, new Date(w.t.now.getTime() + 5_000).toISOString()); // older, paired
+    w.t.events.push({ callId: "unpaired-event", phoneNumberId: PHONE, at: new Date(w.t.now.getTime() + 500_000).toISOString() }); // newest event, no record
+    callAt(w, new Date(w.t.now.getTime() + 100_000).toISOString()); // newer, paired
+    w.t.now = new Date(w.t.now.getTime() + 900_000);
+    assert.equal((await recordAcceptance(WS_A, PHONE, admin, true, w.deps)).ok, true);
+    assert.equal(w.t.accept[0].evidence.callId, "call-3");
+  });
   test("no call evidence = nothing recorded: the statement alone is refused and says what is missing", async () => {
     const w = world(); await setUp(w);
     const r = await recordAcceptance(WS_A, PHONE, admin, true, w.deps);

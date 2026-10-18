@@ -1,7 +1,7 @@
 // The service increment's use cases, over injected dependencies (so they are tested without a database). Every function receives the workspace id and actor
 // FROM THE SERVER SESSION (or, for service-to-service events, derives the workspace from the number's verified binding); nothing here reads a workspace id from a
 // request body. The four states are computed separately and never collapsed.
-import { evaluateAcceptance, type Attestation, type CdrFact, type MetaCallEvent, type RoutingFact } from "./acceptance";
+import { evaluateAcceptance, pairedCalls, type Attestation, type CdrFact, type MetaCallEvent, type RoutingFact } from "./acceptance";
 import { attachService, targetString, type AttachLedger, type AttachLedgerRecord, type AttachResult, type Provisioner } from "./attach";
 import { selectableDestinations, type AgentDirectory, type DestinationOption } from "./destinations";
 import { deriveServiceStates, type ServiceStates } from "./states";
@@ -100,11 +100,11 @@ export async function recordAcceptance(ws: string, phone: string, actor: { userI
   const events = await deps.callEvents(ws, phone);
   const now = deps.now().toISOString();
   const candidate: Attestation = { userId: actor.userId, role: actor.role, workspaceId: ws, at: now, twoWayAudio, destinationVersion: versionOf(f.dest) };
-  const r = evaluateAcceptance(acceptanceInput(ws, phone, f, events, [candidate]));
+  const input = acceptanceInput(ws, phone, f, events, [candidate]);
+  const r = evaluateAcceptance(input);
   if (r.state !== "accepted" && r.state !== "failed") return { ok: false, code: "evidence_missing", missing: r.missing };
   // The statement is stored WITH the evidence it rests on, so it can be explained later even after the route changes.
-  const e = events.filter((x) => x.phoneNumberId === phone).at(-1)!;
-  const cdr = f.cdrs.filter((c) => c.answered).at(-1)!;
+  const { event: e, cdr } = pairedCalls(input).at(-1)!; // the newest call that has BOTH a Meta event and a matching answered record
   await deps.appendAcceptance(ws, phone, { ...candidate, evidence: { callId: e.callId, cdrStartedAt: cdr.startedAt, billedSeconds: cdr.billedSeconds, routingVerifiedAt: f.routingVerifiedAt!, routedTarget: f.routing!.destinationTarget! } });
   return { ok: true, state: r.state };
 }

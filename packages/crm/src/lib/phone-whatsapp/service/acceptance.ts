@@ -32,6 +32,18 @@ export type AcceptanceResult = { state: AcceptanceState; missing: string[] };
 
 const ms = (iso: string) => new Date(iso).getTime();
 
+/** Every Meta call event (after routing was verified) that has an answered, long-enough call record for the same line inside the match window; newest last. */
+export function pairedCalls(i: AcceptanceInput): Array<{ event: MetaCallEvent; cdr: CdrFact }> {
+  if (!i.routing) return [];
+  const routedAt = ms(i.routing.observedAt);
+  const out: Array<{ event: MetaCallEvent; cdr: CdrFact }> = [];
+  for (const e of i.metaEvents.filter((x) => x.phoneNumberId === i.phoneNumberId && ms(x.at) >= routedAt).sort((a, b) => ms(a.at) - ms(b.at))) {
+    const cdr = i.cdrs.find((c) => c.answered && c.calledNumberMatchesLine && c.billedSeconds >= MIN_BILLED_SECONDS && Math.abs(ms(c.startedAt) - ms(e.at)) <= MATCH_WINDOW_MS);
+    if (cdr) out.push({ event: e, cdr });
+  }
+  return out;
+}
+
 export function evaluateAcceptance(i: AcceptanceInput): AcceptanceResult {
   const r = i.routing;
   if (!r || !r.didActive || !r.destinationActive || r.destinationTarget !== i.expectedTarget) {
