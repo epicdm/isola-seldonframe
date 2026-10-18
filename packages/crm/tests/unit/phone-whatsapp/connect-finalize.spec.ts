@@ -30,8 +30,9 @@ type Over = {
 function harness(over: Over = {}) {
   const attempts = new Map<string, { orgId: string; userId: string; expiresAt: Date; consent: Consent }>();
   const lines: Array<{ orgId: string; phoneNumberId: string; wabaId: string; label: string | null }> = [];
-  const conns = new Map<string, { orgId: string; status: ConnectionStatus; wabaId: string; hasPin: boolean; consent?: Consent; tokenEnc?: string; pinEnc?: string; reason?: string }>();
+  const conns = new Map<string, { orgId: string; status: ConnectionStatus; wabaId: string; hasPin: boolean; consent?: Consent; tokenEnc?: string; pinEnc?: string; reason?: string; attemptId?: string }>();
   const calls: string[] = [];
+  const registeredPins: string[] = [];
   const cfg = { ...over };
   const k = (org: string, phone: string) => `${org}/${phone}`;
   const store: ConnectStore = {
@@ -52,9 +53,14 @@ function harness(over: Over = {}) {
     async savePending(a) {
       const key = k(a.orgId, a.phoneNumberId); const c = conns.get(key);
       conns.set(key, {
-        orgId: a.orgId, wabaId: a.wabaId, consent: a.consent, tokenEnc: a.tokenEnc, pinEnc: a.pinEnc ?? c?.pinEnc, hasPin: !!(a.pinEnc ?? c?.pinEnc),
+        orgId: a.orgId, wabaId: a.wabaId, consent: a.consent, tokenEnc: a.tokenEnc, pinEnc: a.pinEnc ?? c?.pinEnc, hasPin: !!(a.pinEnc ?? c?.pinEnc), attemptId: a.attemptId,
         status: c && (c.status === "registered" || c.status === "active") ? c.status : "pending",
       });
+    },
+    async claimRegistering(a) {
+      const c = conns.get(k(a.orgId, a.phoneNumberId));
+      if (!c || c.status !== "pending" || c.attemptId !== a.attemptId) return false;
+      c.status = "registering"; return true;
     },
     async setStatus(a) {
       if (a.status === "registered" && cfg.failSetRegistered) throw new Error("db");
@@ -74,8 +80,8 @@ function harness(over: Over = {}) {
       async listWabaPhones() { calls.push("list"); return over.phones ?? [{ id: PHONE, displayNumber: "+1 555 0100", verifiedName: "Test Co", platformType: "CLOUD_API", isOnBizApp: false }]; },
     },
     async exchangeCode() { calls.push("exchange"); if (cfg.exchangeFails) throw new Error("x"); return TOKEN; },
-    async register() {
-      calls.push("register");
+    async register(_t: string, _p: string, pin: string) {
+      calls.push("register"); registeredPins.push(pin);
       if (cfg.registerFails === "definite") throw new Definite("4xx");
       if (cfg.registerFails === "unknown") throw new Error("timeout");
     },
@@ -87,7 +93,7 @@ function harness(over: Over = {}) {
     now: () => clock,
   };
   const registers = () => calls.filter((c) => c === "register").length;
-  return { deps, lines, conns, calls, attempts, cfg, registers, advance: (ms: number) => { clock = new Date(clock.getTime() + ms); } };
+  return { deps, lines, conns, calls, attempts, cfg, registers, registeredPins, advance: (ms: number) => { clock = new Date(clock.getTime() + ms); } };
 }
 
 async function begin(h: ReturnType<typeof harness>, orgId = A, userId = "user-1") {
@@ -276,4 +282,22 @@ describe("partial completion: registered at Meta, not (or not provably) bound he
     const r = await finalizeConnect(claim(await begin(h)), h.deps);
     assert.deepEqual([r.ok, h.registers()], [true, 1]);
   });
+});
+
+test("two concurrent attempts for the same number (two tabs): exactly ONE registration, and the PIN Meta received is the stored PIN (Codex review)", async () => {
+  const h = harness();
+  const [n1, n2] = [await begin(h), await begin(h)];
+  const rs = await Promise.all([finalizeConnect(claim(n1), h.deps), finalizeConnect(claim(n2), h.deps)]);
+  const codes = rs.map(code).sort();
+  assert.equal(h.registers(), 1, `registers=${h.registers()} codes=${codes}`);
+  assert.deepEqual(codes, ["attempt_superseded", "ok"]);
+  const c = [...h.conns.values()][0];
+  assert.equal(c.pinEnc, h.deps.encrypt(h.registeredPins[0]));
+  assert.equal(c.status, "active");
+});
+
+test("twin: one attempt alone still registers once and connects", async () => {
+  const h = harness();
+  assert.equal(code(await finalizeConnect(claim(await begin(h)), h.deps)), "ok");
+  assert.equal(h.registers(), 1);
 });

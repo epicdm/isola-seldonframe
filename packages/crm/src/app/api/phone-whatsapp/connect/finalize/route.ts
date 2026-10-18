@@ -7,7 +7,7 @@ import { makeFinalizeDeps } from "@/lib/phone-whatsapp/connect/server-wiring";
 export const dynamic = "force-dynamic";
 
 const STATUS: Record<string, number> = {
-  bad_input: 400, attempt_invalid: 409, already_bound: 409,
+  bad_input: 400, attempt_invalid: 409, attempt_superseded: 409, already_bound: 409, platform_unverified: 422,
   token_invalid: 422, wrong_app: 422, missing_scope: 422, waba_not_authorised: 422, phone_not_on_waba: 422,
   coexistence_not_supported_here: 422, not_cloud_api: 422, protected_asset: 422, epic_owned_waba: 422,
   meta_unavailable: 502, register_failed: 502, persist_failed: 500, forbidden: 403, needs_review: 409,

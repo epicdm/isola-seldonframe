@@ -69,6 +69,8 @@ describe("verifyClaimedAssets", () => {
     ["coexistence via is_on_biz_app", { phones: [{ ...goodPhone, isOnBizApp: true }] }, {}, "coexistence_not_supported_here"],
     ["coexistence via platform_type", { phones: [{ ...goodPhone, platformType: "NOT_APPLICABLE_BUSINESS_APP", isOnBizApp: null }] }, {}, "coexistence_not_supported_here"],
     ["not_cloud_api", { phones: [{ ...goodPhone, platformType: "ON_PREMISE" }] }, {}, "not_cloud_api"],
+    ["platform missing (Codex review: fail closed)", { phones: [{ ...goodPhone, platformType: null }] }, {}, "platform_unverified"],
+    ["platform unrecognised", { phones: [{ ...goodPhone, platformType: "SOMETHING_NEW" }] }, {}, "not_cloud_api"],
     ["already_bound to another workspace", { owners: [OTHER] }, {}, "already_bound"],
     ["already_bound: two claimants even if one is us", { owners: [ORG, OTHER] }, {}, "already_bound"],
     ["meta_unavailable on debug_token", { throwDebug: true }, {}, "meta_unavailable"],
@@ -103,4 +105,11 @@ describe("verifyClaimedAssets", () => {
     await verifyClaimedAssets(input(), d);
     assert.equal(calls, 1); // positive control: the counter does count
   });
+});
+
+test("accepts NOT_APPLICABLE (on the WABA, not yet registered: this check runs before registration) when not on the Business app; twin: CLOUD_API", async () => {
+  for (const platformType of ["NOT_APPLICABLE", "CLOUD_API"]) {
+    const r = await verifyClaimedAssets(input({}), deps({ phones: [{ ...goodPhone, platformType, isOnBizApp: false }] }));
+    assert.equal(r.ok, true, platformType);
+  }
 });

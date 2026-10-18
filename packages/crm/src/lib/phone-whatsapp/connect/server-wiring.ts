@@ -81,7 +81,7 @@ export function makeDbConnectStore(): ConnectStore {
     },
     async savePending(a) {
       const secret = JSON.stringify({ wabaId: a.wabaId, tokenEnc: a.tokenEnc, ...(a.pinEnc ? { pinEnc: a.pinEnc } : {}) });
-      const conn = JSON.stringify({ wabaId: a.wabaId, consent: a.consent, updatedAt: new Date().toISOString() });
+      const conn = JSON.stringify({ wabaId: a.wabaId, consent: a.consent, attemptId: a.attemptId, updatedAt: new Date().toISOString() });
       const key = a.phoneNumberId;
       await db.execute(sql`
         update organizations set
@@ -96,6 +96,18 @@ export function makeDbConnectStore(): ConnectStore {
               || jsonb_build_object('status', case when settings #>> ARRAY['phoneWhatsapp','connections',${key},'status'] in ('registered','active')
                                                    then settings #>> ARRAY['phoneWhatsapp','connections',${key},'status'] else 'pending' end)), true)
         where id = ${a.orgId}::uuid`);
+    },
+    async claimRegistering(a) {
+      const conn = JSON.stringify({ status: "registering", updatedAt: new Date().toISOString() });
+      const res = await db.execute(sql`
+        update organizations set settings = jsonb_set(settings, '{phoneWhatsapp,connections}',
+          settings #> '{phoneWhatsapp,connections}' || jsonb_build_object(${a.phoneNumberId}::text,
+            (settings #> ARRAY['phoneWhatsapp','connections',${a.phoneNumberId}]) || ${conn}::jsonb), true)
+        where id = ${a.orgId}::uuid
+          and settings #>> ARRAY['phoneWhatsapp','connections',${a.phoneNumberId},'status'] = 'pending'
+          and settings #>> ARRAY['phoneWhatsapp','connections',${a.phoneNumberId},'attemptId'] = ${a.attemptId}
+        returning id`);
+      return rowsOf(res).length === 1;
     },
     async setStatus(a) {
       const conn = JSON.stringify({ status: a.status, ...(a.reason ? { reason: a.reason } : {}), updatedAt: new Date().toISOString() });

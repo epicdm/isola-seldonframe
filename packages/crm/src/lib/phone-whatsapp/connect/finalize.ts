@@ -24,7 +24,7 @@ export type Consent = { termsVersion: string; at: string; userId: string };
 export type ConnectionStatus = "pending" | "registering" | "registered" | "active" | "failed";
 export type ConnectionRecord = { status: ConnectionStatus; wabaId: string; hasPin: boolean };
 
-export type FinalizeCode = RefusalCode | "attempt_invalid" | "register_failed" | "persist_failed" | "forbidden" | "needs_review";
+export type FinalizeCode = RefusalCode | "attempt_invalid" | "attempt_superseded" | "register_failed" | "persist_failed" | "forbidden" | "needs_review";
 export type StartResult = { ok: true; nonce: string; expiresAt: string } | { ok: false; code: "forbidden" | "persist_failed" };
 export type FinalizeResult =
   | { ok: true; displayNumber: string | null; phoneNumberId: string; resumed: boolean }
@@ -39,7 +39,9 @@ export interface ConnectStore {
   claimants(phoneNumberId: string): Promise<string[]>;
   getConnection(a: { orgId: string; phoneNumberId: string }): Promise<ConnectionRecord | null>;
   /** Saves the encrypted token (always) and PIN (only when pinEnc is given) with the consent record; status becomes pending. Never lowers registered/active. */
-  savePending(a: { orgId: string; wabaId: string; phoneNumberId: string; tokenEnc: string; pinEnc: string | null; consent: Consent }): Promise<void>;
+  savePending(a: { orgId: string; wabaId: string; phoneNumberId: string; tokenEnc: string; pinEnc: string | null; consent: Consent; attemptId: string }): Promise<void>;
+  /** Compare-and-set 'pending' -> 'registering', only for the attempt whose savePending is still the current one. False = another attempt took over. */
+  claimRegistering(a: { orgId: string; phoneNumberId: string; attemptId: string }): Promise<boolean>;
   setStatus(a: { orgId: string; phoneNumberId: string; status: ConnectionStatus; reason?: string }): Promise<void>;
   /** Adds the link row (source "connect") and marks the connection active. */
   activate(a: { orgId: string; wabaId: string; phoneNumberId: string; label: string | null; connectedAt: string }): Promise<void>;
@@ -75,6 +77,8 @@ const MESSAGES: Record<FinalizeCode, string> = {
   already_bound: "That number is already connected to a workspace.",
   meta_unavailable: "Meta could not be reached. Nothing was connected.",
   attempt_invalid: "This connection attempt expired or was already used. Start again.",
+  attempt_superseded: "Another connection attempt for this number replaced this one. This attempt registered nothing. Reload to see the current state.",
+  platform_unverified: "Meta did not report this number's platform, so it was not connected. Nothing was registered.",
   register_failed: "Meta did not accept the number registration. Nothing was registered and nothing was connected. You can try again.",
   persist_failed: "The connection could not be saved here. If Meta already registered your number, it has not been undone: reconnect to finish, and nothing will be registered twice.",
   forbidden: "Only a workspace owner or admin can connect a number.",
@@ -163,6 +167,9 @@ async function completeConnection(p: { orgId: string; token: string; v: Verified
   // 'pending' means registration was never started (the registering mark is written BEFORE the call), so a fresh PIN is safe there too.
   const mintPin = existing === null || existing.status === "failed" || existing.status === "pending" || !existing.hasPin;
   const pin = mintPin ? String(randomInt(0, 1_000_000)).padStart(6, "0") : null;
+  // Each attempt tags its save; only the attempt whose save is current may start registration (two tabs cannot both register, and the
+  // PIN that Meta receives is always the PIN that is stored).
+  const attemptId = randomBytes(12).toString("hex");
   try {
     await deps.store.savePending({
       orgId,
@@ -171,6 +178,7 @@ async function completeConnection(p: { orgId: string; token: string; v: Verified
       tokenEnc: deps.encrypt(p.token),
       pinEnc: pin === null ? null : deps.encrypt(pin),
       consent: p.consent,
+      attemptId,
     });
   } catch {
     return fail("persist_failed");
@@ -178,11 +186,13 @@ async function completeConnection(p: { orgId: string; token: string; v: Verified
 
   if (!registered) {
     if (pin === null) return fail("needs_review"); // defensive: no PIN to register with and no proof of registration: never guess
+    let claimed: boolean;
     try {
-      await deps.store.setStatus({ ...key, status: "registering" });
+      claimed = await deps.store.claimRegistering({ ...key, attemptId });
     } catch {
       return fail("persist_failed"); // nothing was sent to Meta yet
     }
+    if (!claimed) return fail("attempt_superseded"); // another attempt saved after this one: it, not this one, may register
     try {
       await deps.register(p.token, v.phoneNumberId, pin);
     } catch (e) {
