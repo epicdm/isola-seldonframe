@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 
-import { buildNavGroups, type BuildNavInput } from "../../../src/components/layout/nav-config";
+import { buildNavGroups, type BuildNavInput, type NavLabels } from "../../../src/components/layout/nav-config";
 import { isPhoneWhatsappEnabled } from "../../../src/lib/phone-whatsapp/exposure";
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -32,7 +32,11 @@ describe("isPhoneWhatsappEnabled", () => {
   });
 });
 
-const labels = { contact: "Contact", deal: "Deal", intakeForm: "Intake form" };
+const labels: NavLabels = {
+  contact: { singular: "Contact", plural: "Contacts" },
+  deal: { singular: "Deal", plural: "Deals" },
+  intakeForm: { singular: "Intake form", plural: "Intake forms" },
+};
 const input = (sessionType: BuildNavInput["sessionType"], extra: Partial<BuildNavInput> = {}): BuildNavInput => ({
   sessionType, workspaceCount: 1, hiddenBlocks: [], isSuperAdmin: false, primaryOrgId: "org-primary", labels, ...extra,
 });
