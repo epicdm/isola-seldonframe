@@ -5,6 +5,8 @@
 // working: the text below says what is still to do. Nothing here ever shows a code, token or PIN.
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { embeddedSignupLoginOptions, hintsFromSessionMessage } from "@/lib/phone-whatsapp/connect/launch";
+
 type Phase = "idle" | "starting" | "meta" | "finishing" | "done" | "error";
 type StartOk = { ok: true; nonce: string; appId: string; configId: string; testMode: boolean };
 type Hints = { wabaId?: string; phoneNumberId?: string };
@@ -57,16 +59,8 @@ export function ConnectPanel({ states = [] }: { states?: ConnectionState[] }) {
   // Collect Meta's session-info message (hints only). The origin check is Meta's documented requirement.
   useEffect(() => {
     function onMessage(ev: MessageEvent) {
-      let host = "";
-      try { host = new URL(ev.origin).hostname; } catch { return; }
-      if (!/(^|\.)facebook\.com$/.test(host)) return;
-      try {
-        const d = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
-        if (d?.type === "WA_EMBEDDED_SIGNUP" && d.event === "FINISH" && d.data) {
-          hints.current = { wabaId: String(d.data.waba_id ?? ""), phoneNumberId: String(d.data.phone_number_id ?? "") };
-          void maybeFinish();
-        }
-      } catch { /* not ours */ }
+      const h = hintsFromSessionMessage(ev.origin, ev.data);
+      if (h) { hints.current = h; void maybeFinish(); }
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
@@ -121,7 +115,7 @@ export function ConnectPanel({ states = [] }: { states?: ConnectionState[] }) {
         code.current = c;
         void maybeFinish();
       },
-      { config_id: start.configId, response_type: "code", override_default_response_type: true, extras: { setup: {}, featureType: "", sessionInfoVersion: "3" } },
+      embeddedSignupLoginOptions(start.configId),
     );
   }
 
