@@ -141,6 +141,27 @@ export function restSource(cfg, fetchImpl = fetch) {
 // form is accepted, so an alias can never point one number at another number's records.
 export const ingressKeyOk = (did, key) => key === did || key === `wa${did}`;
 
+// Read port for the verify-only provisioner: the DID row and its destinations for one number, through the same read-only source and the
+// same exact ingress alias. accountRef is null when the source cannot see the owner (the SELECT-only account has no id_user grant).
+export async function readVoiceDidFrom(source, number, key = number) {
+  if (!isId(number)) return { ok: false, error: "bad number" };
+  if (!ingressKeyOk(number, key)) return { ok: false, error: "voice-platform key does not belong to this number" };
+  try {
+    const rows = await source.did(key);
+    if (rows.length > 1) return { ok: false, error: `ambiguous: ${rows.length} DID rows match` };
+    const row = rows[0] ?? null;
+    if (!row) return { ok: true, number, ...(key !== number ? { ingressKey: key } : {}), did: null, destinations: [] };
+    const dest = await source.destinations(row.id);
+    return {
+      ok: true, number, ...(key !== number ? { ingressKey: key } : {}),
+      did: { ref: String(row.id), accountRef: row.id_user != null ? String(row.id_user) : null, activated: String(row.activated) === "1", reserved: String(row.reserved) === "1" },
+      destinations: dest.map((d, i) => ({ ref: `${row.id}.${i + 1}`, destination: String(d.destination ?? "").slice(0, 120), activated: String(d.activated) === "1" })),
+    };
+  } catch (e) {
+    return { ok: false, error: errText(e) };
+  }
+}
+
 export async function readMagnusFrom(source, did, key = did) {
   if (!isId(did)) return { ok: false, error: "no display number to look up (Meta read failed)" };
   if (!ingressKeyOk(did, key)) return { ok: false, error: "voice-platform key does not belong to this number" };

@@ -5,6 +5,7 @@ import http from "node:http";
 
 import fs from "node:fs";
 
+import { evidenceReadPort } from "./evidence-read-port.mjs";
 import { magnusApiPort } from "./magnus-api-port.mjs";
 import { httpPort } from "./magnus-http-port.mjs";
 import { makeProvisioner, ProvisionerError } from "./provisioner.mjs";
@@ -47,7 +48,10 @@ if (process.argv[1] && process.argv[1].endsWith("server.mjs")) {
   const store = openStore(process.env.PROV_DB || "/data/prov.sqlite");
   const prov = makeProvisioner({
     // UPSTREAM_KIND=magnus-api selects the production-shaped port; its key and secret are read from FILES (mounted secrets), never from env values.
-    store, port: process.env.UPSTREAM_KIND === "magnus-api"
+    // UPSTREAM_KIND=line-evidence = the READ-ONLY port through the existing evidence adapter (verify-only mode is then mandatory).
+    store, port: process.env.UPSTREAM_KIND === "line-evidence"
+      ? (process.env.PROV_MODE === "verify-only" ? evidenceReadPort({ baseUrl: need("EVIDENCE_URL"), token: fs.readFileSync(need("EVIDENCE_TOKEN_FILE"), "utf8").trim(), serviceAccount: JSON.parse(need("SERVICE_ACCOUNT_JSON")) }) : (console.error("UPSTREAM_KIND=line-evidence requires PROV_MODE=verify-only"), process.exit(2)))
+      : process.env.UPSTREAM_KIND === "magnus-api"
       ? magnusApiPort({ baseUrl: need("MAGNUS_API_URL"), key: fs.readFileSync(need("MAGNUS_API_KEY_FILE"), "utf8").trim(), secret: fs.readFileSync(need("MAGNUS_API_SECRET_FILE"), "utf8").trim(), serviceAccount: JSON.parse(need("SERVICE_ACCOUNT_JSON")) })
       : httpPort(need("UPSTREAM_URL")),
     allowWrites: process.env.PROV_MODE !== "verify-only",

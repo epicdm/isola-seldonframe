@@ -1,12 +1,13 @@
 // line-evidence adapter HTTP surface. One route, GET only, bearer-token protected, fail-closed on missing config.
 //   GET /v1/lines/:phoneNumberId?waba=<wabaId>     -> line-evidence/v1
+//   GET /v1/voice/did/:number                      -> the DID row + destinations for one number (read port of the verify-only provisioner)
 //   GET /healthz                                   -> {ok:true}   (no upstream calls)
 // Env (names only; values come from the runtime secret mount): ADAPTER_TOKEN (>= 24 chars), META_WA_TOKEN, MAGNUS_URL,
 // MAGNUS_API_KEY, MAGNUS_API_SECRET; optional META_API_BASE, PORT, BIND, EVIDENCE_CACHE_SECONDS, EVIDENCE_RPM,
 // MAGNUS_DID_ALIASES_JSON ({"<number>":"wa<number>"} for WhatsApp numbers routed through a prefixed Magnus DID row).
 import http from "node:http";
 import crypto from "node:crypto";
-import { collectLineEvidence, isId } from "./evidence.mjs";
+import { collectLineEvidence, isId, readVoiceDidFrom, restSource } from "./evidence.mjs";
 
 export function configFromEnv(env = process.env) {
   // Magnus access mode. "sql" (default) = a SELECT-only database account, enforced by the database. "rest" = the Magnus API key,
@@ -61,6 +62,18 @@ export function makeHandler(cfg, deps = {}) {
       if (req.method !== "GET") return send(405, { error: "method_not_allowed" });
       const auth = String(req.headers.authorization ?? "");
       if (!auth.startsWith("Bearer ") || !safeEq(auth.slice(7), cfg.adapterToken)) return send(401, { error: "unauthorized" });
+      const v = url.pathname.match(/^\/v1\/voice\/did\/([^/]+)$/);
+      if (v) {
+        const number = decodeURIComponent(v[1]);
+        if (!isId(number)) return send(400, { error: "bad_request" });
+        const t = now().getTime();
+        while (hits.length && t - hits[0] > 60000) hits.shift();
+        if (hits.length >= cfg.rpm) return send(429, { error: "rate_limited" });
+        hits.push(t);
+        const source = cfg.magnusSource ?? restSource(cfg, fetchImpl);
+        const r = await readVoiceDidFrom(source, number, cfg.magnusDidAliases?.[number] ?? number);
+        return send(r.ok ? 200 : 502, r.ok ? r : { error: "upstream_failure" }); // uncached: a readback must see the current rows
+      }
       const m = url.pathname.match(/^\/v1\/lines\/([^/]+)$/);
       if (!m) return send(404, { error: "not_found" });
       const phoneNumberId = decodeURIComponent(m[1]);

@@ -63,6 +63,8 @@ export function makeProvisioner({ store, port, now = () => Date.now(), leaseMs =
       return once(key, "did", () => withLease(`did:${number}`, async (lease) => {
         const found = await port.findDid(number);
         if (found) {
+          // null = a read-only port that cannot see the owner (verify-only mode only): reported as not verified, never as a match.
+          if (found.accountRef === null && port.readOnly && !allowWrites) return { ref: found.ref, created: false, ownerVerified: false };
           if (found.accountRef !== accountRef) throw new ProvisionerError("did_owned_elsewhere", "that number already belongs to another account");
           return { ref: found.ref, created: false };
         }

@@ -178,3 +178,29 @@ test("server: auth, method, validation, healthz (positive twin), cache and rate 
   assert.equal((await call(h, { url: `/v1/lines/222333444555666?waba=${WABA}`, headers: auth })).code, 200);
   assert.equal((await call(h, { url: `/v1/lines/333444555666777?waba=${WABA}`, headers: auth })).code, 429);
 });
+
+// Read port route (verify-only provisioner): same source, same exact alias, no Meta call.
+import { readVoiceDidFrom } from "./evidence.mjs";
+const voiceSrc = (rows, dests) => { const seen = []; return { seen, did: async (k) => (seen.push(k), rows), destinations: async () => dests, calls: async () => [] }; };
+test("read port: the aliased key is used, destinations mapped, owner null when the source cannot see it (twin: unaliased reads the plain key)", async () => {
+  const s = voiceSrc([{ id: 900, did: "wa15550100001", activated: 1, reserved: 1 }], [{ id_did: 900, destination: "PJSIP/15550100001@trunk-x", activated: 1 }]);
+  const r = await readVoiceDidFrom(s, DID, `wa${DID}`);
+  assert.deepEqual(s.seen, [`wa${DID}`]);
+  assert.deepEqual(r, { ok: true, number: DID, ingressKey: `wa${DID}`, did: { ref: "900", accountRef: null, activated: true, reserved: true }, destinations: [{ ref: "900.1", destination: "PJSIP/15550100001@trunk-x", activated: true }] });
+  const p = voiceSrc([], []); assert.deepEqual(await readVoiceDidFrom(p, DID), { ok: true, number: DID, did: null, destinations: [] }); assert.deepEqual(p.seen, [DID]);
+});
+test("read port: a foreign key is refused with nothing read; two matching rows are ambiguous, never the first", async () => {
+  const s = voiceSrc([], []);
+  assert.equal((await readVoiceDidFrom(s, DID, "wa15550100002")).ok, false); assert.deepEqual(s.seen, []);
+  const two = voiceSrc([{ id: 1, activated: 1 }, { id: 2, activated: 1 }], []);
+  assert.match((await readVoiceDidFrom(two, DID)).error, /ambiguous/);
+});
+test("read port route: bearer required, bad number 400, alias applied, uncached (twin: authorised read 200)", async () => {
+  const s = voiceSrc([{ id: 900, activated: 1, reserved: 1 }], []);
+  const h = makeHandler({ ...cfg, adapterToken: "t".repeat(32), cacheSeconds: 60, rpm: 30, magnusSource: s, magnusDidAliases: { [DID]: `wa${DID}` } });
+  const call = async (url, auth) => { let code, body; const res = { writeHead: (c) => (code = c), end: (b) => (body = JSON.parse(b)) }; await h({ method: "GET", url, headers: auth ? { authorization: `Bearer ${auth}` } : {} }, res); return { code, body }; };
+  assert.equal((await call(`/v1/voice/did/${DID}`)).code, 401);
+  assert.equal((await call("/v1/voice/did/12ab", "t".repeat(32))).code, 400);
+  const ok = await call(`/v1/voice/did/${DID}`, "t".repeat(32)); await call(`/v1/voice/did/${DID}`, "t".repeat(32));
+  assert.equal(ok.code, 200); assert.equal(ok.body.did.ref, "900"); assert.deepEqual(s.seen, [`wa${DID}`, `wa${DID}`]);
+});
