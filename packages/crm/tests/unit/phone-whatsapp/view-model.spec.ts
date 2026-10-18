@@ -107,6 +107,14 @@ test("an answered call older than the proof window does not prove routing", () =
   assert.equal(v.routing.tone, "unknown");
 });
 
+test("an answered call dated in the FUTURE does not prove routing (Codex review); twin: the same call one hour ago does", () => {
+  const e = evidence();
+  if (!e.magnus.ok) throw new Error("fixture");
+  const at = (ms: number) => [{ startedAt: new Date(NOW.getTime() + ms).toISOString(), durationSec: 60, answered: true, terminateCauseId: 1 }];
+  assert.equal(view({ ...e, magnus: { ...e.magnus, lastCalls: at(3_600_000) } }).routing.tone, "unknown");
+  assert.equal(view({ ...e, magnus: { ...e.magnus, lastCalls: at(-3_600_000) } }).routing.tone, "ok");
+});
+
 test("SIP host that is not the expected voice host is a routing problem, not ok", () => {
   const e = evidence();
   if (!e.calling.ok) throw new Error("fixture");
