@@ -201,6 +201,7 @@ test("read port route: bearer required, bad number 400, alias applied, uncached 
   const call = async (url, auth) => { let code, body; const res = { writeHead: (c) => (code = c), end: (b) => (body = JSON.parse(b)) }; await h({ method: "GET", url, headers: auth ? { authorization: `Bearer ${auth}` } : {} }, res); return { code, body }; };
   assert.equal((await call(`/v1/voice/did/${DID}`)).code, 401);
   assert.equal((await call("/v1/voice/did/12ab", "t".repeat(32))).code, 400);
+  assert.equal((await call("/v1/voice/did/%E0%A4%A", "t".repeat(32))).code, 400); // Codex review: malformed escape is a bad request, not a 502
   const ok = await call(`/v1/voice/did/${DID}`, "t".repeat(32)); await call(`/v1/voice/did/${DID}`, "t".repeat(32));
   assert.equal(ok.code, 200); assert.equal(ok.body.did.ref, "900"); assert.deepEqual(s.seen, [`wa${DID}`, `wa${DID}`]);
 });

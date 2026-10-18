@@ -62,9 +62,9 @@ export function makeHandler(cfg, deps = {}) {
       if (req.method !== "GET") return send(405, { error: "method_not_allowed" });
       const auth = String(req.headers.authorization ?? "");
       if (!auth.startsWith("Bearer ") || !safeEq(auth.slice(7), cfg.adapterToken)) return send(401, { error: "unauthorized" });
-      const v = url.pathname.match(/^\/v1\/voice\/did\/([^/]+)$/);
-      if (v) {
-        const number = decodeURIComponent(v[1]);
+      if (url.pathname.startsWith("/v1/voice/did/")) {
+        const v = url.pathname.match(/^\/v1\/voice\/did\/(\d+)$/); // digits only: nothing to decode, so a malformed escape is a 400, not an upstream failure
+        const number = v?.[1] ?? "";
         if (!isId(number)) return send(400, { error: "bad_request" });
         const t = now().getTime();
         while (hits.length && t - hits[0] > 60000) hits.shift();
