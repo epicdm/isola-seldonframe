@@ -13,7 +13,8 @@ export class ProvisionerError extends Error {
   constructor(code, message) { super(message ?? code); this.code = code; }
 }
 
-export function makeProvisioner({ store, port, now = () => Date.now(), leaseMs = 30_000, callTimeoutMs = 5_000, marginMs = 1_000, owner = `p-${process.pid}-${Math.random().toString(36).slice(2, 8)}`, hooks = {} }) {
+// allowWrites:false = VERIFY-ONLY mode (first live slice): staff create the records in the platform's own admin UI; the provisioner only finds and reads them back.
+export function makeProvisioner({ store, port, now = () => Date.now(), leaseMs = 30_000, callTimeoutMs = 5_000, marginMs = 1_000, owner = `p-${process.pid}-${Math.random().toString(36).slice(2, 8)}`, hooks = {}, allowWrites = true }) {
   const need = callTimeoutMs + marginMs;
 
   async function withLease(resource, fn) {
@@ -22,6 +23,7 @@ export function makeProvisioner({ store, port, now = () => Date.now(), leaseMs =
     try { return await fn(lease); } finally { store.release(resource, lease.token); }
   }
   const guardWrite = (resource, lease) => {
+    if (!allowWrites) throw new ProvisionerError("staff_action_required", "verify-only mode: the record must be created by staff first");
     if (!store.stillHolds(resource, lease.token, now(), need)) throw new ProvisionerError("lease_expired", "lease no longer held with enough time left; not writing");
   };
 

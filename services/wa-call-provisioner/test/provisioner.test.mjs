@@ -219,6 +219,22 @@ describe("duplicate prevention (SIMULATED voice platform)", () => {
   });
 });
 
+describe("verify-only mode (first live slice: staff create the records)", () => {
+  test("absent records: refused as staff_action_required and NOTHING is created; once staff have created them, the same calls succeed by finding them", async () => {
+    reset(); const { prov } = fresh({ allowWrites: false });
+    await assert.rejects(prov.ensureServiceAccount({ key: "v:acct", workspaceId: WS }), (e) => e.code === "staff_action_required");
+    assert.deepEqual(rows(), { accounts: 0, dids: 0, dests: 0 });
+    fm.tables.accounts.set("acct-s", { ref: "acct-s", tag: WS }); // staff created it in the platform UI (simulated)
+    const a = await prov.ensureServiceAccount({ key: "v:acct2", workspaceId: WS });
+    await assert.rejects(prov.ensureDid({ key: "v:did", accountRef: a.ref, number: NUMBER }), (e) => e.code === "staff_action_required");
+    fm.tables.dids.set(NUMBER, { ref: "did-s", number: NUMBER, accountRef: a.ref, active: true });
+    const d = await prov.ensureDid({ key: "v:did2", accountRef: a.ref, number: NUMBER });
+    fm.tables.dests.push({ ref: "route-s", didRef: d.ref, target: "t/1", active: true });
+    const r = await prov.ensureDestination({ key: "v:dest", didRef: d.ref, target: "t/1" });
+    assert.deepEqual([a.created, d.created, r.created, rows().dests], [false, false, false, 1]);
+  });
+});
+
 describe("the service surface", () => {
   const secret = crypto.randomBytes(16).toString("hex");
   const mk = (binding = true) => {

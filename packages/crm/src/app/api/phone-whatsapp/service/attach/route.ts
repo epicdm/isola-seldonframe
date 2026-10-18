@@ -5,7 +5,7 @@ import { guardService, serviceJson } from "@/lib/phone-whatsapp/service/server-w
 import { activeLinesOf } from "@/lib/phone-whatsapp/service/stores";
 
 export const dynamic = "force-dynamic";
-const STATUS: Record<string, number> = { bad_input: 400, not_connected: 409, number_not_yours: 403, destination_not_allowed: 403, destination_change_requires_explicit_action: 409, attach_in_progress: 409, retry_pending: 503, step_failed: 502, needs_review: 409 };
+const STATUS: Record<string, number> = { bad_input: 400, not_connected: 409, number_not_yours: 403, destination_not_allowed: 403, destination_change_requires_explicit_action: 409, attach_in_progress: 409, retry_pending: 503, staff_action_required: 424, step_failed: 502, needs_review: 409 };
 
 export async function POST(req: Request) {
   const g = await guardService(req, true);

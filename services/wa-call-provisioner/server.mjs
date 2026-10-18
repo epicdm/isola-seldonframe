@@ -34,7 +34,7 @@ export function makeHandler({ prov, secret, verifyBinding, now = () => Date.now(
     if (!(await verifyBinding(b.workspaceId, b.phoneNumberId))) return reply(403, { error: "binding_not_confirmed" });
     try { return reply(200, await handler(b)); }
     catch (e) {
-      if (e instanceof ProvisionerError) return reply(e.code === "busy" ? 409 : e.code === "needs_review" ? 422 : e.code === "lease_expired" ? 503 : 409, { error: e.code });
+      if (e instanceof ProvisionerError) return reply(e.code === "busy" ? 409 : e.code === "needs_review" ? 422 : e.code === "lease_expired" ? 503 : e.code === "staff_action_required" ? 424 : 409, { error: e.code });
       return reply(502, { error: "upstream_unavailable_or_ambiguous" }); // never leaks upstream detail
     }
   };
@@ -50,6 +50,7 @@ if (process.argv[1] && process.argv[1].endsWith("server.mjs")) {
     store, port: process.env.UPSTREAM_KIND === "magnus-api"
       ? magnusApiPort({ baseUrl: need("MAGNUS_API_URL"), key: fs.readFileSync(need("MAGNUS_API_KEY_FILE"), "utf8").trim(), secret: fs.readFileSync(need("MAGNUS_API_SECRET_FILE"), "utf8").trim(), serviceAccount: JSON.parse(need("SERVICE_ACCOUNT_JSON")) })
       : httpPort(need("UPSTREAM_URL")),
+    allowWrites: process.env.PROV_MODE !== "verify-only",
     leaseMs: Number(process.env.LEASE_MS || 30_000), callTimeoutMs: Number(process.env.CALL_TIMEOUT_MS || 5_000),
     hooks: { afterUpstreamWrite: async () => { if (crashOnce) { console.error("FAULT: crashing after an upstream write"); process.exit(1); } } },
   });
