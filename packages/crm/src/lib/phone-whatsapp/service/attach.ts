@@ -41,7 +41,7 @@ export interface AttachLedger {
 export interface Provisioner {
   /** Each call is idempotent by `key`: repeating it returns the SAME ref with created:false. None of them can create a charge. */
   ensureServiceAccount(a: { key: string; workspaceId: string }): Promise<{ ref: string; created: boolean }>;
-  ensureDid(a: { key: string; accountRef: string; phoneNumberId: string }): Promise<{ ref: string; created: boolean }>;
+  ensureDid(a: { key: string; accountRef: string; phoneNumberId: string; number: string }): Promise<{ ref: string; created: boolean }>;
   ensureDestination(a: { key: string; didRef: string; target: DestinationOption["target"]; kind: DestinationOption["kind"] }): Promise<{ ref: string; created: boolean }>;
   readBack(a: { didRef: string }): Promise<{ didActive: boolean; destination: { target: string; active: boolean } | null }>;
 }
@@ -80,10 +80,10 @@ const refuse = (code: AttachRefusal, retriable: boolean, step?: AttachStepName):
 export type AttachDeps = { ledger: AttachLedger; prov: Provisioner; now(): Date; leaseMs?: number };
 
 export async function attachService(
-  p: { workspaceId: string; phoneNumberId: string; destinationId: string; pre: Preconditions },
+  p: { workspaceId: string; phoneNumberId: string; /** The number Meta reports for this line (digits), taken from verified evidence, never from the request. */ number: string; destinationId: string; pre: Preconditions },
   deps: AttachDeps,
 ): Promise<AttachResult> {
-  if (!p.workspaceId || !/^\d{5,20}$/.test(p.phoneNumberId) || !p.destinationId) return refuse("bad_input", false);
+  if (!p.workspaceId || !/^\d{5,20}$/.test(p.phoneNumberId) || !/^\d{7,15}$/.test(p.number) || !p.destinationId) return refuse("bad_input", false);
 
   // Preconditions come from SeldonFrame's own state, not from the caller.
   if (p.pre.connectionStatus !== "active") return refuse("not_connected", false);
@@ -123,7 +123,7 @@ export async function attachService(
 
   let stop = await run("service_account", async () => (await deps.prov.ensureServiceAccount({ key: `${key}:acct`, workspaceId: p.workspaceId })).ref);
   if (stop) return stop;
-  stop = await run("did", async () => (await deps.prov.ensureDid({ key: `${key}:did`, accountRef: refs.service_account!, phoneNumberId: p.phoneNumberId })).ref);
+  stop = await run("did", async () => (await deps.prov.ensureDid({ key: `${key}:did`, accountRef: refs.service_account!, phoneNumberId: p.phoneNumberId, number: p.number })).ref);
   if (stop) return stop;
   stop = await run("destination", async () => (await deps.prov.ensureDestination({ key: `${key}:dest`, didRef: refs.did!, target: dest.target, kind: dest.kind })).ref);
   if (stop) return stop;

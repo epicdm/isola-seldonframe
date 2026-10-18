@@ -81,7 +81,7 @@ const agents: AgentDirectory = { exists: async (ref, ws) => ref === "agent-ficti
 const pre = (o: Partial<Preconditions> = {}): Preconditions => ({ connectionStatus: "active", claimants: [WS_A], selectable: [D_QUEUE, D_AGENT], ...o });
 const NOW = new Date("2026-10-18T10:00:00Z");
 const run = (h: { prov: Provisioner; led: ReturnType<typeof fakeLedger> }, over: { destinationId?: string; ws?: string; pre?: Preconditions } = {}) =>
-  attachService({ workspaceId: over.ws ?? WS_A, phoneNumberId: PHONE, destinationId: over.destinationId ?? D_QUEUE.id, pre: over.pre ?? pre() }, { ledger: h.led.ledger, prov: h.prov, now: () => NOW });
+  attachService({ workspaceId: over.ws ?? WS_A, phoneNumberId: PHONE, number: "15550100100", destinationId: over.destinationId ?? D_QUEUE.id, pre: over.pre ?? pre() }, { ledger: h.led.ledger, prov: h.prov, now: () => NOW });
 const harness = (faults: Faults = {}, led: { failRecordOnce?: AttachStepName } = {}) => { const p = fakeProv(faults); return { ...p, led: fakeLedger(led) }; };
 const counts = (h: ReturnType<typeof harness>) => [h.accounts.size, h.dids.size, h.routes.size];
 
