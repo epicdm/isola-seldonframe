@@ -7,7 +7,7 @@ import { sql } from "drizzle-orm";
 const enabled = process.env.PHONE_WHATSAPP_DB_TEST === "scratch" && !!process.env.NEON_LOCAL_HOST;
 const WS = "aaaaaaaa-0000-4000-8000-0000000000c1";
 const WS2 = "bbbbbbbb-0000-4000-8000-0000000000c2";
-const PHONE = "900000000000002";
+const PHONE = "900000000000502";
 
 describe("service stores (database-backed)", { skip: !enabled && "scratch database only" }, () => {
   let db: typeof import("@/db").db;
@@ -19,7 +19,7 @@ describe("service stores (database-backed)", { skip: !enabled && "scratch databa
   before(async () => {
     ({ db } = await import("@/db")); st = await import("@/lib/phone-whatsapp/service/stores");
     await db.execute(sql`delete from organizations where id in (${WS}::uuid, ${WS2}::uuid)`);
-    await db.execute(sql`insert into organizations (id, name, slug, settings) values (${WS}::uuid, 'svc-a', 'svc-a', '{}'::jsonb), (${WS2}::uuid, 'svc-b', 'svc-b', '{"phoneWhatsapp":{"lines":[{"wabaId":"900000000000001","phoneNumberId":"900000000000002"}]}}'::jsonb)`);
+    await db.execute(sql`insert into organizations (id, name, slug, settings) values (${WS}::uuid, 'svc-a', 'svc-a', '{}'::jsonb), (${WS2}::uuid, 'svc-b', 'svc-b', '{"phoneWhatsapp":{"lines":[{"wabaId":"900000000000001","phoneNumberId":"900000000000502"}]}}'::jsonb)`);
   });
 
   test("ledger lease is a compare-and-set: of two simultaneous begins exactly one wins; after the lease expires another may begin; steps and finish are recorded", async () => {
