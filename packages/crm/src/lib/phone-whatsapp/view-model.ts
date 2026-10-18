@@ -152,7 +152,9 @@ function routingFact(link: LineLink, calling: CallingFacts, magnus: MagnusFacts,
   else if (!magnus.destination.activated) problems.push("the destination is switched off");
   if (problems.length) return { tone: "attention", headline: "Routing is not complete", detail: `${problems.join("; ")}.`, observedAt, source };
   const windowMs = (o.proofWindowDays ?? 30) * 86400000;
-  const proof = magnus.lastCalls.find((c) => c.answered && c.startedAt && o.now.getTime() - new Date(c.startedAt).getTime() <= windowMs);
+  // A call dated after "now" (clock skew or a bad record) has not happened yet, so it proves nothing.
+  const ageOf = (c: { startedAt: string | null }) => o.now.getTime() - new Date(c.startedAt ?? "").getTime();
+  const proof = magnus.lastCalls.find((c) => c.answered && c.startedAt && ageOf(c) >= 0 && ageOf(c) <= windowMs);
   if (proof) return { tone: "ok", headline: "Configured; a recent call was answered", detail: `Configuration is complete and an answered call is on record at ${formatUtc(proof.startedAt)}. The record does not show who called or by which channel (it can be a monitoring or test call), so run the acceptance call to prove WhatsApp specifically.`, observedAt, source };
   return { tone: "unknown", headline: "Configured; no answered call on record", detail: `Configuration is complete, but no answered call is recorded in the last ${o.proofWindowDays ?? 30} days. Routing is shown as working only after a call is answered.`, observedAt, source };
 }
