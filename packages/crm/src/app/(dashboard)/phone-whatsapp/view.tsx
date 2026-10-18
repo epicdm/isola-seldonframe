@@ -111,20 +111,20 @@ function Line({ line, waNumber }: { line: LineView; waNumber: string | null }) {
 }
 
 const STEPS = [
-  { n: 1, title: "Connect WhatsApp account", state: "Staff-assisted today. Meta sign-in happens with EPIC staff." },
-  { n: 2, title: "Select number", state: "Staff-assisted today. This page lists the numbers linked to your workspace." },
+  { n: 1, title: "Connect WhatsApp number", state: "Self-service for a workspace owner or admin, where connecting is switched on for your workspace. It does not turn on calling." },
+  { n: 2, title: "Select number", state: "The number you connect is listed below, with what Meta reports about it." },
   { n: 3, title: "Configure destination", state: "Staff-assisted today. This page shows the configured destination; it cannot change it." },
   { n: 4, title: "Verify routing", state: "Shown below as evidence: configured, or proven by an answered call." },
   { n: 5, title: "Acceptance call", state: "Staff-assisted today. Not yet recorded here: passing eligibility checks is not an acceptance call." },
 ];
 
-export function PhoneWhatsappView({ view, waNumber }: { view: PageView; waNumber: string | null }) {
+export function PhoneWhatsappView({ view, waNumber, canConnect = false }: { view: PageView; waNumber: string | null; canConnect?: boolean }) {
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-page-title">Phone &amp; WhatsApp</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Your WhatsApp business number, whether it can take calls, where calls are sent and what the last call was. This is a read-only view: EPIC staff make the changes.
+          Your WhatsApp business number, whether it can take calls, where calls are sent and what the last call was. Connecting a number is done by a workspace owner or admin; call setup is done by EPIC staff.
         </p>
       </div>
 
@@ -142,7 +142,11 @@ export function PhoneWhatsappView({ view, waNumber }: { view: PageView; waNumber
       {view.kind === "no_link" && (
         <section className="crm-card space-y-3 p-4" data-testid="no-link">
           <h2 className="text-lg font-semibold">No WhatsApp business number is linked to this workspace</h2>
-          <p className="text-sm text-muted-foreground">Linking a number is a staff-assisted step. Nothing is shown here until EPIC staff link a number to this workspace.</p>
+          <p className="text-sm text-muted-foreground">
+            {canConnect
+              ? "Use “Connect your WhatsApp number” above. Nothing is shown here until a number is connected to this workspace."
+              : "A workspace owner or admin can connect a number when connecting is switched on for this workspace. Nothing is shown here until a number is connected."}
+          </p>
           <StaffAction waNumber={waNumber} what="link a WhatsApp business number to my workspace" />
         </section>
       )}
