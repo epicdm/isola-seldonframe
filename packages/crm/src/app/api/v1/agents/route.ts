@@ -36,6 +36,7 @@ import {
 } from "@/lib/agents/store";
 import { runEvalSuite } from "@/lib/agents/eval-runner";
 import { executeTurn } from "@/lib/agents/runtime";
+import { normalizeAgentBlueprintPatch } from "@/lib/agents/normalize-blueprint-patch";
 // v1.40.7 — workspace-level chatbot embed.
 import {
   setPublicChatbotEmbed,
@@ -44,6 +45,7 @@ import {
 // v1.45 — faq-from-url: FAQ regeneration from soul.
 import { synthesizeFaqsFromSoul } from "@/lib/soul-compiler/faq-synthesizer";
 import { getByokClaudeKeyFromHeaders } from "@/lib/soul-compiler/anthropic";
+import { isWorkspaceForcePublishDenied } from "@/lib/agents/workspace-publish-policy";
 import type { AgentBlueprint } from "@/db/schema";
 
 type Body = {
@@ -194,7 +196,7 @@ export async function POST(request: Request) {
     }
 
     // Mutable local patch — we may splice in a regenerated faq array below.
-    const patch = body.patch as Record<string, unknown>;
+    const patch = normalizeAgentBlueprintPatch(body.patch as Record<string, unknown>);
 
     // Optional FAQ regeneration from soul (v1.45 — faq-from-url).
     // When operator passes regenerate_synthesized: true, we replace all
@@ -300,11 +302,16 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    if (isWorkspaceForcePublishDenied(body.force)) {
+      return NextResponse.json(
+        { ok: false, error: "force_publish_not_allowed_for_workspace_credentials" },
+        { status: 403 },
+      );
+    }
     const result = await publishAgent({
       agentId: body.agent_id,
       orgId: guard.orgId,
       status: body.status as "draft" | "test" | "live" | "paused",
-      force: body.force === true,
     });
     if (!result.ok) {
       return NextResponse.json(result, { status: 422 });

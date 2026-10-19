@@ -33,6 +33,7 @@ import {
 } from "@/lib/agents/booking/booking-policy";
 import { COPILOT_CAPABILITY } from "@/lib/agents/copilot/tools";
 import { DRAFT_FOR_APPROVAL_CAPABILITY } from "@/lib/agent-drafts/policy";
+import type { TrustedRelayToolContext } from "./mcp/relay-context";
 
 export type ToolExecuteContext = {
   orgId: string;
@@ -42,6 +43,9 @@ export type ToolExecuteContext = {
   /** True for status='test' conversations: tool execution returns
    *  synthetic responses, no DB writes. */
   testMode: boolean;
+  /** Verified by the public turn route's short-lived relay HMAC. The proof is
+   *  forwarded only in MCP request metadata, never to the model or persisted. */
+  trustedRelayToolContext?: TrustedRelayToolContext;
   /** voice-only — the caller's phone number from the inbound call's caller ID
    *  (From / P-Asserted-Identity SIP headers). Set by the voice webhook after
    *  the workspace resolves; undefined for anonymous/blocked callers and for

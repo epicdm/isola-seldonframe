@@ -15,6 +15,7 @@ import { db } from "@/db";
 import { users, organizations } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { OperatorInviteCard } from "@/components/settings/operator-invite-card";
+import { operatorPortalOrigin } from "@/lib/operator-portal/authorization";
 
 export default async function SettingsTeamPage() {
   const orgId = await getOrgId();
@@ -47,7 +48,11 @@ export default async function SettingsTeamPage() {
       </header>
 
       {orgRow ? (
-        <OperatorInviteCard orgSlug={orgRow.slug} orgName={orgRow.name} />
+        <OperatorInviteCard
+          orgSlug={orgRow.slug}
+          orgName={orgRow.name}
+          portalOrigin={operatorPortalOrigin(orgRow.slug, process.env.WORKSPACE_BASE_DOMAIN, "") || undefined}
+        />
       ) : null}
 
       <section className="space-y-2">

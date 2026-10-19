@@ -21,6 +21,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { resolveAppOrigin } from "@/lib/marketplace/buy-box-auth";
+import { extraAppHosts } from "@/lib/http/app-hosts";
 
 export function normalizeHost(host: string) {
   return host.trim().toLowerCase().replace(/:\d+$/, "");
@@ -31,7 +32,8 @@ export function isExemptHost(host: string) {
     host === "" ||
     host === "localhost" ||
     host === "127.0.0.1" ||
-    host.endsWith(".vercel.app")
+    host.endsWith(".vercel.app") ||
+    extraAppHosts().includes(host)
   );
 }
 

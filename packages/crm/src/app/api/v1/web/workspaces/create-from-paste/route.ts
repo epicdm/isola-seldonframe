@@ -11,6 +11,7 @@
 
 import type { NextRequest } from "next/server";
 import { auth } from "@/auth";
+import { resolvePlatformWizardKey } from "@/lib/ai/platform-client";
 import { runCreateFromPaste } from "@/lib/web-onboarding/run-create-from-paste";
 import { enforceWorkspaceLimit } from "@/lib/billing/limits";
 import { createFullWorkspace } from "@/lib/workspace/create-full";
@@ -30,6 +31,7 @@ import { autoCreateWebsiteChatbot } from "@/lib/agents/auto-create-website-chatb
 import { seedClientContactInAgencyCrm } from "@/lib/workspace/seed-client-contact-in-agency";
 import { seedDefaultOutboundTriggers } from "@/lib/messaging/seed-default-triggers";
 import { extractBusinessFactsFromPaste } from "@/lib/web-onboarding/paste-extractor";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -71,7 +73,8 @@ async function dispatchCreateFromPaste(text: unknown, landingTemplate?: unknown,
             return { key: result.key };
           }
         }
-        const platformKey = process.env.ANTHROPIC_API_KEY?.trim();
+        // Managed AI on this deployment may be the mounted-file provider (MODEL_API_KEY_FILE), not ANTHROPIC_API_KEY.
+        const platformKey = process.env.ANTHROPIC_API_KEY?.trim() || (await resolvePlatformWizardKey());
         return platformKey ? { key: platformKey } : null;
       },
       extractBusinessFactsFromPaste,
@@ -101,7 +104,7 @@ async function dispatchCreateFromPaste(text: unknown, landingTemplate?: unknown,
       },
       seedClientContactInAgencyCrm,
       seedDefaultOutboundTriggers,
-      workspaceBaseDomain: process.env.WORKSPACE_BASE_DOMAIN ?? "app.seldonframe.com",
+      workspaceBaseDomain: resolveWorkspaceBaseDomain(),
     },
     body: {
       text,

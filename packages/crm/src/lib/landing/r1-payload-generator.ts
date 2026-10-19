@@ -13,6 +13,7 @@
 //   await saveLandingPayload(workspaceId, payload, archetype);
 
 import Anthropic from "@anthropic-ai/sdk";
+import { createWizardAnthropic, wizardModelDefault } from "@/lib/ai/platform-client";
 import type { ExtractedBusinessFacts } from "@/lib/web-onboarding/extraction-prompt";
 import type { AestheticArchetypeId } from "@/lib/workspace/aesthetic-archetypes";
 import {
@@ -31,7 +32,7 @@ import { resolveExternalMedia } from "@/lib/media/resolve-url";
 // and much faster/cheaper than Opus.
 // Priority: env override → claude-haiku-4-5 → (fallback to that model)
 const DEFAULT_MODEL =
-  process.env.LANDING_PAYLOAD_MODEL?.trim() || "claude-haiku-4-5";
+  process.env.LANDING_PAYLOAD_MODEL?.trim() || wizardModelDefault("claude-haiku-4-5");
 
 // The generated payload JSON can be large (6 sections × several fields each).
 // 4096 tokens is more than enough for the R1 shape.
@@ -266,7 +267,7 @@ export async function generateR1Payload(args: {
   rehostImageFn?: RehostImageFn;
 }): Promise<R1LandingPayload> {
   const client = (args.anthropicClient ??
-    new Anthropic({ apiKey: args.byokKey })) as AnthropicLike;
+    createWizardAnthropic(args.byokKey)) as AnthropicLike;
   const modelInUse = args.model ?? DEFAULT_MODEL;
 
   const userMessage = buildR1PayloadPrompt(args.facts, args.archetype);

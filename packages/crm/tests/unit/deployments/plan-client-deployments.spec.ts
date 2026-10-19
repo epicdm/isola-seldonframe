@@ -43,13 +43,14 @@ describe("mapTemplateTypeToAgent", () => {
 });
 
 describe("planClientDeployments", () => {
-  it("plans one live agent per client, carrying the mapped archetype/channel + sourceTemplateId", () => {
+  it("plans one non-public test agent per client, carrying the mapped archetype/channel + sourceTemplateId", () => {
     const plan = planClientDeployments(tmpl({ type: "chat_assistant" }), ["c1", "c2"], []);
     assert.equal(plan.length, 2);
     for (const p of plan) {
       assert.equal(p.archetype, "website-chatbot");
       assert.equal(p.channel, "web_chat");
-      assert.equal(p.status, "live");
+      assert.equal(p.status, "test");
+      assert.notEqual(p.status, "live");
       assert.equal(p.name, "Front Desk Receptionist");
       assert.equal(p.sourceTemplateId, "tmpl-1");
     }
@@ -146,7 +147,7 @@ describe("runClientDeployments", () => {
       name: "Front Desk",
       archetype: "voice-receptionist",
       channel: "voice",
-      status: "live",
+      status: "test",
       sourceTemplateId: "tmpl-1",
     };
   }

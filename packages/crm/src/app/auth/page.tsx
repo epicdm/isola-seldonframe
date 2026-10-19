@@ -8,6 +8,7 @@
 
 import { lookupDeviceAuthForApprovalPage } from "@/lib/auth/device-auth";
 import { ApprovalActions } from "./actions-client";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,7 @@ export default async function DeviceAuthPage({
 }: {
   searchParams: Promise<{ atok?: string }>;
 }) {
+  const brand = resolvePlatformBranding();
   const sp = await searchParams;
   const atok = (sp.atok ?? "").trim();
 
@@ -24,7 +26,7 @@ export default async function DeviceAuthPage({
       <Frame title="Authorization link missing">
         <p style={{ color: "#666" }}>
           The link you opened doesn&apos;t include an authorization code.
-          Make sure you clicked the most recent email from SeldonFrame.
+          Make sure you clicked the most recent email from {brand.name}.
         </p>
       </Frame>
     );
@@ -110,6 +112,7 @@ export default async function DeviceAuthPage({
 }
 
 function Frame({ title, children }: { title: string; children: React.ReactNode }) {
+  const brand = resolvePlatformBranding();
   return (
     <div
       style={{
@@ -147,10 +150,11 @@ function Frame({ title, children }: { title: string; children: React.ReactNode }
         </h1>
         {children}
         <p style={{ margin: "32px 0 0", color: "#999", fontSize: 12 }}>
-          SeldonFrame ·{" "}
-          <a href="https://seldonframe.com" style={{ color: "#666" }}>
-            seldonframe.com
+          {brand.name} ·{" "}
+          <a href={brand.homeUrl} style={{ color: "#666" }}>
+            {new URL(brand.homeUrl).host}
           </a>
+          {" · "}<a href="/license" style={{ color: "#666" }}>Open-source notices</a>
         </p>
       </div>
     </div>

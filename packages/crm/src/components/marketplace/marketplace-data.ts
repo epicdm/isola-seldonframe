@@ -234,7 +234,7 @@ export function rowToStorefrontAgent(row: MarketplaceAgentRow): StorefrontAgent 
     priceCents: pricing.priceCents,
     priceLabelOverride: pricing.labelOverride,
     featured: Boolean(row.isFeatured),
-    builder: builderFromTags(row.tags) ?? "A SeldonFrame builder",
+    builder: builderFromTags(row.tags) ?? "A platform builder",
     verified: true,
     tagline,
     blurb:
@@ -324,7 +324,7 @@ export function buildPreviewStorefrontAgent(input: ListingPreviewInput): Storefr
     priceCents: Math.max(0, input.priceCents),
     priceLabelOverride: input.priceLabel?.trim() || undefined,
     featured: false,
-    builder: input.builder.trim() || "A SeldonFrame builder",
+    builder: input.builder.trim() || "A platform builder",
     verified: true,
     tagline,
     blurb: tagline,
@@ -372,17 +372,17 @@ function builderFromTags(tags: string[] | null | undefined): string | null {
 
 /** The public Rent-via-MCP endpoint for a listing. Phase 2 implements the
  *  JSON-RPC bridge behind it; the listing UI surfaces it + a copy button now. */
-export function mcpEndpointFor(slug: string): string {
-  return `https://app.seldonframe.com/api/v1/agents/${slug}/mcp`;
+export function mcpEndpointFor(slug: string, appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://app.seldonframe.com"): string {
+  return `${appUrl.replace(/\/+$/, "")}/api/v1/agents/${encodeURIComponent(slug)}/mcp`;
 }
 
 /** A copyable MCP client config snippet pointing at the listing's endpoint. */
-export function mcpSnippetFor(slug: string): string {
+export function mcpSnippetFor(slug: string, appUrl?: string): string {
   return [
     "{",
     '  "mcpServers": {',
     `    "${slug}": {`,
-    `      "url": "${mcpEndpointFor(slug)}",`,
+    `      "url": "${mcpEndpointFor(slug, appUrl)}",`,
     '      "headers": {',
     '        "Authorization": "Bearer sk_live_…"',
     "      }",

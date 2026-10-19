@@ -37,6 +37,8 @@ import { getPublicChatbotEmbed } from "@/lib/agents/public-embed";
 import { submittedSoulToTemplateData } from "@/lib/landing/r1-payload-to-template";
 import { renderLandingTemplate } from "@/lib/landing/render-landing-template";
 import { shouldIndexWorkspace } from "@/lib/web-build/policy";
+import { workspacePageMetadata } from "@/lib/seo/public-origins";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 type PageProps = {
   params: Promise<{ slug: string }>;
@@ -59,39 +61,35 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     // ctx is non-null here (soul came from it above).
     const indexable = shouldIndexWorkspace(ctx!.ownerId, ctx!.settings);
     return {
-      title: soul.business_name,
-      ...(description ? { description } : {}),
-      openGraph: {
+      ...workspacePageMetadata({
+        slug,
         title: soul.business_name,
-        ...(description ? { description } : {}),
-        type: "website",
-      },
+        description,
+        image: resolvePlatformBranding().logoUrl,
+      }),
+      title: soul.business_name,
       robots: { index: indexable, follow: indexable },
-      alternates: { canonical: `/w/${slug}` },
     };
   }
 
   const { seo, payload } = data;
-
-  return {
+  const pageMetadata = workspacePageMetadata({
+    slug,
     title: seo.title,
     description: seo.description,
-    openGraph: {
-      title: seo.title,
-      description: seo.description,
-      ...(seo.ogImage ? { images: [{ url: seo.ogImage }] } : {}),
-      type: "website",
-    },
+    image: seo.ogImage || payload.logo || resolvePlatformBranding().logoUrl,
+  });
+
+  return {
+    ...pageMetadata,
+    title: seo.title,
+    description: seo.description,
     // Indexed by default — except unclaimed anonymous web-build workspaces
     // (created via /try with no owner yet), which stay out of the index
     // until claimed via signup (Task 8).
     robots: {
       index: shouldIndexWorkspace(data.ownerId, data.settings),
       follow: shouldIndexWorkspace(data.ownerId, data.settings),
-    },
-    // Canonical URL points to this /w/[slug] path.
-    alternates: {
-      canonical: `/w/${slug}`,
     },
     // Structured data — basic local business schema via JSON-LD.
     // Phase R.3 will expand this with full LocalBusiness schema.

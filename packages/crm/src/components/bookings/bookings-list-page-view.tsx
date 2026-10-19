@@ -30,6 +30,7 @@ import { getBookingDefaults } from "@/lib/crm/template-suggestions";
 // the same settings.booking blob this fetch resolves.
 import { getWorkspaceBookingRules } from "@/lib/bookings/workspace-rules";
 import { BookingsPageContent } from "@/components/bookings/bookings-page-content";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 
 export type BookingsListPageViewProps = {
   orgId: string;
@@ -120,7 +121,7 @@ export async function BookingsListPageView({
         }))}
         suggestedServices={soul?.services ?? []}
         orgSlug={orgSlug}
-        publicBaseUrl={`https://${process.env.WORKSPACE_BASE_DOMAIN?.trim() || "app.seldonframe.com"}`}
+        publicBaseUrl={`https://${resolveWorkspaceBaseDomain()}`}
         workspaceTimezone={workspaceTimezone}
         workspaceBookingRules={workspaceBookingRules}
         calendarConnected={false}

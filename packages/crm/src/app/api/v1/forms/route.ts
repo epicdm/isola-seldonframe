@@ -6,6 +6,7 @@ import { resolveOrgIdForWrite, resolveV1Identity } from "@/lib/auth/v1-identity"
 import { assertWritable, demoApiBlockedResponse, isDemoReadonly } from "@/lib/demo/server";
 import { logEvent } from "@/lib/observability/log";
 import { getIntakeFormTemplate } from "@/lib/forms/templates";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 
 // Intake form CRUD — missing until now; dashboard used server actions only.
 // With these endpoints the MCP surface can create multiple forms per
@@ -209,7 +210,7 @@ export async function POST(request: Request) {
         settings: created.settings,
         is_active: created.isActive,
       },
-      public_url: `https://${org.slug}.${process.env.WORKSPACE_BASE_DOMAIN?.trim() || "app.seldonframe.com"}/forms/${created.slug}`,
+      public_url: `https://${org.slug}.${resolveWorkspaceBaseDomain()}/forms/${created.slug}`,
     },
     { status: 201 },
   );

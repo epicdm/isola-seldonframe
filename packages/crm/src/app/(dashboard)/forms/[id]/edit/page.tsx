@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { db } from "@/db";
-import { intakeForms } from "@/db/schema";
+import { intakeForms, organizations } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { FormEditor } from "@/components/forms/form-editor";
 
@@ -12,6 +12,13 @@ export default async function FormEditPage({ params }: { params: Promise<{ id: s
   if (!orgId) {
     notFound();
   }
+
+  const [org] = await db
+    .select({ slug: organizations.slug })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+  if (!org) notFound();
 
   const [form] = await db
     .select()
@@ -34,7 +41,7 @@ export default async function FormEditPage({ params }: { params: Promise<{ id: s
         <p className="text-sm sm:text-base text-muted-foreground">Manage form fields and publishing details.</p>
       </div>
 
-      <FormEditor formId={form.id} initialName={form.name} initialSlug={form.slug} initialFields={initialFields} />
+      <FormEditor orgSlug={org.slug} formId={form.id} initialName={form.name} initialSlug={form.slug} initialFields={initialFields} />
     </section>
   );
 }

@@ -25,6 +25,7 @@ import { DealsCrmSurface } from "@/components/crm/deals-crm-surface";
 import { getCrmSurfaceConfig } from "@/lib/crm/view-config";
 import { mapDealRowToCrmRecord } from "@/lib/crm/view-models";
 import { CreateClientCta } from "@/components/dashboard/create-client-cta";
+import { resolvePlatformBranding, resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 // SH2-F4 — reused for the simplified-Home inline "Add client workspace"
 // button (skips CreateClientCta's usage pill without touching that
 // shared component, which is outside this task's touched-files list).
@@ -87,8 +88,7 @@ import { resolveDesignModuleProps } from "@/components/clients/design-picker/res
 // 2026-07-04 — same env-driven base domain the ready page reads, kept in
 // sync so a claimed workspace's public links point at the right host in
 // every environment (prod vs preview).
-const WORKSPACE_BASE_DOMAIN =
-  process.env.WORKSPACE_BASE_DOMAIN?.trim() || "app.seldonframe.com";
+const WORKSPACE_BASE_DOMAIN = resolveWorkspaceBaseDomain();
 
 // 2026-07-04 — Task 7. Same /book/<org>/<slug> pattern the fresh-claimed
 // hero already builds inline (see the comment at its own publicBookingUrl
@@ -289,6 +289,7 @@ export default async function DashboardPage({
 }: {
   searchParams?: Promise<{ view?: string; workspace?: string }>;
 }) {
+  const platformBrand = resolvePlatformBranding();
   const params = searchParams ? await searchParams : undefined;
 
   // `?workspace=<id>` redirects through /switch-workspace so the active-org
@@ -1395,7 +1396,7 @@ export default async function DashboardPage({
           Phase K — wrapped in a card frame with a Terminal icon.
           Phase N — suppressed for the all-workspaces view, which now has
           its own MCP one-liner inline in the agency KPI rollup header. */}
-      {!isOperatorSession && !isClaimedOwner && activeDashboardView !== "all" ? (
+      {platformBrand.name === "SeldonFrame" && !isOperatorSession && !isClaimedOwner && activeDashboardView !== "all" ? (
         <div className="flex items-start gap-3 rounded-2xl border border-border/70 bg-card/40 px-4 py-3.5">
           <Terminal className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
@@ -1438,7 +1439,7 @@ export default async function DashboardPage({
           </header>
 
           {/* ── MCP one-liner ────────────────────────────────────────────── */}
-          {!isOperatorSession && !isClaimedOwner ? (
+          {platformBrand.name === "SeldonFrame" && !isOperatorSession && !isClaimedOwner ? (
             <p className="text-xs text-muted-foreground">
               <Terminal className="inline size-3 mr-1" />
               For the best experience, use Seldon directly from Claude Code with our MCP + Skill.{" "}
@@ -1935,7 +1936,7 @@ export default async function DashboardPage({
       {contactRows.length === 0 ? (
         <section className="crm-card space-y-5">
           <div>
-            <h2 className="text-base sm:text-lg font-semibold">Bring your clients into SeldonFrame</h2>
+          <h2 className="text-base sm:text-lg font-semibold">Bring your clients into {platformBrand.name}</h2>
             <p className="text-sm text-muted-foreground">Import existing clients, sync from another CRM, or add one manually.</p>
           </div>
           <div className="flex flex-wrap gap-2">

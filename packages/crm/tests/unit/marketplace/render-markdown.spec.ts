@@ -94,6 +94,18 @@ describe("renderMarketplaceIndexMarkdown", () => {
     assert.match(md, /\(https:\/\/staging\.example\.com\/marketplace\/x\)/);
     assert.doesNotMatch(md, /app\.seldonframe\.com/);
   });
+
+  test("Uplink index is neutral, uses its own origin, and retains real listings", () => {
+    const md = renderMarketplaceIndexMarkdown(
+      [agent({ slug: "real-agent", name: "Real Agent", tagline: "Owner supplied listing." })],
+      "https://uplink.epic.dm",
+      "Uplink",
+    );
+    assert.match(md, /^# Uplink Agent Marketplace/);
+    assert.match(md, /Browse published agent listings/);
+    assert.match(md, /https:\/\/uplink\.epic\.dm\/marketplace\/real-agent/);
+    assert.doesNotMatch(md, /SeldonFrame|app\.seldonframe\.com|for pennies|Vetted AI agents/);
+  });
 });
 
 describe("renderListingMarkdown", () => {

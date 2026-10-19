@@ -22,6 +22,7 @@ import {
 
 type BrowseClientProps = {
   agents: StorefrontAgent[];
+  platformName?: string;
   /** REAL count of live workspaces on SeldonFrame (1 workspace = 1 business),
    *  computed server-side. 0 → the hero omits the numeric claim entirely rather
    *  than fabricating one. */
@@ -31,7 +32,8 @@ type BrowseClientProps = {
   initialQuery?: string;
 };
 
-export function BrowseClient({ agents, businessCount = 0, initialCategory = null, initialQuery = "" }: BrowseClientProps): ReactElement {
+export function BrowseClient({ agents, businessCount = 0, initialCategory = null, initialQuery = "", platformName = "SeldonFrame" }: BrowseClientProps): ReactElement {
+  const branded = platformName !== "SeldonFrame";
   const [query, setQuery] = useState(initialQuery);
   const [category, setCategory] = useState<CategoryKey | null>(initialCategory);
 
@@ -64,18 +66,14 @@ export function BrowseClient({ agents, businessCount = 0, initialCategory = null
       <section className="sf-hero-sec sf-sec" style={{ maxWidth: 1200, margin: "0 auto", padding: "74px 32px 26px" }}>
         <div className="sf-hero-grid" style={{ display: "grid", gridTemplateColumns: "1.12fr 0.88fr", gap: 60, alignItems: "center" }}>
           <div>
-            <div style={kicker}>The agent marketplace</div>
+            <div style={kicker}>{branded ? "Agent marketplace" : "The agent marketplace"}</div>
             <h1 className="sf-hero-h1" style={{ margin: 0, fontSize: 62, lineHeight: 1.04, fontWeight: 600, letterSpacing: "-0.025em", maxWidth: 600 }}>
-              Hire an agent.
-              <br />
-              It works 24/7,{" "}
-              <span style={{ fontFamily: MKT.fontSerif, fontStyle: "italic", fontWeight: 400, color: MKT.green }}>
-                for pennies.
-              </span>
+              {branded ? "Browse available agents" : <>Hire an agent.<br />It works 24/7,{" "}<span style={{ fontFamily: MKT.fontSerif, fontStyle: "italic", fontWeight: 400, color: MKT.green }}>for pennies.</span></>}
             </h1>
             <p style={{ margin: "24px 0 0", fontSize: 18.5, lineHeight: 1.55, color: "rgba(34,29,23,0.66)", maxWidth: 452 }}>
-              Vetted AI agents that answer calls, book jobs, chase reviews, and win back customers — built by operators
-              who run businesses like yours.
+              {branded
+                ? "Review published agent listings and their stated terms. Availability and capabilities are specific to each listing."
+                : "Vetted AI agents that answer calls, book jobs, chase reviews, and win back customers — built by operators who run businesses like yours."}
             </p>
 
             {/* hero search */}
@@ -192,7 +190,7 @@ export function BrowseClient({ agents, businessCount = 0, initialCategory = null
                     <strong style={{ color: MKT.ink, fontWeight: 700 }}>
                       {formatInstalls(businessCount)} {businessCount === 1 ? "business" : "businesses"}
                     </strong>{" "}
-                    on SeldonFrame
+                    on {platformName}
                   </>
                 ) : (
                   // Honest pre-launch line — no invented count or rating.
@@ -204,8 +202,27 @@ export function BrowseClient({ agents, businessCount = 0, initialCategory = null
             </div>
           </div>
 
-          {/* live proof card */}
-          <HeroProofCard agent={featured[0] ?? agents[0]} />
+          {agents.length > 0 ? (
+            <HeroProofCard agent={featured[0] ?? agents[0]} />
+          ) : (
+            <div
+              role="status"
+              data-marketplace-empty-catalog
+              style={{
+                background: "#fff",
+                border: "1px solid rgba(34,29,23,0.10)",
+                borderRadius: 16,
+                padding: 28,
+                color: MKT.ink,
+                lineHeight: 1.5,
+              }}
+            >
+              <strong style={{ display: "block", fontSize: 18 }}>No published agents are available yet</strong>
+              <span style={{ display: "block", marginTop: 8, color: "rgba(34,29,23,0.6)" }}>
+                Check back later for listings available on {platformName}.
+              </span>
+            </div>
+          )}
         </div>
       </section>
 
@@ -265,7 +282,7 @@ export function BrowseClient({ agents, businessCount = 0, initialCategory = null
         <section className="sf-sec" style={{ maxWidth: 1200, margin: "0 auto", padding: "42px 32px 8px" }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
             <h2 className="sf-sech2" style={sectionH2}>Featured this week</h2>
-            <span style={{ fontSize: 13.5, color: "rgba(34,29,23,0.5)" }}>Hand-picked by the SeldonFrame team</span>
+            <span style={{ fontSize: 13.5, color: "rgba(34,29,23,0.5)" }}>{branded ? "Featured listings" : "Hand-picked by the SeldonFrame team"}</span>
           </div>
           <div className="sf-feat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 18 }}>
             {featured.map((agent) => (
@@ -332,21 +349,29 @@ export function BrowseClient({ agents, businessCount = 0, initialCategory = null
             >
               <MarketplaceIcon name="search" size={20} />
             </div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: MKT.ink, marginTop: 16 }}>No agents match that yet</div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: MKT.ink, marginTop: 16 }}>
+              {agents.length === 0 ? "No published agents are available yet" : "No agents match that yet"}
+            </div>
             <div style={{ fontSize: 14.5, marginTop: 6 }}>
-              Try a different search, or{" "}
-              <button
-                type="button"
-                className="sf-link"
-                onClick={() => {
-                  setCategory(null);
-                  setQuery("");
-                }}
-                style={{ color: MKT.green, fontWeight: 600, cursor: "pointer", border: "none", background: "none", fontFamily: "inherit", fontSize: 14.5 }}
-              >
-                browse everything
-              </button>
-              .
+              {agents.length === 0 ? (
+                `There are no listings to show right now.`
+              ) : (
+                <>
+                  Try a different search, or{" "}
+                  <button
+                    type="button"
+                    className="sf-link"
+                    onClick={() => {
+                      setCategory(null);
+                      setQuery("");
+                    }}
+                    style={{ color: MKT.green, fontWeight: 600, cursor: "pointer", border: "none", background: "none", fontFamily: "inherit", fontSize: 14.5 }}
+                  >
+                    browse everything
+                  </button>
+                  .
+                </>
+              )}
             </div>
           </div>
         )}

@@ -1,5 +1,19 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 import { withWorkflow } from "workflow/next";
+
+// APP_HOSTS (see src/lib/http/app-hosts.ts): the install's own dashboard hostnames must be allowed Server Action origins.
+const extraAppHosts = (process.env.APP_HOSTS ?? "")
+  .split(",")
+  .map((h) => h.trim())
+  .filter(Boolean);
+
+// Branded builds (PLATFORM_NAME set and not "SeldonFrame") do not serve the vendor's marketing markdown. The proxy matcher is a
+// deliberate whitelist (tests/unit/build/skill-md-route-host.spec.ts forbids capturing /SKILL.md there), so these three host-agnostic
+// static routes are hidden with a build-time rewrite to a path that does not exist (404). Unbranded builds are untouched.
+const platformNameAtBuild = (process.env.PLATFORM_NAME ?? "").trim();
+const brandedBuild = platformNameAtBuild !== "" && platformNameAtBuild !== "SeldonFrame";
+const hiddenVendorMarkdown = ["/ai-agents.md", "/build.md", "/SKILL.md"];
 
 const nextConfig: NextConfig = {
   // Pre-existing React 19 / Framer Motion dual @types/react resolution
@@ -8,10 +22,20 @@ const nextConfig: NextConfig = {
   // tsc post-build check to stop whack-a-mole on third-party type artifacts.
   typescript: { ignoreBuildErrors: true },
   reactCompiler: true,
+  // `pg` (opt-in self-hosted pooled driver, src/db/index.ts) is node-only. A few
+  // client components reach `@/db` transitively; keep pg out of browser bundles.
+  turbopack: {
+    // Keep the build root inside this repository when the checkout is nested
+    // below an unrelated lockfile on the operator's machine.
+    root: path.resolve(process.cwd(), "../.."),
+    resolveAlias: {
+      pg: { browser: "./src/db/pg-browser-stub.ts" },
+    },
+  },
   allowedDevOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345"],
   experimental: {
     serverActions: {
-      allowedOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345"],
+      allowedOrigins: ["localhost", "127.0.0.1", "127.0.0.1:54345", ...extraAppHosts],
     },
   },
   // v1.38.4 — allowlist Unsplash domains for next/image. Without this,
@@ -39,10 +63,15 @@ const nextConfig: NextConfig = {
   // event captures still survive — they just take one extra redirect hop
   // before this rewrite matches.
   async rewrites() {
-    return [
+    const posthog = [
       { source: "/ingest/static/:path*", destination: "https://us-assets.i.posthog.com/static/:path*" },
       { source: "/ingest/:path*", destination: "https://us.i.posthog.com/:path*" },
     ];
+    if (!brandedBuild) return posthog;
+    return {
+      beforeFiles: hiddenVendorMarkdown.map((source) => ({ source, destination: "/__vendor-markdown-hidden" })),
+      afterFiles: posthog,
+    };
   },
 };
 

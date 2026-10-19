@@ -27,10 +27,12 @@
 // without conflicts). Theming via the agent's blueprint.greeting +
 // the workspace's primaryColor (queried at embed-load time).
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { agents, organizations } from "@/db/schema";
+import { shouldShowPoweredByBadgeForOrg } from "@/lib/billing/public";
+import { resolvePlatformBranding, resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 import {
   buildEmbedGoogleFontUrl,
   getArchetypeStyleTokens,
@@ -45,6 +47,12 @@ import {
 // workspaces hit the same logic in v2/complete BEFORE the chatbot
 // activates — this is the safety net for the existing ones.
 import { applyArchetypeThemeToOrg } from "@/lib/workspace/apply-archetype-theme";
+import {
+  buildEmbedTurnUrl,
+  isEmbedAgentAccessible,
+  resolveEmbedOrigin,
+  resolveRequestedEmbedAgent,
+} from "@/lib/agents/public-embed-resolution";
 
 export async function GET(
   request: Request,
@@ -55,7 +63,7 @@ export async function GET(
     ? agentSlugPath.split("--", 2)
     : [agentSlugPath, "default"];
 
-  const [agentRow] = await db
+  const agentRows = await db
     .select({
       id: agents.id,
       name: agents.name,
@@ -69,20 +77,31 @@ export async function GET(
     })
     .from(agents)
     .innerJoin(organizations, eq(organizations.id, agents.orgId))
-    .where(eq(organizations.slug, orgSlugPart))
+    .where(and(
+      eq(organizations.slug, orgSlugPart),
+      eq(agents.slug, agentSlugPart),
+    ))
     .limit(1);
+  const agentRow = resolveRequestedEmbedAgent(agentRows, orgSlugPart, agentSlugPart);
 
   // Even if not found, return a no-op script (don't 404 — that
   // would log noise on the operator's website console).
-  const url = new URL(request.url);
-  const turnUrl = `${url.protocol}//${url.host}/api/v1/public/agent/${orgSlugPart}--${agentSlugPart}/turn`;
+  // The container sees its internal bind address in request.url (https://0.0.0.0:3000), so the public
+  // origin comes from the proxy headers, validated against this platform's own hosts.
+  const publicOrigin = resolveEmbedOrigin({
+    host: request.headers.get("host"),
+    forwardedHost: request.headers.get("x-forwarded-host"),
+    forwardedProto: request.headers.get("x-forwarded-proto"),
+    appUrl: resolvePlatformBranding().appUrl,
+    workspaceBaseDomain: resolveWorkspaceBaseDomain(),
+  });
+  const turnUrl = buildEmbedTurnUrl(publicOrigin, orgSlugPart, agentSlugPart);
 
-  if (!agentRow || agentRow.slug !== agentSlugPart || !["live", "test"].includes(agentRow.status)) {
+  if (!agentRow || !isEmbedAgentAccessible(agentRow.status)) {
     console.warn(JSON.stringify({
       event: "embed_js_noop_returned",
       slug: agentSlugPath,
       reason: !agentRow ? "agent_not_found" :
-              agentRow.slug !== agentSlugPart ? "slug_mismatch" :
               `status_${agentRow.status}`,
     }));
     return new NextResponse(
@@ -169,6 +188,8 @@ export async function GET(
       ? themeRaw.logoUrl
       : null;
   const orgName = agentRow.orgName.replace(/[\\`$"<>]/g, "");
+  const platformBrand = resolvePlatformBranding();
+  const showVendorAttribution = await shouldShowPoweredByBadgeForOrg(agentRow.orgId);
 
   const script = renderEmbedScript({
     turnUrl,
@@ -178,6 +199,10 @@ export async function GET(
     orgName,
     logoUrl,
     orgSlug: orgSlugPart,
+    platformName: "SeldonFrame",
+    platformHomeUrl: "https://www.seldonframe.com",
+    licenseUrl: `${platformBrand.appUrl}/license`,
+    showVendorAttribution,
   });
 
   return new NextResponse(script, {
@@ -198,6 +223,10 @@ function renderEmbedScript(input: {
   orgName: string;
   logoUrl: string | null;
   orgSlug: string;
+  platformName: string;
+  platformHomeUrl: string;
+  licenseUrl: string;
+  showVendorAttribution: boolean;
 }): string {
   // bodyFontStack is the CSS font-family value the panel uses. The
   // workspace's body font (from the archetype OR stored theme.fontFamily)
@@ -221,6 +250,10 @@ function renderEmbedScript(input: {
     orgName: input.orgName,
     logoUrl: input.logoUrl,
     orgSlug: input.orgSlug,
+    platformName: input.platformName,
+    platformHomeUrl: input.platformHomeUrl,
+    licenseUrl: input.licenseUrl,
+    showVendorAttribution: input.showVendorAttribution,
   };
   // The embed runs as an IIFE. Self-contained — no framework deps.
   // Renders shadow-DOM-free for max compatibility (works inside iframes,
@@ -241,6 +274,7 @@ function renderEmbedScript(input: {
     } catch(e) { return "anon-" + Date.now().toString(36); }
   })();
   var conversationId = null;
+  var conversationCapability = null;
 
   // 2026-05-22 — inject Google Fonts link into host page BEFORE the
   // panel CSS mounts, so the @font-face declarations are parsed by the
@@ -381,7 +415,9 @@ function renderEmbedScript(input: {
     '<textarea class="sf-agent-input" id="sf-agent-input" rows="1" placeholder="Type a message..." aria-label="Type a message"></textarea>',
     '<button class="sf-agent-send" type="submit" aria-label="Send message">Send</button>',
     '</form>',
-    '<div class="sf-agent-footer">Powered by <a href="https://seldonframe.com?utm_source=chat_widget&utm_medium=embed&utm_content=' + encodeURIComponent(CFG.orgSlug) + '" target="_blank" rel="noopener">SeldonFrame</a></div>'
+    '<div class="sf-agent-footer">' + (CFG.showVendorAttribution
+      ? 'Powered by <a href="' + escapeAttr(CFG.platformHomeUrl) + '?utm_source=chat_widget&utm_medium=embed&utm_content=' + encodeURIComponent(CFG.orgSlug) + '" target="_blank" rel="noopener">' + escapeHtml(CFG.platformName) + '</a> · '
+      : '') + '<a href="' + escapeAttr(CFG.licenseUrl) + '" target="_blank" rel="noopener">Open-source notices</a></div>'
   ].join("");
 
   function escapeHtml(s){return String(s).replace(/[&<>"']/g, function(c){return ({"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"})[c];});}
@@ -518,6 +554,7 @@ function renderEmbedScript(input: {
         headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
         body: JSON.stringify({
           conversation_id: conversationId,
+          conversation_capability: conversationCapability,
           anonymous_session_id: sessionId,
           message: msg,
           stream: true,
@@ -532,6 +569,7 @@ function renderEmbedScript(input: {
         // Server fell back to JSON (older route, error, etc.)
         var data = await res.json();
         if (data.conversation_id) conversationId = data.conversation_id;
+        if (data.conversation_capability) conversationCapability = data.conversation_capability;
         typing.remove();
         appendMessage(data.message ? "assistant" : "system",
           data.message || "Something went wrong. Please try again.");
@@ -570,12 +608,14 @@ function renderEmbedScript(input: {
               var json = JSON.parse(payload);
               if (currentEvent === "start" && json.conversation_id) {
                 conversationId = json.conversation_id;
+                if (json.conversation_capability) conversationCapability = json.conversation_capability;
               } else if (currentEvent === "delta" && json.text) {
                 assistantText += json.text;
                 assistantEl.innerHTML = renderMarkdown(assistantText);
                 msgsEl.scrollTop = msgsEl.scrollHeight;
               } else if (currentEvent === "done") {
                 if (json.conversation_id) conversationId = json.conversation_id;
+                if (json.conversation_capability) conversationCapability = json.conversation_capability;
                 // Final markdown re-render to catch any partial-token edges
                 if (assistantText){
                   assistantEl.innerHTML = renderMarkdown(assistantText);

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 import {
   testBeehiivConnectionAction,
   getIntegrationSettings,
@@ -43,6 +44,7 @@ export default async function IntegrationsSettingsPage({
 }) {
   const params = await searchParams;
   const settings = await getIntegrationSettings();
+  const platformBrand = resolvePlatformBranding();
 
   if (!settings) {
     return null;
@@ -95,16 +97,16 @@ export default async function IntegrationsSettingsPage({
         <article className="rounded-xl border bg-card p-5 xl:col-span-2 space-y-4">
           <div>
             <h2 className="text-card-title">Email</h2>
-            <p className="mt-2 text-sm text-muted-foreground">SeldonFrame handles two kinds of email.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Email for this {platformBrand.name} installation is sent through its configured delivery service.</p>
           </div>
 
           <div className="rounded-lg border p-4 space-y-2">
-            <p className="text-xs font-semibold tracking-wide text-muted-foreground">AUTOMATIC EMAILS (BUILT IN)</p>
+              <p className="text-xs font-semibold tracking-wide text-muted-foreground">SYSTEM EMAIL</p>
             <p className="text-sm text-muted-foreground">
-              Welcome emails, session reminders, and follow-ups are sent automatically by SeldonFrame.
+              Delivery depends on an email transport configured for this installation.
             </p>
-            <p className="text-sm">Sending from: <span className="text-muted-foreground">noreply@seldonframe.com</span></p>
-            <p className="text-xs text-muted-foreground">Self-hosted users can configure Resend in Developer/System settings.</p>
+            <p className="text-sm">Sender name: <span className="text-muted-foreground">{platformBrand.emailFromName}</span></p>
+            <p className="text-xs text-muted-foreground">The sender address and delivery provider are configured by the platform operator.</p>
           </div>
 
           <div className="rounded-lg border p-4 space-y-3">
@@ -183,7 +185,7 @@ export default async function IntegrationsSettingsPage({
               Point your Twilio Messaging webhook here — both inbound SMS and status callbacks land on the same endpoint:
             </p>
             <code className="block break-all rounded bg-muted/40 px-2 py-1 text-[11px] text-foreground">
-              {`${process.env.NEXT_PUBLIC_APP_URL ?? "https://app.seldonframe.com"}/api/webhooks/twilio/sms`}
+              {`${platformBrand.appUrl}/api/webhooks/twilio/sms`}
             </code>
             <p>
               Signature verification uses your stored Twilio auth token — no extra env var needed. STOP replies are auto-suppressed per carrier rules.
@@ -243,7 +245,7 @@ export default async function IntegrationsSettingsPage({
               Point your Resend webhook here to capture delivery, open, click, and bounce events:
             </p>
             <code className="block break-all rounded bg-muted/40 px-2 py-1 text-[11px] text-foreground">
-              {`${process.env.NEXT_PUBLIC_APP_URL ?? "https://app.seldonframe.com"}/api/webhooks/resend`}
+              {`${platformBrand.appUrl}/api/webhooks/resend`}
             </code>
             <p>
               Signing secret: set <code className="text-foreground">RESEND_WEBHOOK_SECRET</code> in your environment.

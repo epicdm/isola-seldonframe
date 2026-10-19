@@ -29,6 +29,7 @@ import { seedDemoPortalContentForOrg } from "@/lib/workspace/seed-demo-portal";
 // enhanceLandingForWorkspace from the default creation path and nothing
 // took over the theme write. See lib/workspace/apply-archetype-theme.ts.
 import { applyArchetypeThemeToOrg } from "@/lib/workspace/apply-archetype-theme";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 
 type Body = {
   workspace_id?: unknown;
@@ -74,8 +75,7 @@ export async function POST(request: Request) {
     .where(eq(organizations.id, workspaceId))
     .limit(1);
 
-  const baseDomain =
-    process.env.WORKSPACE_BASE_DOMAIN?.trim() || "app.seldonframe.com";
+  const baseDomain = resolveWorkspaceBaseDomain();
   const publicUrl = org?.slug ? `https://${org.slug}.${baseDomain}/` : null;
 
   logEvent(

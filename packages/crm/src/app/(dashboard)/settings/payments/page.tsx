@@ -3,8 +3,10 @@ import { UpgradeGate } from "@/components/upgrade-gate";
 import { getOrgFeatures } from "@/lib/billing/features";
 import { getOrgId } from "@/lib/auth/helpers";
 import { getOrgSubscription } from "@/lib/billing/subscription";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 export default async function PaymentsSettingsPage() {
+  const platformBrand = resolvePlatformBranding();
   const status = await getStripeConnectionStatus();
   const orgId = await getOrgId();
   const subscription = await getOrgSubscription(orgId);
@@ -52,10 +54,10 @@ export default async function PaymentsSettingsPage() {
             Register this URL as a <span className="font-medium text-foreground">Connect</span> webhook endpoint in your Stripe dashboard (Developers → Webhooks → Add endpoint → Connect). Subscribe to <code className="text-foreground">payment_intent.*</code>, <code className="text-foreground">charge.refunded</code>, <code className="text-foreground">charge.dispute.*</code>, <code className="text-foreground">invoice.*</code>, and <code className="text-foreground">customer.subscription.*</code> events.
           </p>
           <code className="block break-all rounded bg-muted/40 px-2 py-1 text-[11px] text-foreground">
-            {`${process.env.NEXT_PUBLIC_APP_URL ?? "https://app.seldonframe.com"}/api/webhooks/stripe/connect`}
+            {`${platformBrand.appUrl}/api/webhooks/stripe/connect`}
           </code>
           <p className="text-xs text-muted-foreground">
-            Set <code className="text-foreground">STRIPE_CONNECT_WEBHOOK_SECRET</code> in your environment to the signing secret Stripe shows after creating the endpoint. This is distinct from the platform webhook used for SeldonFrame&apos;s own billing.
+            Set <code className="text-foreground">STRIPE_CONNECT_WEBHOOK_SECRET</code> in your environment to the signing secret Stripe shows after creating the endpoint. This is distinct from the platform&apos;s own billing webhook.
           </p>
         </div>
       ) : null}

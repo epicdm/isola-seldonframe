@@ -33,6 +33,7 @@ import { resolveDomainGate } from "@/lib/billing/domain-gate";
 import { getPlan } from "@/lib/billing/plans";
 import { DomainPlanChooser, type DomainPlanCard } from "@/components/billing/domain-plan-chooser";
 import { DOMAIN_UNLOCK_TIERS } from "@/components/billing/domain-unlock-tiers";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 export default async function DomainSettingsPage({
   searchParams,
@@ -54,6 +55,7 @@ export default async function DomainSettingsPage({
   }>;
 }) {
   const params = await searchParams;
+  const platformBrand = resolvePlatformBranding();
   const session = await auth();
   const userId = session?.user?.id ?? null;
   const orgId = await getOrgId();
@@ -89,7 +91,7 @@ export default async function DomainSettingsPage({
           : `${subAccounts} client sub-accounts`;
     const detail =
       tier === "managed"
-        ? "Runs on SeldonFrame's keys — no API keys to bring. Custom domain included."
+        ? "Uses platform-managed integration keys; no separate API keys to bring. Custom domain included."
         : tier === "agency_starter"
           ? "Full white-label with branded client portals."
           : tier === "agency_growth"
@@ -298,7 +300,7 @@ function UpsellCard({
         <p className="text-sm text-muted-foreground">
           Connect your own domain — so your site lives at{" "}
           <i className="text-foreground">yourbusiness.com</i> instead of a
-          SeldonFrame subdomain.
+            platform subdomain.
         </p>
       </div>
 

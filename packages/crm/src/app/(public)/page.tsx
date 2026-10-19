@@ -57,22 +57,35 @@ import { resolveLandingMode } from "./landing-mode";
 // Positioning line is shared with the /home.md agent-Markdown twin (M3) so the
 // promise can't drift between the human page and the Markdown.
 import { POSITIONING_ONE_LINER } from "./home-copy";
+import { buildPlatformOrganizationWebsiteGraph, resolvePlatformBranding } from "@/lib/branding/platform";
+
+const platformBrand = resolvePlatformBranding();
+const homeTitle = platformBrand.name === "SeldonFrame"
+  ? "SeldonFrame — Sell AI front offices. Deploy them in minutes."
+  : `${platformBrand.name}, operated by ${platformBrand.operatorName}`;
+const homeDescription = platformBrand.name === "SeldonFrame"
+  ? POSITIONING_ONE_LINER
+  : `${platformBrand.name} is ${platformBrand.operatorName}'s workspace entry for internet and telephone services. Contact ${platformBrand.operatorName} to confirm service availability and setup.`;
 
 export const metadata: Metadata = {
-  title: "SeldonFrame — Sell AI front offices. Deploy them in minutes.",
-  description: POSITIONING_ONE_LINER,
+  title: homeTitle,
+  description: homeDescription,
   openGraph: {
-    title: "SeldonFrame — Sell AI front offices. Deploy them in minutes.",
-    description: POSITIONING_ONE_LINER,
+    title: homeTitle,
+    description: homeDescription,
     type: "website",
-    url: "https://seldonframe.com",
-    images: [{ url: "/brand/og-image.png", width: 1200, height: 630 }],
+    url: platformBrand.homeUrl,
+    images: platformBrand.name === "SeldonFrame"
+      ? [{ url: "/brand/og-image.png", width: 1200, height: 630 }]
+      : platformBrand.logoUrl ? [{ url: platformBrand.logoUrl }] : [],
   },
   twitter: {
     card: "summary_large_image",
-    title: "SeldonFrame — Sell AI front offices. Deploy them in minutes.",
-    description: POSITIONING_ONE_LINER,
-    images: ["/brand/twitter-card.png"],
+    title: homeTitle,
+    description: homeDescription,
+    images: platformBrand.name === "SeldonFrame"
+      ? ["/brand/twitter-card.png"]
+      : platformBrand.logoUrl ? [platformBrand.logoUrl] : [],
   },
 };
 
@@ -89,6 +102,58 @@ export default async function PublicHomePage({
   const params = await searchParams;
   const recordEnabled = isRecordToAgentOn({ SF_RECORD_TO_AGENT: process.env.SF_RECORD_TO_AGENT });
   const initialMode = resolveLandingMode(params.mode, recordEnabled);
+  const siteGraph = platformBrand.name === "SeldonFrame"
+    ? [
+        {
+          "@type": "Organization",
+          "@id": "https://www.seldonframe.com/#org",
+          name: "SeldonFrame",
+          url: "https://www.seldonframe.com",
+          logo: "https://www.seldonframe.com/brand/og-image.png",
+          description: POSITIONING_ONE_LINER,
+          founder: {
+            "@type": "Person",
+            name: "Maxime Houle",
+            image: "https://www.seldonframe.com/brand/maxime-houle.png",
+          },
+          sameAs: [
+            "https://x.com/seldonframe",
+            "https://github.com/seldonframe",
+            "https://linkedin.com/company/seldonframe",
+          ],
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://www.seldonframe.com/#website",
+          name: "SeldonFrame",
+          url: "https://www.seldonframe.com",
+          publisher: { "@id": "https://www.seldonframe.com/#org" },
+        },
+      ]
+    : buildPlatformOrganizationWebsiteGraph(platformBrand, homeDescription);
+
+  if (platformBrand.name !== "SeldonFrame") {
+    const jsonLd = JSON.stringify({ "@context": "https://schema.org", "@graph": siteGraph })
+      .replace(/</g, "\\u003c");
+    return (
+      <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col justify-center gap-8 px-6 py-16">
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
+        <header className="space-y-3">
+          <p className="text-sm font-medium text-muted-foreground">Operated by {platformBrand.operatorName}</p>
+          {platformBrand.logoUrl ? <img className="max-h-12 max-w-56 object-contain object-left" src={platformBrand.logoUrl} alt={platformBrand.name} /> : null}
+          <h1 className="text-4xl font-semibold tracking-tight">{platformBrand.name}</h1>
+          <p className="max-w-2xl text-lg text-muted-foreground">
+            {platformBrand.operatorName} provides internet and telephone services. Sign in to your {platformBrand.name} workspace, or contact {platformBrand.operatorName} to confirm service availability and setup.
+          </p>
+        </header>
+        <nav className="flex flex-wrap items-center gap-4">
+          <a className="inline-flex items-center rounded-md bg-primary px-5 py-3 font-medium text-primary-foreground" href={`${platformBrand.appUrl}/login`}>Sign in</a>
+          <a className="text-sm underline underline-offset-4" href={`mailto:${platformBrand.supportEmail}`}>Contact {platformBrand.operatorName}</a>
+          <a className="text-sm underline underline-offset-4" href="/license">Open-source notices</a>
+        </nav>
+      </main>
+    );
+  }
 
   return (
     <>
@@ -100,33 +165,7 @@ export default async function PublicHomePage({
         dangerouslySetInnerHTML={{
           __html: JSON.stringify({
             "@context": "https://schema.org",
-            "@graph": [
-              {
-                "@type": "Organization",
-                "@id": "https://www.seldonframe.com/#org",
-                name: "SeldonFrame",
-                url: "https://www.seldonframe.com",
-                logo: "https://www.seldonframe.com/brand/og-image.png",
-                description: POSITIONING_ONE_LINER,
-                founder: {
-                  "@type": "Person",
-                  name: "Maxime Houle",
-                  image: "https://www.seldonframe.com/brand/maxime-houle.png",
-                },
-                sameAs: [
-                  "https://x.com/seldonframe",
-                  "https://github.com/seldonframe",
-                  "https://linkedin.com/company/seldonframe",
-                ],
-              },
-              {
-                "@type": "WebSite",
-                "@id": "https://www.seldonframe.com/#website",
-                name: "SeldonFrame",
-                url: "https://www.seldonframe.com",
-                publisher: { "@id": "https://www.seldonframe.com/#org" },
-              },
-            ],
+            "@graph": siteGraph,
           }),
         }}
       />

@@ -10,6 +10,9 @@ import { shouldShowPoweredByBadgeForOrg } from "@/lib/billing/public";
 import { getPublicBookingContext } from "@/lib/bookings/actions";
 import { getPublicOrgThemeBySlug } from "@/lib/theme/actions";
 import type { R1TestimonialsSection } from "@/lib/landing/r1-payload-prompt";
+import type { Metadata } from "next";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
+import { LicenseNoticeLink } from "@/components/legal/license-notice-link";
 // 2026-05-18 (later) — agency-wide white-label REMOVED from public
 // booking page. The end customer (the homeowner clicking the booking
 // link) should see the SMB's identity ("Roofs by Shiloh"), not the
@@ -30,6 +33,20 @@ export type BookingTestimonialsData = {
   heading?: string;
   reviewSummary?: R1TestimonialsSection["reviewSummary"];
 };
+
+export async function generateMetadata({ params }: { params: Promise<{ orgSlug: string; bookingSlug: string }> }): Promise<Metadata> {
+  const { orgSlug, bookingSlug } = await params;
+  const context = await getPublicBookingContext(orgSlug, bookingSlug);
+  const brand = resolvePlatformBranding();
+  if (!context) return { title: "Booking not found", robots: { index: false, follow: false } };
+  const [org] = await db.select({ name: organizations.name }).from(organizations).where(eq(organizations.id, context.orgId)).limit(1);
+  const title = context.appointmentName || "Book an appointment";
+  return {
+    title: org?.name ? `${title} | ${org.name}` : title,
+    description: context.appointmentDescription || `Book with ${org?.name || brand.name}.`,
+    alternates: { canonical: `/book/${encodeURIComponent(orgSlug)}/${encodeURIComponent(bookingSlug)}` },
+  };
+}
 
 async function fetchBookingTestimonials(orgId: string): Promise<BookingTestimonialsData> {
   const empty: BookingTestimonialsData = { testimonials: [] };
@@ -208,8 +225,8 @@ export default async function PublicBookingPage({
             {showBadge ? <PoweredByBadge source="booking_page" /> : null}
           </div>
         ) : null}
+        <div className="flex justify-center py-2"><LicenseNoticeLink /></div>
       </div>
     </PublicThemeProvider>
   );
 }
-

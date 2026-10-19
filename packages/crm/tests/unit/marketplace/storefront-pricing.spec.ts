@@ -21,7 +21,7 @@ import {
   sellingBannerState,
   type StorefrontPricingRow,
 } from "../../../src/lib/marketplace/pricing-model";
-import { rowToStorefrontAgent } from "../../../src/components/marketplace/marketplace-data";
+import { rowToStorefrontAgent, mcpEndpointFor, mcpSnippetFor } from "../../../src/components/marketplace/marketplace-data";
 import { priceLabel } from "../../../src/components/marketplace/marketplace-data";
 import type { MarketplaceAgentRow } from "../../../src/lib/marketplace/agent-listings";
 
@@ -292,5 +292,20 @@ describe("sellingBannerState", () => {
       assert.equal(banner === "active", gate.isPublished);
       assert.equal(banner === "needs_connect", gate.needsConnect);
     }
+  });
+});
+
+describe("marketplace MCP origin", () => {
+  test("uses the configured application origin and preserves the native API path", () => {
+    assert.equal(
+      mcpEndpointFor("support-agent", "https://uplink.epic.dm/"),
+      "https://uplink.epic.dm/api/v1/agents/support-agent/mcp",
+    );
+    assert.match(mcpSnippetFor("support-agent", "https://uplink.epic.dm"), /https:\/\/uplink\.epic\.dm\/api\/v1\/agents\/support-agent\/mcp/);
+    assert.equal(
+      mcpEndpointFor("support agent", "https://uplink.epic.dm"),
+      "https://uplink.epic.dm/api/v1/agents/support%20agent/mcp",
+    );
+    assert.equal(mcpEndpointFor("native-agent", "https://app.seldonframe.com"), "https://app.seldonframe.com/api/v1/agents/native-agent/mcp");
   });
 });

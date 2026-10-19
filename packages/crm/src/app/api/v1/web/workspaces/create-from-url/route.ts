@@ -18,6 +18,7 @@
 
 import type { NextRequest } from "next/server";
 import { auth } from "@/auth";
+import { resolvePlatformWizardKey } from "@/lib/ai/platform-client";
 import { runCreateFromUrl } from "@/lib/web-onboarding/run-create-from-url";
 import { enforceWorkspaceLimit } from "@/lib/billing/limits";
 import { createFullWorkspace } from "@/lib/workspace/create-full";
@@ -65,6 +66,7 @@ import { seedDefaultOutboundTriggers } from "@/lib/messaging/seed-default-trigge
 // signature, same SSE events, same error codes. See markdown-extractor.ts
 // header for the why.
 import { extractBusinessFactsFromUrl } from "@/lib/web-onboarding/markdown-extractor";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 // 2026-06-23 — Programmatic SEO/GEO Deploy-CTA fulfilment. resolveStarterId…
 // maps the canonical agent slug (a starter id OR an /automations archetype id)
 // the visitor clicked on an /ai-agents/* page to the starter to fork; the
@@ -156,7 +158,8 @@ async function dispatchCreateFromUrl(
             return { key: result.key };
           }
         }
-        const platformKey = process.env.ANTHROPIC_API_KEY?.trim();
+        // Managed AI on this deployment may be the mounted-file provider (MODEL_API_KEY_FILE), not ANTHROPIC_API_KEY.
+        const platformKey = process.env.ANTHROPIC_API_KEY?.trim() || (await resolvePlatformWizardKey());
         return platformKey ? { key: platformKey } : null;
       },
       extractBusinessFactsFromUrl,
@@ -207,7 +210,7 @@ async function dispatchCreateFromUrl(
           ? { ok: true, id: forked.id, starterId }
           : { ok: false, starterId };
       },
-      workspaceBaseDomain: process.env.WORKSPACE_BASE_DOMAIN ?? "app.seldonframe.com",
+      workspaceBaseDomain: resolveWorkspaceBaseDomain(),
     },
     body: {
       url,

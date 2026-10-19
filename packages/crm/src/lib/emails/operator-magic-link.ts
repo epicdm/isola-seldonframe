@@ -43,6 +43,9 @@ export interface OperatorMagicLinkEmailDeps {
   fetcher?: typeof fetch;
   apiKey: string;
   fromAddress: string;
+  /** EPIC 2026-10-08: delivery transport. Default 'resend' (unchanged). 'smtp2go' uses EPIC's existing SMTP2GO account, the same
+   *  one the main sign-in and the customer portal code already use (see lib/portal/email-transport.ts). */
+  transport?: "resend" | "smtp2go";
 }
 
 export type OperatorMagicLinkSendResult =
@@ -162,6 +165,33 @@ export async function sendOperatorMagicLinkEmail(
   const subject = operatorMagicLinkEmailSubject(req);
   const html = renderOperatorMagicLinkEmailHtml(req);
   const text = renderOperatorMagicLinkEmailText(req);
+
+  if (deps.transport === "smtp2go") {
+    // EPIC 2026-10-08 -- same message through the SMTP2GO HTTP API (the key travels in a header, never in a log line).
+    let res: Response;
+    try {
+      res = await fetcher("https://api.smtp2go.com/v3/email/send", {
+        method: "POST",
+        headers: { "X-Smtp2go-Api-Key": deps.apiKey, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ sender: deps.fromAddress, to: [req.email], subject, html_body: html, text_body: text }),
+      });
+    } catch (err) {
+      return { ok: false, status: 502, error: `SMTP2GO request failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    let payload: { data?: { succeeded?: number; email_id?: string; error?: string; error_code?: string } } = {};
+    try {
+      payload = (await res.json()) as typeof payload;
+    } catch {
+      payload = {};
+    }
+    const succeeded = Number(payload.data?.succeeded ?? 0);
+    if (!res.ok || succeeded < 1) {
+      const detail = payload.data?.error ?? payload.data?.error_code ?? `status ${res.status}`;
+      console.error(`[operator-magic-link-email] SMTP2GO ${res.status}: ${detail} from=${deps.fromAddress}`);
+      return { ok: false, status: res.ok ? 502 : res.status, error: String(detail) };
+    }
+    return { ok: true, messageId: payload.data?.email_id ?? "" };
+  }
 
   let response: Response;
   try {

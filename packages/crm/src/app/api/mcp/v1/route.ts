@@ -42,6 +42,7 @@
 // real bridge → map { status, body } onto NextResponse.
 
 import { NextResponse } from "next/server";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 import { guardApiRequest } from "@/lib/api/guard";
 import {
   handleBuildMcpRpc,
@@ -69,7 +70,11 @@ const CORS_HEADERS = {
 // metadata document (OAuth plan Task 14). Flag off → no header at all, the
 // 401 stays byte-identical to its pre-OAuth shape. The JSON-RPC error BODY
 // is unchanged in both cases.
-const PROTECTED_RESOURCE_METADATA_URL = "https://mcp.seldonframe.com/.well-known/oauth-protected-resource";
+function protectedResourceMetadataUrl(): string {
+  const brand = resolvePlatformBranding();
+  const origin = brand.name === "SeldonFrame" ? "https://mcp.seldonframe.com" : brand.appUrl;
+  return `${origin}/.well-known/oauth-protected-resource`;
+}
 
 function unauthorizedHeaders(): Record<string, string> {
   if (process.env.SF_OAUTH_ENABLED !== "true") {
@@ -77,7 +82,7 @@ function unauthorizedHeaders(): Record<string, string> {
   }
   return {
     ...CORS_HEADERS,
-    "WWW-Authenticate": `Bearer resource_metadata="${PROTECTED_RESOURCE_METADATA_URL}"`,
+    "WWW-Authenticate": `Bearer resource_metadata="${protectedResourceMetadataUrl()}"`,
   };
 }
 

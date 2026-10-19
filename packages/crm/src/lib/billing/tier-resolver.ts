@@ -49,6 +49,7 @@ import { cache } from "react";
 import { db } from "@/db";
 import { organizations, users } from "@/db/schema";
 import { normalizeTierId, type BillingTier } from "./features";
+import { isEmailInAllowlist, parseAdminAllowlist } from "@/lib/operator-portal/authorization";
 
 /** Internal: extract a tier from an organizations row's subscription/plan
  *  columns. "inactive" = no active paid plan. */
@@ -87,6 +88,19 @@ export const resolveTierForWorkspace = cache(
     // to client who pays directly" future case.
     const ownTier = tierFromOrgRow(org);
     if (ownTier !== "inactive") return ownTier;
+
+    // EPIC 2026-10-08: a workspace with NO plan of its own that is owned (or agency-managed) by a platform admin (SF_SUPERADMIN_EMAILS)
+    // resolves to the top tier, so the instance operator is never paywalled on its own platform and its client workspaces inherit the
+    // agency's tier exactly as they would from a paying Scale agency. A workspace WITH its own paid plan keeps it (returned above).
+    // Unset env = no extra read and no behaviour change.
+    const platformAdmins = parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS);
+    if (platformAdmins.length > 0) {
+      for (const candidateId of [org.ownerId, org.parentUserId]) {
+        if (!candidateId) continue;
+        const [adminRow] = await db.select({ email: users.email }).from(users).where(eq(users.id, candidateId)).limit(1);
+        if (isEmailInAllowlist(adminRow?.email, platformAdmins)) return "agency_scale";
+      }
+    }
 
     // Step 3: agency-managed workspace. Walk up to the owning user,
     // read THEIR tier from the primary org row OR users.planId.

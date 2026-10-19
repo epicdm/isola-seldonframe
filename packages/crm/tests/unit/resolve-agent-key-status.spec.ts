@@ -11,7 +11,13 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveAgentKeyStatusFromInputs } from "../../src/lib/ai/client";
+import {
+  readPlatformApiKeyFile,
+  resolveAgentKeyStatusFromInputs,
+  resolvePlatformAgentModel,
+  resolvePlatformAnthropicAuth,
+  requirePlatformModelBaseUrl,
+} from "../../src/lib/ai/client";
 
 // Decrypter that mimics the real behavior: undefined/empty -> "",
 // strings starting with "v1." -> "decrypted-<rest>", everything else -> as-is.
@@ -74,6 +80,33 @@ describe("resolveAgentKeyStatusFromInputs", () => {
     });
   });
 
+  test("recognizes the mounted platform key file without reading its contents", () => {
+    const status = resolveAgentKeyStatusFromInputs({}, false, fakeDecrypt, true);
+    assert.deepEqual(status, {
+      hasKey: true,
+      mode: "platform",
+      provider: null,
+    });
+  });
+
+  test("selects the existing platform key file without reading credential material", () => {
+    assert.deepEqual(resolvePlatformAnthropicAuth(undefined, "  /run/secrets/model_api_key  "), {
+      kind: "api-key-file",
+      filePath: "/run/secrets/model_api_key",
+    });
+  });
+
+  test("keeps the existing explicit API-key path ahead of key-file fallback", () => {
+    assert.deepEqual(resolvePlatformAnthropicAuth("  existing-key  ", "/run/secrets/model_api_key"), {
+      kind: "api-key",
+      apiKey: "existing-key",
+    });
+  });
+
+  test("does not silently enable platform auth when key and key-file path are absent", () => {
+    assert.deepEqual(resolvePlatformAnthropicAuth(undefined, undefined), { kind: "none" });
+  });
+
   test("returns none when no BYOK key AND no platform key", () => {
     const status = resolveAgentKeyStatusFromInputs({}, false, fakeDecrypt);
     assert.deepEqual(status, {
@@ -115,5 +148,66 @@ describe("resolveAgentKeyStatusFromInputs", () => {
       fakeDecrypt,
     );
     assert.equal(status.provider, "anthropic");
+  });
+});
+
+describe("readPlatformApiKeyFile", () => {
+  test("reads and trims the mounted credential before client construction", async () => {
+    let reads = 0;
+    const apiKey = await readPlatformApiKeyFile("/run/secrets/model_api_key", async (filePath) => {
+      reads += 1;
+      assert.equal(filePath, "/run/secrets/model_api_key");
+      return "  synthetic-key-value  \n";
+    });
+
+    assert.equal(reads, 1);
+    assert.equal(apiKey, "synthetic-key-value");
+  });
+
+  test("fails closed for missing/empty files without disclosing contents or OS errors", async () => {
+    const missing = readPlatformApiKeyFile("/protected/path", async () => {
+      throw new Error("private-secret-value was included in an underlying error");
+    });
+    await assert.rejects(missing, /Platform model credential file is unavailable/);
+    await assert.rejects(missing, (error: Error) => !error.message.includes("private-secret-value"));
+
+    const empty = readPlatformApiKeyFile("/protected/path", async () => "  \n");
+    await assert.rejects(empty, /Platform model credential file is empty/);
+  });
+
+  test("maps unreadable credential files to a safe fail-closed error", async () => {
+    const unreadable = readPlatformApiKeyFile("/run/secrets/model_api_key", async () => {
+      throw new Error("EACCES synthetic-private-key-value");
+    });
+    await assert.rejects(unreadable, (error: Error) => {
+      assert.equal(error.message, "Platform model credential file is unavailable.");
+      assert.equal(error.message.includes("synthetic-private-key-value"), false);
+      return true;
+    });
+  });
+});
+
+describe("requirePlatformModelBaseUrl", () => {
+  test("accepts the existing DeepSeek Anthropic-compatible endpoint", () => {
+    assert.equal(
+      requirePlatformModelBaseUrl(" https://api.deepseek.com/anthropic "),
+      "https://api.deepseek.com/anthropic",
+    );
+  });
+
+  test("fails closed for missing, non-HTTPS, or credential-bearing endpoints", () => {
+    assert.throws(() => requirePlatformModelBaseUrl(undefined), /endpoint is not configured/);
+    assert.throws(() => requirePlatformModelBaseUrl("http://api.deepseek.com/anthropic"), /HTTPS URL/);
+    assert.throws(
+      () => requirePlatformModelBaseUrl("https://user:password@api.deepseek.com/anthropic"),
+      /without embedded credentials/,
+    );
+  });
+});
+
+describe("resolvePlatformAgentModel", () => {
+  test("uses the existing platform model name and keeps a DeepSeek default", () => {
+    assert.equal(resolvePlatformAgentModel(" deepseek-chat "), "deepseek-chat");
+    assert.equal(resolvePlatformAgentModel(undefined), "deepseek-chat");
   });
 });

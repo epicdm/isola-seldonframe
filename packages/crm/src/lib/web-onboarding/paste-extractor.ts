@@ -12,6 +12,7 @@
 // pipeline — zero schema change needed.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { createWizardAnthropic, wizardModelDefault } from "@/lib/ai/platform-client";
 import { EXTRACTION_INSTRUCTIONS_MD, type ExtractedBusinessFacts } from "./extraction-prompt";
 import { parseExtraction } from "./extraction-parser";
 import { mapAnthropicSdkError } from "./anthropic-error-map";
@@ -34,7 +35,7 @@ type AnthropicLike = {
 // Same model / token defaults as markdown-extractor.ts so both paths
 // benefit from the same env override.
 const DEFAULT_MODEL =
-  process.env.WEB_ONBOARDING_MODEL?.trim() || "claude-opus-4-7";
+  process.env.WEB_ONBOARDING_MODEL?.trim() || wizardModelDefault("claude-opus-4-7");
 
 const MAX_TOKENS = 4096;
 
@@ -77,7 +78,7 @@ export async function extractBusinessFactsFromPaste(args: {
     args.pastedText.trim(),
   ].join("\n");
 
-  const client = new Anthropic({ apiKey: args.byokKey }) as unknown as AnthropicLike;
+  const client = createWizardAnthropic(args.byokKey) as unknown as AnthropicLike;
   const modelInUse = DEFAULT_MODEL;
 
   let response: { content: Array<AnthropicContentBlock>; stop_reason?: string | null };

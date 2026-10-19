@@ -1,6 +1,6 @@
 "use server";
 
-import { contactFromAnswers } from "@/lib/forms/contact-from-answers";
+import { contactFromAnswers, emailFromAnswers } from "@/lib/forms/contact-from-answers";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
@@ -221,7 +221,7 @@ export async function submitPublicIntakeAction({
     throw new Error("Form not found");
   }
 
-  const email = typeof data.email === "string" ? data.email : null;
+  const email = emailFromAnswers(data);
 
   let contactId: string | null = null;
 

@@ -25,38 +25,56 @@
 
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { organizations, partnerAgencies } from "@/db/schema";
+import { organizations, partnerAgencies, users } from "@/db/schema";
 import type { PartnerAgency } from "@/db/schema";
+import { planUnlocksAgency } from "./plan-gate";
+import { isEmailInAllowlist, parseAdminAllowlist } from "@/lib/operator-portal/authorization";
 
 // ─── plan gate ─────────────────────────────────────────────────────────────
 
-const SCALE_TIER_PLANS = new Set(["scale", "Scale", "SCALE"]);
+type PlanRow = { plan: string | null; subscription: unknown };
+const effectivePlan = (r: PlanRow) => (r.subscription as { tier?: string } | null | undefined)?.tier ?? r.plan;
 
-/** Check whether the user OWNING this workspace is on Scale tier.
+/** Check whether the user OWNING this workspace is on an agency tier.
  *  We check the workspace's plan column rather than per-user state
  *  because a user can own multiple workspaces and the plan is per-
  *  workspace (each workspace pays its own subscription). */
 async function isOwnerOnScaleTier(ownerUserId: string): Promise<boolean> {
   if (!ownerUserId) return false;
   const rows = await db
-    .select({ plan: organizations.plan })
+    .select({ plan: organizations.plan, subscription: organizations.subscription })
     .from(organizations)
     .where(eq(organizations.ownerId, ownerUserId));
-  return rows.some((r) => SCALE_TIER_PLANS.has(r.plan ?? ""));
+  return rows.some((r) => planUnlocksAgency(effectivePlan(r)));
 }
 
-/** v1.19 — polymorphic-ownership scale check. When the agency is
+/** v1.19 — polymorphic-ownership agency-tier check. When the agency is
  *  anchored to a workspace (anonymous-workspace ownership), we
  *  check THAT workspace's plan directly. Simpler than the user
  *  case (no need to scan multiple workspaces). */
 async function isWorkspaceOnScaleTier(workspaceId: string): Promise<boolean> {
   if (!workspaceId) return false;
   const [row] = await db
-    .select({ plan: organizations.plan })
+    .select({ plan: organizations.plan, subscription: organizations.subscription })
     .from(organizations)
     .where(eq(organizations.id, workspaceId))
     .limit(1);
-  return SCALE_TIER_PLANS.has(row?.plan ?? "");
+  return row ? planUnlocksAgency(effectivePlan(row)) : false;
+}
+
+/** EPIC 2026-10-08: platform admins (SF_SUPERADMIN_EMAILS) may always register an active agency. Resolves the agency owner's
+ *  email from the user id, or from the owning workspace's owner. Unset env = false without any read. */
+async function isOwnerPlatformAdmin(ownerUserId?: string, ownerWorkspaceId?: string): Promise<boolean> {
+  const admins = parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS);
+  if (admins.length === 0) return false;
+  let userId = ownerUserId ?? null;
+  if (!userId && ownerWorkspaceId) {
+    const [ws] = await db.select({ ownerId: organizations.ownerId }).from(organizations).where(eq(organizations.id, ownerWorkspaceId)).limit(1);
+    userId = ws?.ownerId ?? null;
+  }
+  if (!userId) return false;
+  const [row] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+  return isEmailInAllowlist(row?.email, admins);
 }
 
 // ─── registerPartnerAgency ─────────────────────────────────────────────────
@@ -133,11 +151,12 @@ export async function registerPartnerAgency(
   // v1.19 — polymorphic plan gate. User identity is preferred when
   // present (real human, owns multiple workspaces possibly); workspace
   // identity is the fallback (anonymous-workspace-as-actor).
-  const onScale = input.ownerUserId
-    ? await isOwnerOnScaleTier(input.ownerUserId)
-    : input.ownerWorkspaceId
-      ? await isWorkspaceOnScaleTier(input.ownerWorkspaceId)
-      : false;
+  const onScale =
+    (input.ownerUserId
+      ? await isOwnerOnScaleTier(input.ownerUserId)
+      : input.ownerWorkspaceId
+        ? await isWorkspaceOnScaleTier(input.ownerWorkspaceId)
+        : false) || (await isOwnerPlatformAdmin(input.ownerUserId, input.ownerWorkspaceId));
 
   const [created] = await db
     .insert(partnerAgencies)

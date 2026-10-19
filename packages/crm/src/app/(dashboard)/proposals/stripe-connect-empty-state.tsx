@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 type SupportedCountry = "US" | "CA" | "GB" | "AU";
 
@@ -18,6 +19,7 @@ const COUNTRY_LABELS: Record<SupportedCountry, string> = {
 };
 
 export function StripeConnectEmptyState() {
+  const platformBrand = resolvePlatformBranding();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [country, setCountry] = useState<SupportedCountry>("US");
@@ -52,10 +54,10 @@ export function StripeConnectEmptyState() {
   return (
     <section className="rounded-2xl border border-border/70 bg-card/40 p-12 text-center space-y-4 max-w-2xl mx-auto">
       <h2 className="text-2xl font-semibold tracking-tight">Send proposals, get paid</h2>
-      <p className="text-muted-foreground max-w-md mx-auto">
+      {platformBrand.name === "SeldonFrame" ? <p className="text-muted-foreground max-w-md mx-auto">
         Generate branded proposals with a live workspace included. Prospects pay you directly via
         Stripe — SeldonFrame takes 0%.
-      </p>
+      </p> : <p className="text-muted-foreground max-w-md mx-auto">Generate branded proposals with a live workspace included. Prospects pay you directly via Stripe.</p>}
       <div className="flex flex-col items-center gap-1">
         <label htmlFor="stripe-connect-country" className="text-sm font-medium text-foreground">
           Country

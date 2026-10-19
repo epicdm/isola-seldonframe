@@ -97,7 +97,7 @@ export default async function TestModeSettingsPage() {
           </li>
         </ul>
         <p className="text-xs text-muted-foreground">
-          Test credentials are configured via the SeldonFrame API
+          Test credentials are configured through the platform API
           (PATCH /api/v1/integrations) — UI authoring will ship in a
           follow-up slice.
         </p>

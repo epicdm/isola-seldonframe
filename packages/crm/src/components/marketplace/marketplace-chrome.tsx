@@ -13,6 +13,7 @@ import { MarketplaceIcon } from "./marketplace-icons";
 import { MKT } from "./marketplace-data";
 import { AGENT_JOBS } from "@/lib/seo/agent-pages";
 import { COMPETITORS } from "@/lib/seo/alternative-pages";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 /** Footer "Compare" links — every /alternative-to-<slug> page (from the
  *  registry, so a renamed competitor can't leave a dead link), plus the hub
@@ -91,6 +92,8 @@ export function MarketplaceNav({
   active?: NavTab;
   defaultQuery?: string;
 }): ReactElement {
+  const brand = resolvePlatformBranding();
+  const branded = brand.name !== "SeldonFrame";
   const navColor = (tab: NavTab) => (active === tab ? MKT.green : "rgba(34,29,23,0.62)");
   const navBg = (tab: NavTab) => (active === tab ? "rgba(31, 43, 36,0.10)" : "transparent");
 
@@ -129,8 +132,8 @@ export function MarketplaceNav({
             flex: "none",
           }}
         >
-          <SeldonFrameMark size={23} />
-          <span style={{ fontWeight: 700, fontSize: 16.5, letterSpacing: "-0.01em" }}>SeldonFrame</span>
+          {!branded ? <SeldonFrameMark size={23} /> : null}
+          <span style={{ fontWeight: 700, fontSize: 16.5, letterSpacing: "-0.01em" }}>{brand.name}</span>
           <span className="sf-mkt-navword" style={{ fontWeight: 500, fontSize: 16.5, color: "rgba(34,29,23,0.42)", letterSpacing: "-0.01em" }}>
             Marketplace
           </span>
@@ -143,12 +146,12 @@ export function MarketplaceNav({
           >
             Browse
           </Link>
-          <Link
+          {!branded ? <Link
             href="/ai-agents"
             style={{ ...navPill, color: "rgba(34,29,23,0.62)", background: "transparent" }}
           >
             By industry
-          </Link>
+          </Link> : null}
           <Link
             href="/studio/agents"
             style={{ ...navPill, color: navColor("studio"), background: navBg("studio") }}
@@ -204,14 +207,14 @@ export function MarketplaceNav({
           />
         </form>
 
-        <Link
+        {!branded ? <Link
           href="/studio/agents"
           title="Your workspace"
           style={{ display: "flex", flex: "none", textDecoration: "none" }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element -- static brand mark */}
           <img src="/brand/seldon-mark.svg" alt="Seldon" width={38} height={38} style={{ borderRadius: 11 }} />
-        </Link>
+        </Link> : null}
       </div>
     </header>
   );
@@ -228,6 +231,8 @@ const navPill = {
 /** The dark footer. The buyer-facing "2% flat fee" line from the design is
  *  intentionally REMOVED — no marketplace fee is ever shown to buyers. */
 export function MarketplaceFooter(): ReactElement {
+  const brand = resolvePlatformBranding();
+  const branded = brand.name !== "SeldonFrame";
   return (
     <footer style={{ background: MKT.dark, color: MKT.paper, marginTop: 30 }}>
       <div
@@ -237,23 +242,26 @@ export function MarketplaceFooter(): ReactElement {
           margin: "0 auto",
           padding: "54px 32px 40px",
           display: "grid",
-          gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1.1fr",
+          gridTemplateColumns: branded ? "2fr 1fr" : "1.4fr 1fr 1fr 1fr 1.1fr",
           gap: 32,
         }}
       >
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-            <SeldonFrameMark size={22} color={MKT.paper} accent={MKT.green} />
-            <span style={{ fontWeight: 700, fontSize: 16 }}>SeldonFrame Marketplace</span>
+            {!branded ? <SeldonFrameMark size={22} color={MKT.paper} accent={MKT.green} /> : null}
+            <span style={{ fontWeight: 700, fontSize: 16 }}>{brand.name} Marketplace</span>
           </div>
-          <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.55, color: "rgba(246,242,234,0.6)", maxWidth: 280 }}>
+          {branded ? <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.55, color: "rgba(246,242,234,0.6)", maxWidth: 280 }}>
+            Browse published agent listings and review the details and terms shown for each listing.
+          </p> : null}
+          {!branded ? <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.55, color: "rgba(246,242,234,0.6)", maxWidth: 280 }}>
             The marketplace for agents that{" "}
             <span style={{ fontFamily: MKT.fontSerif, fontStyle: "italic" }}>actually work</span> — answering, booking,
             and following up 24/7.
-          </p>
+          </p> : null}
         </div>
-        <FooterCol title="Browse" items={browseFooterItems()} />
-        <FooterCol
+        {!branded ? <FooterCol title="Browse" items={browseFooterItems()} /> : null}
+        {!branded ? <FooterCol
           title="Build"
           items={[
             { label: "List an agent", href: "/marketplace/build" },
@@ -261,9 +269,9 @@ export function MarketplaceFooter(): ReactElement {
             "Earnings & payouts",
             { label: "Builder docs", href: "/marketplace/build" },
           ]}
-        />
-        <FooterCol title="Company" items={["About", "Trust & safety", "Status", "Contact"]} />
-        <FooterCol title="Compare" items={compareFooterItems()} />
+        /> : null}
+        {!branded ? <FooterCol title="Company" items={["About", "Trust & safety", "Status", "Contact"]} /> : null}
+        {!branded ? <FooterCol title="Compare" items={compareFooterItems()} /> : <FooterCol title="Workspace" items={[{ label: "Agent Studio", href: "/studio/agents" }]} />}
       </div>
       <div style={{ borderTop: "1px solid rgba(246,242,234,0.12)" }}>
         <div
@@ -279,12 +287,12 @@ export function MarketplaceFooter(): ReactElement {
             gap: 12,
           }}
         >
-          <span style={{ fontSize: 13, color: "rgba(246,242,234,0.5)" }}>
+          {!branded ? <span style={{ fontSize: 13, color: "rgba(246,242,234,0.5)" }}>
             © 2026 SeldonFrame. The engine stays invisible; your agents do the talking.
-          </span>
-          <span style={{ fontSize: 13, color: "rgba(246,242,234,0.6)", fontWeight: 600 }}>
+          </span> : <span style={{ fontSize: 13, color: "rgba(246,242,234,0.5)" }}>{`© ${new Date().getFullYear()} ${brand.name}, operated by ${brand.operatorName}.`}</span>}
+          {!branded ? <span style={{ fontSize: 13, color: "rgba(246,242,234,0.6)", fontWeight: 600 }}>
             No lock-in · Cancel anytime
-          </span>
+          </span> : null}
         </div>
       </div>
     </footer>

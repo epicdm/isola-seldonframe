@@ -393,6 +393,13 @@
       "when": 1786000000000,
       "tag": "0078_organizations_is_internal",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1791431621650,
+      "tag": "0079_public_turn_spend_gate",
+      "breakpoints": true
     }
   ]
 }

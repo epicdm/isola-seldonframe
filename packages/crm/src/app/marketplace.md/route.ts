@@ -10,18 +10,21 @@
 
 import { loadStorefrontCatalog } from "@/lib/marketplace/load-storefront";
 import { renderMarketplaceIndexMarkdown, marketplaceUrl } from "@/lib/marketplace/render-markdown";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<Response> {
-  const agents = await loadStorefrontCatalog();
-  const md = renderMarketplaceIndexMarkdown(agents);
+  const catalog = await loadStorefrontCatalog();
+  const brand = resolvePlatformBranding();
+  const agents = brand.name === "SeldonFrame" ? catalog : catalog.filter((agent) => !agent.isSeed);
+  const md = renderMarketplaceIndexMarkdown(agents, brand.appUrl, brand.name);
 
   return new Response(md, {
     headers: {
       "Content-Type": "text/markdown; charset=utf-8",
       Vary: "Accept",
-      Link: `<${marketplaceUrl()}>; rel="alternate"; type="text/html"`,
+      Link: `<${marketplaceUrl(brand.appUrl)}>; rel="alternate"; type="text/html"`,
       "Cache-Control": "public, max-age=300, s-maxage=3600",
     },
   });

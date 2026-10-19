@@ -3,6 +3,13 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { agentConversations, organizations, partnerAgencies, seldonUsage, users } from "@/db/schema";
 import { decryptValue } from "@/lib/encryption";
+import {
+  createAnthropicByokClient,
+  createPlatformFileBackedClient,
+  readPlatformApiKeyFile,
+  createPlatformFileBackedClientOrNull,
+  requirePlatformModelBaseUrl,
+} from "@/lib/ai/platform-client";
 
 // 2026-07-08 per-sub-account usage meter — "capped" is a runtime-only mode
 // resolveRuntimeAiClient can return (never getAIClient itself): an
@@ -20,6 +27,7 @@ export type AIClientResolution = {
   client: Anthropic | null;
   mode: AIClientMode;
   provider: "anthropic" | "openai" | "platform";
+  model?: string;
   includedUsed: number;
   includedLimit: number;
   planId: string | null;
@@ -105,7 +113,7 @@ async function resolvePlanIdForOrg(params: { orgId: string; userId?: string | nu
 /**
  * Lightweight key-resolution diagnostic for UI surfaces (e.g. the agent test
  * sandbox at /agents/<id>/test). Mirrors the resolution order in `getAIClient`
- * — BYOK first, then the platform env-var fallback — without instantiating an
+ * — BYOK first, then the platform key-file fallback — without instantiating an
  * Anthropic client or querying usage tables.
  *
  * Why this exists: the dashboard previously read `org.integrations.anthropic.apiKey`
@@ -116,8 +124,8 @@ async function resolvePlanIdForOrg(params: { orgId: string; userId?: string | nu
  *
  * Returns:
  *   - mode: "byok" if the org has a decryptable BYOK key
- *           "platform" if no BYOK but `process.env.ANTHROPIC_API_KEY` is set
- *           "none" if no key is resolvable from any source
+ *           "platform" if no BYOK but a platform key or key file is set
+ *           "none" if no platform key or key file is configured
  *   - hasKey: convenience boolean; true if mode !== "none"
  *   - provider: "anthropic" | "openai" | null — which BYOK key resolved
  */
@@ -127,10 +135,35 @@ export type AgentKeyStatus = {
   provider: "anthropic" | "openai" | null;
 };
 
+export type PlatformAnthropicAuth =
+  | { kind: "api-key"; apiKey: string }
+  | { kind: "api-key-file"; filePath: string }
+  | { kind: "none" };
+
+export function resolvePlatformAnthropicAuth(
+  apiKey: string | undefined,
+  keyFilePath: string | undefined,
+): PlatformAnthropicAuth {
+  const normalizedKey = apiKey?.trim();
+  if (normalizedKey) return { kind: "api-key", apiKey: normalizedKey };
+
+  const normalizedFilePath = keyFilePath?.trim();
+  if (normalizedFilePath) return { kind: "api-key-file", filePath: normalizedFilePath };
+
+  return { kind: "none" };
+}
+
+export function resolvePlatformAgentModel(value: string | undefined): string {
+  return value?.trim() || "deepseek-chat";
+}
+
+export { createAnthropicByokClient, createPlatformFileBackedClient, readPlatformApiKeyFile, requirePlatformModelBaseUrl };
+
 /**
  * Pure resolution helper. Inputs:
  *   - integrations: org.integrations JSONB (or {})
  *   - hasPlatformKey: whether process.env.ANTHROPIC_API_KEY is set
+ *   - hasPlatformKeyFile: whether MODEL_API_KEY_FILE is set
  *   - decrypt: function that turns a stored value (possibly v1.<ciphertext>)
  *              into a usable plaintext key, or "" if it fails to decrypt
  *
@@ -140,6 +173,7 @@ export function resolveAgentKeyStatusFromInputs(
   integrations: OrganizationAiIntegrations,
   hasPlatformKey: boolean,
   decrypt: (value: string | undefined) => string,
+  hasPlatformKeyFile = false,
 ): AgentKeyStatus {
   if (decrypt(integrations.anthropic?.apiKey)) {
     return { hasKey: true, mode: "byok", provider: "anthropic" };
@@ -149,7 +183,7 @@ export function resolveAgentKeyStatusFromInputs(
     return { hasKey: true, mode: "byok", provider: "openai" };
   }
 
-  if (hasPlatformKey) {
+  if (hasPlatformKey || hasPlatformKeyFile) {
     return { hasKey: true, mode: "platform", provider: null };
   }
 
@@ -167,6 +201,7 @@ export async function resolveAgentKeyStatus(orgId: string): Promise<AgentKeyStat
     readOrgAiIntegrations(org?.integrations),
     Boolean(process.env.ANTHROPIC_API_KEY),
     decryptIfNeeded,
+    Boolean(process.env.MODEL_API_KEY_FILE?.trim()),
   );
 }
 
@@ -203,7 +238,7 @@ export async function getAIClient(params: { orgId: string; userId?: string | nul
 
   if (anthropicByokKey) {
     return {
-      client: new Anthropic({ apiKey: anthropicByokKey }),
+      client: createAnthropicByokClient(anthropicByokKey),
       mode: "byok",
       provider: "anthropic",
       includedUsed: 0,
@@ -225,16 +260,29 @@ export async function getAIClient(params: { orgId: string; userId?: string | nul
     };
   }
 
-  const platformApiKey = process.env.ANTHROPIC_API_KEY;
+  // Prefer the existing explicit key, then EPIC's mounted-secret convention.
+  const platformAuth = resolvePlatformAnthropicAuth(
+    process.env.ANTHROPIC_API_KEY,
+    process.env.MODEL_API_KEY_FILE,
+  );
   const planId = await resolvePlanIdForOrg(params);
   const includedLimit = getIncludedSeldonLimit(planId);
   const includedUsed = await getMonthlyIncludedUsage(params.orgId);
   const mode: AIClientMode = Number.isFinite(includedLimit) && includedUsed >= includedLimit ? "metered" : "included";
+  const platformClient =
+    platformAuth.kind === "api-key"
+      ? new Anthropic({ apiKey: platformAuth.apiKey })
+      : platformAuth.kind === "api-key-file"
+        ? await createPlatformFileBackedClientOrNull(platformAuth.filePath, process.env.MODEL_BASE_URL)
+        : null;
 
   return {
-    client: platformApiKey ? new Anthropic({ apiKey: platformApiKey }) : null,
+    client: platformClient,
     mode,
     provider: "platform",
+    ...(platformAuth.kind === "api-key-file"
+      ? { model: resolvePlatformAgentModel(process.env.MODEL_NAME) }
+      : {}),
     includedUsed,
     includedLimit,
     planId,

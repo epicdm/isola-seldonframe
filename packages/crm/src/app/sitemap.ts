@@ -8,8 +8,8 @@
 // seed) /marketplace/[slug] listing — so search engines discover the full tree
 // and the programmatic↔marketplace cross-links are crawlable both ways.
 //
-// Base URL matches the root layout's metadataBase (https://www.seldonframe.com); an
-// env override (NEXT_PUBLIC_SITE_URL) wins for non-prod deploys.
+// Base URL follows the configured platform origin; the upstream SeldonFrame
+// marketing origin remains the default for an unbranded self-host.
 
 import type { MetadataRoute } from "next";
 import { isRecordToAgentOn } from "@/lib/recordings/policy";
@@ -23,11 +23,14 @@ import { allPricingSlugs } from "@/lib/seo/competitor-pricing";
 import { listMarketplaceAgentsFromDb } from "@/lib/marketplace/agent-listings";
 import { MARKETPLACE_SEED } from "@/components/marketplace/marketplace-seed";
 import { GOHIGHLEVEL_COLLECTION_PATH } from "@/lib/seo/gohighlevel-discovery";
+import { canonicalAppOrigin } from "@/lib/http/app-hosts";
+import { brandedPublicSurface, sitePublicOrigin } from "@/lib/seo/public-origins";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
+import { headers } from "next/headers";
 
 /** The canonical public base URL — mirrors layout.tsx's metadataBase. */
 export function siteBaseUrl(): string {
-  const fromEnv = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  return (fromEnv && fromEnv.replace(/\/$/, "")) || "https://www.seldonframe.com";
+  return sitePublicOrigin();
 }
 
 /** Resolve the marketplace listing slugs to include (live, else seed). */
@@ -42,6 +45,16 @@ async function marketplaceSlugs(): Promise<string[]> {
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  // Branded deployment: the vendor marketing pages are hidden on this host, so a sitemap that lists them advertises 404s.
+  // A workspace host lists its own home page; every other host lists nothing. Unbranded builds never reach this branch,
+  // so they stay statically generated exactly as upstream.
+  if (resolvePlatformBranding().name !== "SeldonFrame") {
+    const requestHeaders = await headers();
+    const surface = brandedPublicSurface(requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host"));
+    return surface.workspaceSlug
+      ? [{ url: `${surface.origin}/`, lastModified: new Date(), changeFrequency: "weekly", priority: 1 }]
+      : [];
+  }
   const base = siteBaseUrl();
   const now = new Date();
 
@@ -83,7 +96,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // `base` (which stays the marketing host for every other entry).
   if (isRecordToAgentOn({ SF_RECORD_TO_AGENT: process.env.SF_RECORD_TO_AGENT })) {
     entries.push({
-      url: "https://app.seldonframe.com/record",
+      url: `${canonicalAppOrigin()}/record`,
       lastModified: now,
       changeFrequency: "monthly",
       priority: 0.8,

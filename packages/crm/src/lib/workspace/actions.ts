@@ -1,14 +1,19 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { apiKeys, organizations } from "@/db/schema";
+import { apiKeys, landingPages, organizations } from "@/db/schema";
 import { getOrgId, requireAuth } from "@/lib/auth/helpers";
 import { isAdminTokenUserId } from "@/lib/auth/admin-token";
 import { mintWorkspaceToken } from "@/lib/auth/workspace-token";
 import { assertWritable } from "@/lib/demo/server";
 import { COMMON_TIMEZONES, type TimezoneOption } from "@/lib/workspace/timezones";
+import {
+  mutateWorkspaceName,
+  replaceWorkspaceNameInHtml,
+} from "@/lib/blueprint/mutate";
+import type { Blueprint } from "@/lib/blueprint/types";
 
 interface UpdateResult {
   ok: boolean;
@@ -49,14 +54,142 @@ export async function updateWorkspaceSettingsAction(
     return { ok: false, error: "Pick a valid timezone." };
   }
 
-  await db
-    .update(organizations)
-    .set({ name, timezone, updatedAt: new Date() })
-    .where(eq(organizations.id, orgId));
+  const updated = await db.transaction(async (tx) => {
+    const [workspace] = await tx
+      .select({ name: organizations.name, soul: organizations.soul })
+      .from(organizations)
+      .where(eq(organizations.id, orgId))
+      .for("update");
+
+    if (!workspace) return false;
+
+    // The public page <title>/og/twitter and JSON-LD read the business name from organizations.soul, not from the landing row
+    // (found by Lane A in v4.43 acceptance). Only the two exact name keys are touched, and only when they held the old name.
+    const renamed = workspace.name !== name;
+    const currentSoul = (workspace.soul ?? null) as Record<string, unknown> | null;
+    const soulHoldsOldName =
+      renamed &&
+      currentSoul !== null &&
+      typeof currentSoul === "object" &&
+      (currentSoul.business_name === workspace.name || currentSoul.businessName === workspace.name);
+    const nextSoul = soulHoldsOldName
+      ? {
+          ...currentSoul,
+          ...(currentSoul.business_name === workspace.name ? { business_name: name } : {}),
+          ...(currentSoul.businessName === workspace.name ? { businessName: name } : {}),
+        }
+      : null;
+
+    await tx
+      .update(organizations)
+      .set({ name, timezone, updatedAt: new Date(), ...(nextSoul ? { soul: nextSoul as typeof organizations.$inferInsert.soul } : {}) })
+      .where(eq(organizations.id, orgId));
+
+    if (workspace.name === name) return true;
+
+    const pages = await tx
+      .select({
+        id: landingPages.id,
+        title: landingPages.title,
+        seo: landingPages.seo,
+        blueprintJson: landingPages.blueprintJson,
+        contentHtml: landingPages.contentHtml,
+      })
+      .from(landingPages)
+      .where(eq(landingPages.orgId, orgId));
+
+    for (const page of pages) {
+      let blueprintJson = page.blueprintJson;
+      let blueprintChanged = false;
+
+      if (
+        isWorkspaceBlueprint(blueprintJson) &&
+        blueprintJson.workspace.name === workspace.name
+      ) {
+        const nextBlueprint = mutateWorkspaceName(
+          blueprintJson,
+          name,
+          workspace.name
+        );
+        blueprintJson = JSON.parse(JSON.stringify(nextBlueprint)) as Record<string, unknown>;
+        blueprintChanged = true;
+      }
+
+      const htmlUpdate = replaceWorkspaceNameInHtml(
+        page.contentHtml,
+        workspace.name,
+        name
+      );
+      // The page <title>, og:title and twitter:title come from landing_pages.title / seo, not from the blueprint or the HTML
+      // (found by Lane A in v4.43 acceptance: after a rename the served metadata still carried the old name).
+      const nextTitle = typeof page.title === "string" ? page.title.split(workspace.name).join(name) : page.title;
+      const titleChanged = nextTitle !== page.title;
+      const nextSeo = replaceNameInJsonStrings(page.seo, workspace.name, name);
+      const seoChanged = JSON.stringify(nextSeo) !== JSON.stringify(page.seo);
+      if (!blueprintChanged && htmlUpdate.replacements === 0 && !titleChanged && !seoChanged) continue;
+
+      await tx
+        .update(landingPages)
+        .set({
+          ...(blueprintChanged ? { blueprintJson } : {}),
+          ...(htmlUpdate.replacements > 0
+            ? { contentHtml: htmlUpdate.contentHtml }
+            : {}),
+          ...(titleChanged ? { title: nextTitle } : {}),
+          ...(seoChanged ? { seo: nextSeo as Record<string, unknown> } : {}),
+          updatedAt: new Date(),
+        })
+        .where(and(eq(landingPages.id, page.id), eq(landingPages.orgId, orgId)));
+    }
+
+    return true;
+  });
+
+  if (!updated) return { ok: false, error: "Workspace not found." };
 
   revalidatePath("/settings/workspace");
   revalidatePath("/dashboard");
   return { ok: true };
+}
+
+/** Replace the literal old name inside every string value of a JSON document (objects and arrays), leaving the shape alone. */
+function replaceNameInJsonStrings(value: unknown, oldName: string, newName: string): unknown {
+  if (!oldName || oldName === newName) return value;
+  if (typeof value === "string") return value.split(oldName).join(newName);
+  if (Array.isArray(value)) return value.map((item) => replaceNameInJsonStrings(item, oldName, newName));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, replaceNameInJsonStrings(item, oldName, newName)]),
+    );
+  }
+  return value;
+}
+
+function isWorkspaceBlueprint(value: unknown): value is Blueprint {
+  if (value == null || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  const workspace = candidate.workspace;
+  const intake = candidate.intake;
+  const booking = candidate.booking;
+  if (workspace == null || typeof workspace !== "object") return false;
+  if (intake == null || typeof intake !== "object") return false;
+  if (booking == null || typeof booking !== "object") return false;
+  const workspaceName = (workspace as Record<string, unknown>).name;
+  const completion = (intake as Record<string, unknown>).completion;
+  const eventType = (booking as Record<string, unknown>).eventType;
+  const completionMessage =
+    completion != null && typeof completion === "object"
+      ? (completion as Record<string, unknown>).message
+      : undefined;
+  return (
+    typeof workspaceName === "string" &&
+    completion != null &&
+    typeof completion === "object" &&
+    (completionMessage === undefined || typeof completionMessage === "string") &&
+    eventType != null &&
+    typeof eventType === "object" &&
+    typeof (eventType as Record<string, unknown>).title === "string"
+  );
 }
 
 // ─── API key (workspace bearer token) management ──────────────────────

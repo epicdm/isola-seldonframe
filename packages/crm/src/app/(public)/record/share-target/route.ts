@@ -20,6 +20,7 @@
 
 import { NextResponse } from "next/server";
 import { isRecordToAgentOn } from "@/lib/recordings/policy";
+import { canonicalAppOrigin } from "@/lib/http/app-hosts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,5 +29,5 @@ export async function POST(request: Request): Promise<Response> {
   if (!isRecordToAgentOn({ SF_RECORD_TO_AGENT: process.env.SF_RECORD_TO_AGENT })) {
     return new Response(null, { status: 404 });
   }
-  return NextResponse.redirect(new URL("/record?shared=miss", request.url), 303);
+  return NextResponse.redirect(new URL("/record?shared=miss", canonicalAppOrigin()), 303);
 }

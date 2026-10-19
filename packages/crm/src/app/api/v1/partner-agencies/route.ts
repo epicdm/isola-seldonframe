@@ -26,6 +26,7 @@ import {
   verifyAgencySenderDomain,
 } from "@/lib/partner-agencies/sender-domain";
 import { resolveSubAccountCapForBuilderOrg } from "@/lib/billing/subaccount-count";
+import { canonicalAppOrigin } from "@/lib/http/app-hosts";
 
 /** 2026-07-08 — sub-account limit at the handoff boundary. Delegates to
  *  the shared resolveSubAccountCapForBuilderOrg (subaccount-count.ts —
@@ -159,7 +160,7 @@ export async function POST(request: Request) {
           : [
               "Agency is active. Attach workspaces with attach_workspace_to_agency({ workspace_id, agency_id }).",
               "Set up the agency's sender domain in v1.18 (verify_partner_agency_sender_domain) so emails branded as the agency can actually be delivered.",
-              "Set up the agency's custom domain in v1.20 (add_partner_agency_domain) so clients log in at crm.<agency>.com instead of app.seldonframe.com.",
+              `Set up the agency's verified custom domain in v1.20 (add_partner_agency_domain) so clients can sign in on their configured domain; operator access remains at ${canonicalAppOrigin()}.`,
             ],
       },
       { status: 200 },

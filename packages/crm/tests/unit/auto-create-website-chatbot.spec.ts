@@ -194,3 +194,38 @@ describe("autoCreateWebsiteChatbot — Part B bug fix", () => {
     }
   });
 });
+
+describe("autoCreateWebsiteChatbot — status policy closes public inference on the file-provider deployment (wizard hotfix)", () => {
+  const KEYS = ["SF_WIZARD_CHATBOT_STATUS", "MODEL_API_KEY_FILE", "ANTHROPIC_API_KEY"] as const;
+  const run = async (set: Partial<Record<(typeof KEYS)[number], string>>) => {
+    const prev = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+    for (const k of KEYS) delete process.env[k];
+    for (const [k, v] of Object.entries(set)) process.env[k] = v as string;
+    try {
+      const { deps, created } = makeMockDeps();
+      await autoCreateWebsiteChatbot({ workspaceId: "org_acme", workspaceSlug: "acme", deps });
+      return created.input.status;
+    } finally {
+      for (const k of KEYS) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k] as string; }
+    }
+  };
+
+  test("no provider configuration keeps the historical status='live' (control: the policy is not global)", async () => {
+    assert.equal(await run({}), "live");
+  });
+
+  test("mounted-file managed AI (MODEL_API_KEY_FILE, no ANTHROPIC_API_KEY) -> status='test' (not publicly served)", async () => {
+    assert.equal(await run({ MODEL_API_KEY_FILE: "/run/key" }), "test");
+  });
+
+  test("ANTHROPIC_API_KEY present (the other managed-AI mode) keeps 'live' even if a key file is also set (same precedence as getAIClient)", async () => {
+    assert.equal(await run({ MODEL_API_KEY_FILE: "/run/key", ANTHROPIC_API_KEY: "sk-ant-synthetic" }), "live");
+  });
+
+  test("explicit SF_WIZARD_CHATBOT_STATUS wins in both directions; garbage values fall back to the provider-based default", async () => {
+    assert.equal(await run({ SF_WIZARD_CHATBOT_STATUS: "live", MODEL_API_KEY_FILE: "/run/key" }), "live");
+    assert.equal(await run({ SF_WIZARD_CHATBOT_STATUS: "test" }), "test");
+    assert.equal(await run({ SF_WIZARD_CHATBOT_STATUS: "TEST", MODEL_API_KEY_FILE: "/run/key" }), "test");
+    assert.equal(await run({ SF_WIZARD_CHATBOT_STATUS: "paused" }), "live");
+  });
+});

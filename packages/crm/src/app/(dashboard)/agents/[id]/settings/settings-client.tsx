@@ -7,6 +7,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { saveAgentBlueprintAction } from "@/lib/agents/actions";
+import { CUSTOM_SKILL_MD_MAX } from "@/lib/agents/blueprint-patch-limits";
 
 type FaqRow = { q: string; a: string };
 type PricingRow = { label: string; amount: number; currency: string };
@@ -28,8 +29,6 @@ type Props = {
   defaultSkillMd: string;
   allCapabilities: string[];
 };
-
-const CUSTOM_SKILL_MD_MAX = 8000;
 
 export function SettingsClient(props: Props) {
   const [greeting, setGreeting] = useState(props.initialBlueprint.greeting);
@@ -230,7 +229,7 @@ export function SettingsClient(props: Props) {
           value={customSkillMd}
           onChange={(e) => setCustomSkillMd(e.target.value)}
           rows={18}
-          maxLength={CUSTOM_SKILL_MD_MAX + 256}
+          maxLength={CUSTOM_SKILL_MD_MAX}
           className="mt-3 w-full rounded-md border bg-background px-3 py-2 font-mono text-xs leading-relaxed focus:border-primary focus:outline-none"
           spellCheck={false}
         />

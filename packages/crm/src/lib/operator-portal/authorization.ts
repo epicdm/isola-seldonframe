@@ -47,6 +47,35 @@ export function parseAdminAllowlist(raw: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+/** True iff `email` (normalized) is in `allowlist` (already-parsed, e.g. from parseAdminAllowlist). Empty/null email is never in it. */
+export function isEmailInAllowlist(email: string | null | undefined, allowlist: readonly string[]): boolean {
+  const candidate = normalizeEmail(email);
+  if (!candidate) return false;
+  return allowlist.some((entry) => normalizeEmail(entry) === candidate);
+}
+
+/**
+ * EPIC 2026-10-08: the origin a workspace operator/customer signs in on. On a deployment whose operator host is access-restricted
+ * (Uplink), the app host is unreachable for customers, so the sign-in link must point at the workspace's own host
+ * (https://<slug>.<WORKSPACE_BASE_DOMAIN>, the same shape buildWorkspaceUrls uses for public workspace URLs). Falls back to the app
+ * origin when no base domain is configured or the slug is not a plain host label. Pure so it is unit-testable.
+ */
+export function operatorPortalOrigin(orgSlug: string, workspaceBaseDomain: string | null | undefined, appOrigin: string): string {
+  const base = (workspaceBaseDomain ?? "").trim().toLowerCase().replace(/^\.+/, "").replace(/\.+$/, "");
+  const slug = (orgSlug ?? "").trim().toLowerCase();
+  if (!base || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(slug) || !/^[a-z0-9.-]+$/.test(base)) return appOrigin;
+  return `https://${slug}.${base}`;
+}
+
+/**
+ * EPIC 2026-10-08: the platform-admin limit bypass (lib/tier/limits.ts) applies ONLY to the platform operator's own HOME workspace,
+ * never to a client workspace the operator merely owns or manages. A client workspace keeps the entitlements it natively inherits
+ * from its agency (Scale caps), so a customer working inside one is not lifted above them. Pure so it is unit-testable.
+ */
+export function isOperatorHomeWorkspace(ownerHomeOrgId: string | null | undefined, orgId: string | null | undefined): boolean {
+  return Boolean(ownerHomeOrgId) && Boolean(orgId) && ownerHomeOrgId === orgId;
+}
+
 export interface WorkspaceAuthSources {
   /** organizations.ownerId -> users.email (null if unowned / unresolved). */
   ownerEmail?: string | null;
@@ -54,6 +83,10 @@ export interface WorkspaceAuthSources {
   agencyOwnerEmail?: string | null;
   /** Platform-admin allowlist (e.g. parsed SF_SUPERADMIN_EMAILS). */
   adminEmails?: readonly string[] | null;
+  /** EPIC 2026-10-08: emails of people the workspace owner / agency has ALREADY added to this workspace as owner or admin
+   *  members (org_members). An agency-owned client workspace has exactly one ownerId (the agency), so without this the
+   *  client's own person could never receive a sign-in link. */
+  memberEmails?: readonly string[] | null;
 }
 
 /**
@@ -81,6 +114,10 @@ export function isEmailAuthorizedForWorkspace(
   const admins = sources.adminEmails ?? [];
   for (const admin of admins) {
     if (normalizeEmail(admin) === candidate) return true;
+  }
+
+  for (const member of sources.memberEmails ?? []) {
+    if (normalizeEmail(member) === candidate) return true;
   }
 
   return false;

@@ -13,14 +13,16 @@
 import { useState, useTransition } from "react";
 import { Copy, Mail, ShieldCheck } from "lucide-react";
 
-import { requestOperatorMagicLinkAction } from "@/lib/operator-portal/auth";
+import { inviteWorkspaceOperatorAction } from "@/lib/operator-portal/auth";
 
 export type OperatorInviteCardProps = {
   orgSlug: string;
   orgName: string;
+  /** Public origin customers sign in on (the workspace's own host). Computed on the server; falls back to this browser's origin. */
+  portalOrigin?: string;
 };
 
-export function OperatorInviteCard({ orgSlug, orgName }: OperatorInviteCardProps) {
+export function OperatorInviteCard({ orgSlug, orgName, portalOrigin }: OperatorInviteCardProps) {
   const [pending, startTransition] = useTransition();
   const [email, setEmail] = useState("");
   const [invitedByName, setInvitedByName] = useState("");
@@ -31,8 +33,9 @@ export function OperatorInviteCard({ orgSlug, orgName }: OperatorInviteCardProps
   >({ kind: "idle" });
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
 
-  const portalLoginUrl =
-    typeof window !== "undefined"
+  const portalLoginUrl = portalOrigin
+    ? `${portalOrigin}/portal/${orgSlug}/login`
+    : typeof window !== "undefined"
       ? `${window.location.origin}/portal/${orgSlug}/login`
       : `/portal/${orgSlug}/login`;
 
@@ -42,7 +45,7 @@ export function OperatorInviteCard({ orgSlug, orgName }: OperatorInviteCardProps
       return;
     }
     startTransition(async () => {
-      const res = await requestOperatorMagicLinkAction({
+      const res = await inviteWorkspaceOperatorAction({
         orgSlug,
         email: email.trim(),
         invitedByName: invitedByName.trim() || undefined,
@@ -149,6 +152,14 @@ function humanizeReason(reason: string): string {
   switch (reason) {
     case "missing_required_field":
       return "Email is required.";
+    case "not_signed_in":
+      return "Your session expired. Sign in again.";
+    case "not_authorized_for_workspace":
+      return "Only the workspace owner, the agency owner or an existing admin can invite operators here.";
+    case "workspace_not_found":
+      return "That workspace was not found.";
+    case "invite_failed":
+      return "We couldn't add that person. Please try again.";
     case "email_send_failed":
       return "We couldn't send the invite. Please try again in a moment.";
     default:

@@ -79,8 +79,13 @@ export function wrapMcpTool(
         );
       }
       const client = deps.makeClient(endpoint, bearer);
-      // Forward the model's args verbatim under the ORIGINAL tool name.
-      return client.callTool(toolName, input ?? {});
+      // Model args remain the tools/call arguments. The independently verified
+      // Chatwoot proof travels only as MCP request metadata and can never be
+      // selected or altered by the model.
+      const requestMeta = ctx.trustedRelayToolContext
+        ? { "com.epic.uplink/relay-context-v1": ctx.trustedRelayToolContext.proof }
+        : undefined;
+      return client.callTool(toolName, input ?? {}, requestMeta);
     },
   };
 }

@@ -66,13 +66,15 @@ function indexLine(agent: StorefrontAgent, baseUrl: string): string {
 export function renderMarketplaceIndexMarkdown(
   agents: StorefrontAgent[],
   baseUrl: string = MARKETPLACE_BASE_URL,
+  platformName = "SeldonFrame",
 ): string {
   const lines: string[] = [];
-  lines.push("# SeldonFrame Agent Marketplace");
+  const defaultBrand = platformName === "SeldonFrame";
+  lines.push(defaultBrand ? "# SeldonFrame Agent Marketplace" : `# ${platformName} Agent Marketplace`);
   lines.push("");
-  lines.push(
-    "Vetted AI agents that answer calls, book jobs, chase reviews, and win back customers — built by operators who run businesses like yours. Install one into your own workspace in under a minute, or rent it over MCP.",
-  );
+  lines.push(defaultBrand
+    ? "Vetted AI agents that answer calls, book jobs, chase reviews, and win back customers — built by operators who run businesses like yours. Install one into your own workspace in under a minute, or rent it over MCP."
+    : "Browse published agent listings and review the details and terms shown for each listing.");
   lines.push("");
 
   if (agents.length === 0) {

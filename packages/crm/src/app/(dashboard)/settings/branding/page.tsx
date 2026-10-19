@@ -1,4 +1,5 @@
 import { getBrandingSettings, saveBrandingSettingsAction } from "@/lib/branding/actions";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 export default async function BrandingSettingsPage({
   searchParams,
@@ -7,6 +8,7 @@ export default async function BrandingSettingsPage({
 }) {
   const params = await searchParams;
   const settings = await getBrandingSettings();
+  const platformBrand = resolvePlatformBranding();
 
   if (!settings) {
     return null;
@@ -73,7 +75,7 @@ export default async function BrandingSettingsPage({
               className="mt-0.5 size-4 rounded border-input accent-primary"
             />
             <span className="space-y-1">
-              <span className="text-sm font-medium text-foreground">Remove “Powered by SeldonFrame” on public pages</span>
+              <span className="text-sm font-medium text-foreground">Remove “Powered by {platformBrand.name}” on public pages</span>
               <span className="block text-xs text-muted-foreground">
                 {settings.canHideBadge
                   ? "Enabled on your current plan."

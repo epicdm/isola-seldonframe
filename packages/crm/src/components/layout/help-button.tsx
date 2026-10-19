@@ -6,6 +6,7 @@ import {
   Bug,
   HelpCircle,
   MessageCircle,
+  Mail,
   X,
 } from "lucide-react";
 
@@ -31,9 +32,19 @@ import {
 const DISCORD_INVITE = "https://discord.gg/sbVUu976NW";
 const GITHUB_ISSUES = "https://github.com/seldonframe/seldonframe/issues/new";
 
-export function HelpButton() {
+export function HelpButton({
+  platformName = "SeldonFrame",
+  supportEmail,
+}: {
+  platformName?: string;
+  supportEmail?: string;
+}) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const branded = platformName !== "SeldonFrame";
+  const brandedSupportEmail = supportEmail && !supportEmail.toLowerCase().endsWith("@seldonframe.com")
+    ? supportEmail
+    : null;
 
   useEffect(() => {
     if (!open) return;
@@ -66,7 +77,7 @@ export function HelpButton() {
       {open ? (
         <div className="mb-3 w-64 overflow-hidden rounded-xl border border-border bg-popover shadow-xl">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <p className="text-sm font-semibold text-foreground">Need help?</p>
+            <p className="text-sm font-semibold text-foreground">Need {platformName} help?</p>
             <button
               type="button"
               onClick={() => setOpen(false)}
@@ -77,6 +88,23 @@ export function HelpButton() {
             </button>
           </div>
           <ul className="py-1 text-sm">
+            {branded ? (
+              <li>
+                {brandedSupportEmail ? (
+                  <a
+                    href={`mailto:${brandedSupportEmail}`}
+                    onClick={() => setOpen(false)}
+                    className="flex items-center gap-3 px-4 py-2.5 text-foreground transition-colors hover:bg-muted/60"
+                  >
+                    <Mail className="size-4 text-muted-foreground" />
+                    <span className="flex-1">Email {platformName} support</span>
+                  </a>
+                ) : (
+                  <span className="block px-4 py-2.5 text-muted-foreground">Contact your workspace administrator</span>
+                )}
+              </li>
+            ) : (
+              <>
             <li>
               <a
                 href={DISCORD_INVITE}
@@ -114,6 +142,8 @@ export function HelpButton() {
                 <span className="flex-1">Report a bug</span>
               </a>
             </li>
+              </>
+            )}
           </ul>
         </div>
       ) : null}

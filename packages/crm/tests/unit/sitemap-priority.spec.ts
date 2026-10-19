@@ -107,7 +107,18 @@ test("sitemap-priority: malformed JSON falls back to top URLs", async () => {
 });
 
 test("canonical AI front office guides are included in the guide sitemap", async () => {
-  const entries = await buildSitemap();
+  // This asserts the UPSTREAM (unbranded) sitemap. A branded deployment deliberately lists only its workspace home (v4.43), so
+  // pin an unbranded environment for this assertion regardless of the build's baked PLATFORM_* values.
+  const saved = { name: process.env.PLATFORM_NAME, home: process.env.PLATFORM_HOME_URL, site: process.env.NEXT_PUBLIC_SITE_URL, app: process.env.PLATFORM_APP_URL };
+  process.env.PLATFORM_NAME = "SeldonFrame"; delete process.env.PLATFORM_HOME_URL; delete process.env.NEXT_PUBLIC_SITE_URL; delete process.env.PLATFORM_APP_URL;
+  let entries: Array<{ url: string | URL }>;
+  try {
+    entries = await buildSitemap();
+  } finally {
+    for (const [key, value] of [["PLATFORM_NAME", saved.name], ["PLATFORM_HOME_URL", saved.home], ["NEXT_PUBLIC_SITE_URL", saved.site], ["PLATFORM_APP_URL", saved.app]] as const) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
   const urls = new Set(entries.map((entry) => String(entry.url)));
 
   for (const slug of [

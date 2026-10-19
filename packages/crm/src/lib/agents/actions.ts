@@ -22,48 +22,7 @@ import {
   type PublishAgentResult,
 } from "./store";
 import { runEvalSuite, type EvalRunSummary } from "./eval-runner";
-import { connectorBindingsSchema } from "./mcp/connectors";
-
-const FaqRow = z.object({
-  q: z.string().min(1),
-  a: z.string().min(1),
-  // v1.45 (faq-from-url) — provenance fields, all optional for
-  // backward compatibility with operator-only FAQ payloads.
-  source: z.enum(["extracted", "synthesized", "operator"]).optional(),
-  sourceUrl: z.string().url().optional(),
-  synthesizedAt: z.string().optional(),
-  synthesizedFromSoulVersion: z.number().optional(),
-});
-const PricingFactRow = z.object({
-  label: z.string().min(1),
-  amount: z.number().nonnegative(),
-  currency: z.string().min(1).max(8),
-});
-
-const BlueprintPatchSchema = z
-  .object({
-    greeting: z.string().max(2000).optional(),
-    capabilities: z.array(z.string()).optional(),
-    faq: z.array(FaqRow).optional(),
-    pricingFacts: z.array(PricingFactRow).optional(),
-    toneOverrides: z
-      .object({
-        warmth: z.number().min(0).max(1).optional(),
-        formality: z.number().min(0).max(1).optional(),
-      })
-      .optional(),
-    // 2026-05-17 — operator-supplied SKILL.md override. Capped at 8k
-    // chars (~2k tokens) so a runaway operator can't blow up the
-    // system prompt. Empty string clears the override.
-    customSkillMd: z.string().max(8000).optional(),
-    // 2026-06-22 — MCP connector bindings (external tools). The schema
-    // (defined in the pure mcp/connectors.ts module so it stays importable
-    // here without a "use server" export violation) validates kind /
-    // serviceName / enabledTools, requires HTTPS for BYO endpoints, and
-    // bounds the array + per-binding tool counts.
-    connectors: connectorBindingsSchema.optional(),
-  })
-  .strict();
+import { BlueprintPatchSchema } from "./blueprint-patch";
 
 export type SaveBlueprintResult =
   | { ok: true; version: number }
@@ -102,7 +61,6 @@ export type PublishStatusResult = PublishAgentResult;
 export async function setAgentStatusAction(input: {
   agentId: string;
   status: "draft" | "test" | "live" | "paused";
-  force?: boolean;
 }): Promise<PublishStatusResult> {
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -111,7 +69,6 @@ export async function setAgentStatusAction(input: {
     agentId: input.agentId,
     orgId,
     status: input.status,
-    force: input.force,
   });
   revalidatePath(`/agents/${input.agentId}`, "layout");
   revalidatePath(`/agents`);

@@ -89,6 +89,8 @@ export type BuildNavInput = {
   /** Phone & WhatsApp exposure (2026-10-17) — resolved server-side by the dashboard layout via isPhoneWhatsappEnabled()
    *  (PHONE_WHATSAPP_ENABLED_ORGS) and passed in, like draftApprovalsOn. absent/false → today's nav, unchanged. */
   phoneWhatsappOn?: boolean;
+  /** Hides upstream community/docs destinations on white-label installs. */
+  platformName?: string;
 };
 
 // Block-slug → href map for visibility filtering. Lifted verbatim from
@@ -191,6 +193,7 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
     smsLive,
     draftApprovalsOn = false,
     phoneWhatsappOn = false,
+    platformName = "SeldonFrame",
   } = input;
 
   const hiddenHrefs = new Set(hiddenBlocks.map((slug) => hiddenSlugToHref[slug]).filter(Boolean));
@@ -366,8 +369,12 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
         // agents can act in the operator's real apps).
         ...(phoneWhatsappOn ? [{ href: "/phone-whatsapp", label: "Phone & WhatsApp", icon: "Phone" }] : []),
         { href: "/integrations", label: "Integrations", icon: "Puzzle" },
-        { href: "/docs", label: "Docs", icon: "BookOpen" },
-        { href: "https://discord.gg/sbVUu976NW", label: "Discord", icon: "MessageCircle", external: true },
+        ...(platformName === "SeldonFrame"
+          ? [
+              { href: "/docs", label: "Docs", icon: "BookOpen" },
+              { href: "https://discord.gg/sbVUu976NW", label: "Discord", icon: "MessageCircle", external: true },
+            ]
+          : []),
         { href: "/settings", label: "Settings", icon: "Settings" },
         ...superAdminItems,
       ]),

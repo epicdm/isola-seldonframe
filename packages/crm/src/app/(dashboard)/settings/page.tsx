@@ -12,6 +12,7 @@ import { getCustomDomainSettings } from "@/lib/domains/actions";
 import { listSavedFrameworkLibrary } from "@/lib/frameworks/actions";
 import { getBrandingSettings } from "@/lib/branding/actions";
 import { checkPortalPlanGate } from "@/lib/portal/plan-gate";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 /*
   Square UI class reference (source of truth):
@@ -23,6 +24,7 @@ import { checkPortalPlanGate } from "@/lib/portal/plan-gate";
 */
 
 export default async function SettingsPage() {
+  const platformBrand = resolvePlatformBranding();
   const orgId = await getOrgId();
   // 2026-05-17 — when the agency operator has switched INTO a client
   // workspace (active org !== primary), hide agency-level + developer
@@ -310,7 +312,7 @@ export default async function SettingsPage() {
   const advancedItems = [
     { href: "/settings/api", title: "API Keys", description: "Programmatic access for custom integrations", status: null },
     { href: "/settings/webhooks", title: "Webhooks", description: "Push events to external services", status: null },
-    { href: "/settings/branding", title: "White-label Branding", description: "Hide 'Powered by SeldonFrame' (agency tier)", status: brandingStatus ? <span className="text-xs text-emerald-400">{brandingStatus}</span> : null },
+    { href: "/settings/branding", title: "White-label Branding", description: `Hide 'Powered by ${platformBrand.name}' (eligible plan)`, status: brandingStatus ? <span className="text-xs text-emerald-400">{brandingStatus}</span> : null },
     { href: "/settings/frameworks", title: "Industry Packs", description: "Reusable presets for industry-specific setups", status: <span className="text-xs text-muted-foreground">{frameworksStatus}</span> },
     { href: "/settings/soul-transfer", title: "Export / Import", description: "Download or upload your full workspace configuration as JSON", status: null },
   ] as const;

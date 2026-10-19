@@ -54,9 +54,11 @@ function inMemoryCheck(key: string, limit: number, windowMs: number): boolean {
 export async function checkRateLimit(
   key: string,
   limit = 120,
-  windowMs = 60_000
+  windowMs = 60_000,
+  options: { failClosed?: boolean } = {},
 ): Promise<boolean> {
   if (!REDIS_ENABLED) {
+    if (options.failClosed) throw new Error("Distributed rate limiter is not configured.");
     return inMemoryCheck(key, limit, windowMs);
   }
 
@@ -90,6 +92,7 @@ export async function checkRateLimit(
 
     return count <= limit;
   } catch (error) {
+    if (options.failClosed) throw new Error("Distributed rate limiter is unavailable.");
     // Never let rate-limit errors take down the request path. Fall back to
     // in-memory for this call and log once.
     console.warn(

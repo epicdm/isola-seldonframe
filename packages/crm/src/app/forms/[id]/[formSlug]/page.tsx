@@ -7,6 +7,9 @@ import { PublicThemeProvider } from "@/components/theme/public-theme-provider";
 import { PoweredByBadge } from "@seldonframe/core/virality";
 import { shouldShowPoweredByBadgeForOrg } from "@/lib/billing/public";
 import { getPublicOrgThemeBySlug } from "@/lib/theme/actions";
+import type { Metadata } from "next";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
+import { LicenseNoticeLink } from "@/components/legal/license-notice-link";
 // 2026-05-18 (later) — agency-wide branding REMOVED from public-facing
 // intake pages. The agency's chrome substitution only applies to the
 // SMB operator's admin dashboard; their CUSTOMERS (the people filling
@@ -14,6 +17,24 @@ import { getPublicOrgThemeBySlug } from "@/lib/theme/actions";
 // Shiloh"), not the agency name ("Max agency"). Operator dogfood
 // feedback: customer received an intake form with the agency logo at
 // the top instead of the actual roofing company, which was confusing.
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string; formSlug: string }> }): Promise<Metadata> {
+  const { id: orgSlug, formSlug } = await params;
+  const [row] = await db
+    .select({ orgName: organizations.name, formName: intakeForms.name })
+    .from(intakeForms)
+    .innerJoin(organizations, eq(organizations.id, intakeForms.orgId))
+    .where(and(eq(organizations.slug, orgSlug), eq(intakeForms.slug, formSlug)))
+    .limit(1);
+  const brand = resolvePlatformBranding();
+  if (!row) return { title: "Form not found", robots: { index: false, follow: false } };
+  return {
+    title: `${row.formName} | ${row.orgName}`,
+    description: `${row.formName} from ${row.orgName}.`,
+    alternates: { canonical: `/forms/${encodeURIComponent(orgSlug)}/${encodeURIComponent(formSlug)}` },
+    applicationName: brand.name,
+  };
+}
 
 export default async function PublicIntakePage({
   params,
@@ -108,6 +129,7 @@ export default async function PublicIntakePage({
             <PoweredByBadge source="workspace_form" />
           </div>
         ) : null}
+        <div className="flex justify-center py-3"><LicenseNoticeLink /></div>
       </>
     );
   }
@@ -154,6 +176,7 @@ export default async function PublicIntakePage({
               <PoweredByBadge source="workspace_form" />
             </div>
           ) : null}
+          <div className="flex justify-center pt-2"><LicenseNoticeLink /></div>
         </div>
       </main>
     </PublicThemeProvider>

@@ -19,12 +19,16 @@ import { BrowseClient } from "@/components/marketplace/browse-client";
 import { MarketplaceIndustryDirectory } from "@/components/marketplace/marketplace-industry-directory";
 import { loadStorefrontCatalog } from "@/lib/marketplace/load-storefront";
 import { MarkdownPointer } from "@/components/seo/markdown-pointer";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 import {
   MKT,
   nicheToCategory,
   type CategoryKey,
   type StorefrontAgent,
 } from "@/components/marketplace/marketplace-data";
+
+const platformBrand = resolvePlatformBranding();
+const defaultPlatformBrand = platformBrand.name === "SeldonFrame";
 
 export const metadata: Metadata = {
   title: "Agent Marketplace — Hire an AI agent that works 24/7 | SeldonFrame",
@@ -39,6 +43,18 @@ export const metadata: Metadata = {
     url: "/marketplace",
     type: "website",
   },
+  ...(!defaultPlatformBrand
+    ? {
+        title: `Agent listings | ${platformBrand.name}`,
+        description: "Browse published agent listings and review the details and terms shown for each listing.",
+        openGraph: {
+          title: `${platformBrand.name} Agent Marketplace`,
+          description: "Browse published agent listings and review the details and terms shown for each listing.",
+          url: "/marketplace",
+          type: "website" as const,
+        },
+      }
+    : {}),
 };
 
 type BrowsePageProps = {
@@ -74,8 +90,10 @@ async function countLiveBusinesses(): Promise<number> {
 }
 
 export default async function MarketplaceBrowsePage({ searchParams }: BrowsePageProps) {
+  const activeBrand = resolvePlatformBranding();
   const params = await searchParams;
-  const [agents, businessCount] = await Promise.all([loadStorefrontCatalog(), countLiveBusinesses()]);
+  const [catalog, businessCount] = await Promise.all([loadStorefrontCatalog(), countLiveBusinesses()]);
+  const agents = activeBrand.name === "SeldonFrame" ? catalog : catalog.filter((agent) => !agent.isSeed);
 
   const initialQuery = String(params.q ?? "").trim();
   const initialCategory: CategoryKey | null = params.niche
@@ -89,11 +107,12 @@ export default async function MarketplaceBrowsePage({ searchParams }: BrowsePage
       <MarketplaceNav active="browse" defaultQuery={initialQuery} />
       <BrowseClient
         agents={agents}
+        platformName={activeBrand.name}
         businessCount={businessCount}
         initialCategory={initialCategory}
         initialQuery={initialQuery}
       />
-      <MarketplaceIndustryDirectory />
+      {activeBrand.name === "SeldonFrame" ? <MarketplaceIndustryDirectory /> : null}
       <MarketplaceFooter />
     </div>
   );

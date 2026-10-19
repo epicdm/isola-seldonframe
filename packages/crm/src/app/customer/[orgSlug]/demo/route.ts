@@ -19,6 +19,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { establishPortalDemoSession } from "@/lib/portal/auth";
+import { tenantRedirectOrigin } from "@/lib/http/tenant-redirect-origin";
+import { safeInternalRedirect } from "@/lib/http/redirect-target";
 
 /** Pure target resolver — given the result of establishPortalDemoSession,
  *  decide where the route should redirect. Extracted so the routing
@@ -45,6 +47,7 @@ export async function GET(
   context: { params: Promise<{ orgSlug: string }> },
 ) {
   const { orgSlug } = await context.params;
+  const origin = await tenantRedirectOrigin(request, orgSlug);
 
   let result: Awaited<ReturnType<typeof establishPortalDemoSession>>;
   try {
@@ -58,11 +61,11 @@ export async function GET(
     console.warn(
       `[demo-login] unexpected error for slug=${orgSlug}: ${err instanceof Error ? err.message : String(err)}`,
     );
-    return NextResponse.redirect(new URL(`/customer/${orgSlug}/login?error=demo_unavailable`, request.url));
+    return NextResponse.redirect(new URL(`/customer/${orgSlug}/login?error=demo_unavailable`, origin));
   }
 
   if (result.ok) {
-    return NextResponse.redirect(new URL(result.redirectTo, request.url));
+    return NextResponse.redirect(new URL(safeInternalRedirect(result.redirectTo, `/customer/${orgSlug}/`), origin));
   }
 
   if (result.reason === "org_not_found") {
@@ -76,5 +79,5 @@ export async function GET(
   // no_demo_contact — fall back to /login. The customer portal's
   // magic-link flow still works on this workspace; the operator just
   // can't one-click demo it.
-  return NextResponse.redirect(new URL(`/customer/${orgSlug}/login`, request.url));
+  return NextResponse.redirect(new URL(`/customer/${orgSlug}/login`, origin));
 }

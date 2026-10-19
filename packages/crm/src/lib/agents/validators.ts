@@ -37,6 +37,26 @@ export type ValidatorContext = {
    *  capability-list case) at runtime. */
   turnToolCalls?: AgentToolCall[];
   turnToolResults?: AgentToolResult[];
+  /** Authenticated Chatwoot relay context verified by the public route. */
+  trustedRelayToolContext?: {
+    kind: "chatwoot";
+    binding: {
+      accountId: number;
+      inboxId: number;
+      chatwootConversationId: string;
+      workspaceId: string;
+      agentId: string;
+      agentSlug: string;
+      sessionId: string;
+    };
+  };
+  /** Conversation id from the server-loaded conversation row's persisted
+   * Chatwoot binding. This is independent of tool output and the signed
+   * request context; it prevents a result from another Chatwoot thread from
+   * authorizing customer PII in this turn. */
+  currentChatwootConversationId?: string;
+  currentAgentId?: string;
+  currentWorkspaceId?: string;
   /** v1.40.12 — tool names that succeeded in PREVIOUS turns of this
    *  conversation. Lets no_hallucinated_state_change pass legitimate
    *  follow-up acknowledgments. Pattern: Turn N agent calls
@@ -161,10 +181,77 @@ function normalizePhoneForPiiComparison(phone: string): string {
   return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
 }
 
+const PL_PII_TOOLS = new Set(["pl_provision", "pl_status", "pl_setup_link"]);
+
+function readMcpResult(result: AgentToolResult): Record<string, unknown> | null {
+  if (!result.ok || !result.output || typeof result.output !== "object" || Array.isArray(result.output)) return null;
+  const output = result.output as { isError?: unknown; content?: unknown };
+  if (output.isError === true || !Array.isArray(output.content) || output.content.length !== 1) return null;
+  const item = output.content[0] as { type?: unknown; text?: unknown } | null;
+  if (!item || item.type !== "text" || typeof item.text !== "string" || item.text.length > 20_000) return null;
+  try {
+    const parsed = JSON.parse(item.text) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function trustedPersonalLineData(ctx: ValidatorContext): { phones: Set<string>; urls: Set<string> } {
+  const phones = new Set<string>();
+  const urls = new Set<string>();
+  const relay = ctx.trustedRelayToolContext;
+  const binding = relay?.binding;
+  if (relay?.kind !== "chatwoot" || !binding || binding.accountId !== 2 || binding.inboxId !== 11
+    || !binding.chatwootConversationId || !binding.sessionId
+    || binding.chatwootConversationId !== ctx.currentChatwootConversationId
+    || binding.workspaceId !== ctx.currentWorkspaceId || binding.agentId !== ctx.currentAgentId) {
+    return { phones, urls };
+  }
+
+  const calls = ctx.turnToolCalls ?? [];
+  const results = ctx.turnToolResults ?? [];
+  for (const result of results) {
+    const call = calls.find((candidate) => candidate.id === result.toolCallId);
+    if (!call || !call.name.startsWith("pl-action-adapter__")) continue;
+    const toolName = call.name.slice("pl-action-adapter__".length);
+    if (!PL_PII_TOOLS.has(toolName)) continue;
+    const payload = readMcpResult(result);
+    if (!payload) continue;
+    const data = payload.data;
+    if (typeof data !== "object" || data === null || Array.isArray(data)) continue;
+    const customerData = data as Record<string, unknown>;
+
+    if ((toolName === "pl_provision" && ["line_created", "line_exists"].includes(String(payload.code)))
+      || (toolName === "pl_status" && payload.code === "line_status")) {
+      if (typeof customerData.did_pretty === "string") {
+        const compact = customerData.did_pretty.replace(/[+().\s-]/g, "");
+        if (/^\d{10,15}$/.test(compact)) phones.add(normalizePhoneForPiiComparison(customerData.did_pretty));
+      }
+    }
+
+    if (toolName === "pl_setup_link" && payload.code === "link_minted" && typeof customerData.url === "string") {
+      try {
+        const url = new URL(customerData.url);
+        const host = url.hostname.toLowerCase();
+        if (url.protocol === "https:" && !url.username && !url.password && !url.port && !url.search && !url.hash
+          && (host === "epic.dm" || host.endsWith(".epic.dm"))
+          && /^\/go\/[a-f0-9]{32}$/i.test(url.pathname)) urls.add(customerData.url);
+      } catch {
+        // Invalid URLs never become a PII exemption.
+      }
+    }
+  }
+  return { phones, urls };
+}
+
 const noPiiLeak: Validator = {
   name: "no_pii_leak",
   severity: "critical",
-  run: ({ response, userMessage, conversationContext, soul }) => {
+  run: (ctx) => {
+    const { response, userMessage, conversationContext, soul } = ctx;
     // v1.27.7 — the "trusted" set (data we KNOW belongs to this customer
     // or was returned by a tool the agent had access to) comes from:
     //   - the current user message
@@ -178,9 +265,11 @@ const noPiiLeak: Validator = {
     if (soul?.contact?.email) operatorContactParts.push(soul.contact.email);
     if (soul?.contact?.phone) operatorContactParts.push(soul.contact.phone);
     const trustedSource = `${userMessage}\n${conversationContext ?? ""}\n${operatorContactParts.join("\n")}`;
+    const currentTurnData = trustedPersonalLineData(ctx);
+    const responseForPii = [...currentTurnData.urls].reduce((text, url) => text.split(url).join(" "), response);
 
     const responseEmails = new Set(
-      Array.from(response.matchAll(EMAIL_PATTERN)).map((m) =>
+      Array.from(responseForPii.matchAll(EMAIL_PATTERN)).map((m) =>
         m[0].toLowerCase(),
       ),
     );
@@ -190,7 +279,7 @@ const noPiiLeak: Validator = {
       ),
     );
     const responsePhones = new Set(
-      Array.from(response.matchAll(PHONE_PATTERN)).map((m) =>
+      Array.from(responseForPii.matchAll(PHONE_PATTERN)).map((m) =>
         normalizePhoneForPiiComparison(m[0]),
       ),
     );
@@ -204,7 +293,7 @@ const noPiiLeak: Validator = {
       (e) => !trustedEmails.has(e) && !e.endsWith("@seldonframe.local"),
     );
     const leakedPhones = [...responsePhones].filter(
-      (p) => !trustedPhones.has(p),
+      (p) => !trustedPhones.has(p) && !currentTurnData.phones.has(p),
     );
 
     if (leakedEmails.length === 0 && leakedPhones.length === 0) {

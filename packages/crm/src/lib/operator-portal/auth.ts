@@ -43,17 +43,20 @@
 
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
-import { organizations, partnerAgencies, users } from "@/db/schema";
+import { orgMembers, organizations, partnerAgencies, users } from "@/db/schema";
+import { auth } from "@/auth";
+import { selectPortalEmailTransport } from "@/lib/portal/email-transport";
 import { assertWritable } from "@/lib/demo/server";
 import { resolveInboxUrl } from "@/lib/utils/email-inbox";
 import { emitSeldonEvent } from "@/lib/events/bus";
 import { trackEvent } from "@/lib/analytics/track";
 import {
   isEmailAuthorizedForWorkspace,
+  operatorPortalOrigin,
   parseAdminAllowlist,
 } from "./authorization";
 import {
@@ -116,10 +119,19 @@ async function getUserEmailById(userId: string | null): Promise<string | null> {
  * set — ownerUserId first, then the owning workspace's owner.
  */
 async function resolveWorkspaceOwnerEmails(org: {
+  id: string;
   ownerId: string | null;
   parentAgencyId: string | null;
-}): Promise<{ ownerEmail: string | null; agencyOwnerEmail: string | null }> {
+}): Promise<{ ownerEmail: string | null; agencyOwnerEmail: string | null; memberEmails: string[] }> {
   const ownerEmail = await getUserEmailById(org.ownerId);
+
+  // EPIC 2026-10-08: people already added to this workspace as owner/admin members.
+  const memberRows = await db
+    .select({ email: users.email })
+    .from(orgMembers)
+    .innerJoin(users, eq(users.id, orgMembers.userId))
+    .where(and(eq(orgMembers.orgId, org.id), inArray(orgMembers.role, ["owner", "admin"])));
+  const memberEmails = memberRows.map((r) => r.email).filter((e): e is string => Boolean(e));
 
   let agencyOwnerEmail: string | null = null;
   if (org.parentAgencyId) {
@@ -143,7 +155,7 @@ async function resolveWorkspaceOwnerEmails(org: {
     }
   }
 
-  return { ownerEmail, agencyOwnerEmail };
+  return { ownerEmail, agencyOwnerEmail, memberEmails };
 }
 
 async function setOperatorSessionCookie(token: string): Promise<void> {
@@ -204,12 +216,13 @@ export async function requestOperatorMagicLinkAction(input: {
   // org-not-found path above — we never reveal whether an email is
   // authorized or a workspace exists (anti-enumeration) — but no token is
   // signed or sent. Pure decision logic + tests live in ./authorization.ts.
-  const { ownerEmail, agencyOwnerEmail } = await resolveWorkspaceOwnerEmails(org);
+  const { ownerEmail, agencyOwnerEmail, memberEmails } = await resolveWorkspaceOwnerEmails(org);
   const adminEmails = parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS);
   const authorized = isEmailAuthorizedForWorkspace(email, {
     ownerEmail,
     agencyOwnerEmail,
     adminEmails,
+    memberEmails,
   });
   if (!authorized) {
     console.warn(
@@ -218,6 +231,16 @@ export async function requestOperatorMagicLinkAction(input: {
     return { ok: true, expiresAt: "", sentTo: email, inboxUrl: resolveInboxUrl(email) };
   }
 
+  return issueOperatorMagicLink(org, orgSlug, email, input.invitedByName);
+}
+
+async function issueOperatorMagicLink(
+  org: { id: string; name: string | null },
+  orgSlug: string,
+  email: string,
+  invitedByName?: string,
+): Promise<RequestOperatorMagicLinkResult> {
+  const emailDomain = email.split("@")[1] ?? null;
   // Build the magic-link token + URL.
   const expiresAtMs = Date.now() + MAGIC_LINK_TTL_MIN * 60_000;
   const payload: OperatorTokenPayload = {
@@ -227,9 +250,10 @@ export async function requestOperatorMagicLinkAction(input: {
     kind: "magic",
   };
   const token = signOperatorToken(payload);
+  // EPIC 2026-10-08: the link points at the workspace's own host (publicly reachable), not the access-restricted app host.
   const inviteUrl = new URL(
     `/portal/${orgSlug}/magic`,
-    getAppOrigin(),
+    operatorPortalOrigin(orgSlug, process.env.WORKSPACE_BASE_DOMAIN, getAppOrigin()),
   );
   inviteUrl.searchParams.set("token", token);
 
@@ -237,15 +261,17 @@ export async function requestOperatorMagicLinkAction(input: {
   // under an active agency.
   const branding = await getEffectiveBrandingForWorkspace(org.id);
 
-  const apiKey = process.env.RESEND_API_KEY?.trim();
-  if (!apiKey) {
+  // EPIC 2026-10-08: SMTP2GO when its key AND a verified sender (PORTAL_EMAIL_FROM) are set, else Resend (RESEND_API_KEY,
+  // unchanged), else nothing can be sent. Same selection the customer portal code already uses (lib/portal/email-transport.ts).
+  const selected = selectPortalEmailTransport(process.env);
+  if (selected.transport === "none") {
     console.warn(
-      `[operator-magic-link] silent_no_op: resend_not_configured org_id=${org.id} email_domain=${emailDomain}`,
+      `[operator-magic-link] silent_no_op: no_email_transport_configured org_id=${org.id} email_domain=${emailDomain}`,
     );
     return { ok: true, expiresAt: new Date(expiresAtMs).toISOString(), sentTo: email, inboxUrl: resolveInboxUrl(email) };
   }
 
-  const fromAddress = pickFromAddress(process.env);
+  const fromAddress = selected.transport === "smtp2go" ? selected.from : pickFromAddress(process.env);
 
   const send = await sendOperatorMagicLinkEmail(
     {
@@ -256,9 +282,9 @@ export async function requestOperatorMagicLinkAction(input: {
       brandName: branding?.is_white_label ? branding.brand_name : null,
       logoUrl: branding?.logo_url ?? null,
       supportUrl: branding?.is_white_label ? branding.support_url : null,
-      invitedByName: input.invitedByName?.trim() || null,
+      invitedByName: invitedByName?.trim() || null,
     },
-    { apiKey, fromAddress },
+    { apiKey: selected.apiKey, fromAddress, transport: selected.transport },
   );
 
   if (!send.ok) {
@@ -286,6 +312,74 @@ export async function requestOperatorMagicLinkAction(input: {
     sentTo: email,
     inboxUrl: resolveInboxUrl(email),
   };
+}
+
+// ─── invite a workspace operator (EPIC 2026-10-08) ─────────────────────────
+
+export type InviteWorkspaceOperatorResult =
+  | { ok: true; expiresAt: string; sentTo: string; inboxUrl: string | null }
+  | { ok: false; reason: string };
+
+/**
+ * Called from Settings > Team by someone who is ALREADY authorised for this workspace (workspace owner, parent-agency owner or
+ * platform admin; existing members cannot invite). It records the invitee as an admin member of THIS workspace only, then
+ * sends the sign-in link. Because the invitee is now a member, they can request further links themselves from the portal
+ * login page. Unlike requestOperatorMagicLinkAction (public, anti-enumeration), this one reports failures to the signed-in
+ * inviter, who is already trusted.
+ */
+export async function inviteWorkspaceOperatorAction(input: {
+  orgSlug: string;
+  email: string;
+  invitedByName?: string;
+}): Promise<InviteWorkspaceOperatorResult> {
+  assertWritable();
+  const session = await auth();
+  const inviterEmail = session?.user?.email?.trim().toLowerCase() ?? "";
+  if (!session?.user?.id || !inviterEmail) return { ok: false, reason: "not_signed_in" };
+
+  const orgSlug = input.orgSlug.trim();
+  const email = (input.email ?? "").trim().toLowerCase();
+  if (!orgSlug || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, reason: "missing_required_field" };
+
+  const org = await getOrgBySlug(orgSlug);
+  if (!org) return { ok: false, reason: "workspace_not_found" };
+
+  // Member management is an OWNER-level right (native roles: an admin has full access except billing and member management), so the
+  // inviter must be the workspace owner, the parent-agency owner or a platform admin. Existing members are deliberately NOT accepted here
+  // (they may still sign in and request their own links through requestOperatorMagicLinkAction).
+  const { ownerEmail, agencyOwnerEmail } = await resolveWorkspaceOwnerEmails(org);
+  const allowed = isEmailAuthorizedForWorkspace(inviterEmail, {
+    ownerEmail,
+    agencyOwnerEmail,
+    adminEmails: parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS),
+  });
+  if (!allowed) return { ok: false, reason: "not_authorized_for_workspace" };
+
+  // Find or create the invitee's user row (no password; they sign in by link), then add the membership for THIS workspace.
+  let [invitee] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+  if (!invitee) {
+    [invitee] = await db
+      .insert(users)
+      .values({ orgId: org.id, email, name: email.split("@")[0] || "Workspace operator", role: "member" })
+      .returning({ id: users.id });
+    if (invitee) {
+      // This workspace is the new member's PRIMARY workspace, and the sign-in gates read onboarding state from it. The workspace is already
+      // built, so mark it onboarded for them; without this a normal sign-in loops /dashboard -> /welcome -> /dashboard (the /welcome page
+      // only redirects back). Same stamp the platform applies to new operators in markOperatorOnboarded; idempotent.
+      await db
+        .update(organizations)
+        .set({
+          soulCompletedAt: sql`COALESCE(${organizations.soulCompletedAt}, now())`,
+          settings: sql`COALESCE(${organizations.settings}, '{}'::jsonb) || '{"welcomeShown": true}'::jsonb`,
+        })
+        .where(eq(organizations.id, org.id));
+      await db.update(users).set({ planId: "free" }).where(and(eq(users.id, invitee.id), isNull(users.planId)));
+    }
+  }
+  if (!invitee) return { ok: false, reason: "invite_failed" };
+  await db.insert(orgMembers).values({ orgId: org.id, userId: invitee.id, role: "admin" }).onConflictDoNothing({ target: [orgMembers.orgId, orgMembers.userId] });
+
+  return issueOperatorMagicLink(org, orgSlug, email, input.invitedByName);
 }
 
 // ─── magic-link consumption (called by /portal/[orgSlug]/magic route) ──────

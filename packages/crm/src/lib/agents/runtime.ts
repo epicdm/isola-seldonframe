@@ -46,6 +46,11 @@ import {
   type ToolExecuteContext,
 } from "./tools";
 import { resolveTurnModel } from "./runtime/turn-model";
+import {
+  DEEPSEEK_FLASH_PRICING,
+  extractCompletePublicUsage,
+  isWithinModelRequestLimit,
+} from "./public-pilot-controls";
 import { createTtlPromiseCache } from "./runtime/capped-reply-cache";
 import {
   cachedSystemBlocks,
@@ -58,17 +63,19 @@ import {
 import type { CalendarBinding } from "@/lib/agents/booking/calendar-backend";
 import type { BookingPolicy } from "@/lib/agents/booking/booking-policy";
 import { bindingToCtxBooking } from "@/lib/agents/booking/binding-ctx";
+import { persistedChatwootConversationId } from "@/lib/agents/mcp/relay-context";
 import { captureLlmGeneration } from "@/lib/analytics/llm-capture";
 import { VOICE_PROFILE_NOTE_PATH } from "@/lib/agents/voice-profile/ingest-sent-mail";
 import { buildTurnMessages, type TurnMessage } from "@/lib/agents/turn-messages";
 import {
-  conversationMatchesOwner,
-  CONVERSATION_NOT_FOUND_RESULT,
-  type ExpectedConversationOwner,
-} from "@/lib/agents/conversation-ownership";
+  AGENT_NOT_FOUND_FALLBACK,
+  PROVIDER_NOT_CONFIGURED_FALLBACK,
+  TEMPORARY_RUNTIME_ERROR_FALLBACK,
+  WORKSPACE_NOT_FOUND_FALLBACK,
+} from "@/lib/agents/fallback-messages";
 
 const MODEL = process.env.ANTHROPIC_AGENT_MODEL?.trim() || "claude-sonnet-4-5-20250929";
-const MAX_TURN_ITERATIONS = 6; // tool-call cap per single turn (catches loops)
+const MAX_TURN_ITERATIONS = DEEPSEEK_FLASH_PRICING.loopCalls; // tool-call cap per single turn
 // v1.26.1 — these are Seldon's internal accounting markup for
 // billing-the-operator-for-agent-platform-usage. The OPERATOR pays
 // the LLM bill directly via their BYOK Anthropic key; Seldon makes money
@@ -87,9 +94,12 @@ type ExecuteTurnResult =
       toolResults: AgentToolResult[];
       tokensIn: number;
       tokensOut: number;
+      model: string;
+      usageComplete: boolean;
+      providerCalls: number;
       latencyMs: number;
     }
-  | { ok: false; reason: string; fallbackMessage: string };
+  | { ok: false; reason: string; fallbackMessage: string; providerCalls?: number };
 
 // bindingToCtxBooking (the pure CalendarBinding → ctx.booking mapper) lives in
 // ./booking/binding-ctx — runtime.ts is "use server", and Turbopack's `next
@@ -98,6 +108,9 @@ type ExecuteTurnResult =
 export async function executeTurn(input: {
   conversationId: string;
   userMessage: string;
+  /** Server-verified relay proof for a Chatwoot turn; never persisted or
+   *  included in the prompt/tool arguments. */
+  trustedRelayToolContext?: ToolExecuteContext["trustedRelayToolContext"];
   /** Optional blueprint override — used by the eval runner to inject test
    *  fixtures (e.g. poisoned FAQ entries) without mutating the DB. The
    *  override replaces agent.blueprint for this turn only. */
@@ -146,12 +159,8 @@ export async function executeTurn(input: {
    *  Net effect: a persist:false turn writes ZERO agentTurns rows, but its
    *  real token/cost spend is still counted. */
   persist?: boolean;
-  /** Callers that resolve the agent independently of a CALLER-SUPPLIED
-   *  conversation id (the public turn route) pass that agent here. A
-   *  conversation owned by a different agent or workspace is then treated
-   *  exactly like an unknown id (see ./conversation-ownership). Omitted by
-   *  internal callers that created or derived the conversation themselves. */
-  expectedAgent?: ExpectedConversationOwner;
+  /** Public pilot only: pin the metered provider/model and disable SDK retries. */
+  publicPilotSpend?: boolean;
 }): Promise<ExecuteTurnResult> {
   const t0 = Date.now();
   const persist = input.persist !== false;
@@ -162,9 +171,17 @@ export async function executeTurn(input: {
     .from(agentConversations)
     .where(eq(agentConversations.id, input.conversationId))
     .limit(1);
-  if (!conv || !conversationMatchesOwner(conv, input.expectedAgent)) {
-    return { ...CONVERSATION_NOT_FOUND_RESULT };
+  if (!conv) {
+    return {
+      ok: false,
+      reason: "conversation_not_found",
+      fallbackMessage: "I'm sorry, this chat session has expired. Please refresh the page.",
+    };
   }
+  // The public route verifies the signed relay binding against this stored
+  // row before execution. Keep the persisted conversation identity separate
+  // in validator context so tool results cannot select their own PII scope.
+  const currentChatwootConversationId = persistedChatwootConversationId(conv.channelMeta);
 
   const [agent] = await db
     .select()
@@ -175,7 +192,7 @@ export async function executeTurn(input: {
     return {
       ok: false,
       reason: "agent_not_found",
-      fallbackMessage: "I'm sorry, this assistant is unavailable. Please contact us directly.",
+      fallbackMessage: AGENT_NOT_FOUND_FALLBACK,
     };
   }
 
@@ -194,7 +211,7 @@ export async function executeTurn(input: {
     return {
       ok: false,
       reason: "org_not_found",
-      fallbackMessage: "I'm sorry, something went wrong. Please contact us directly.",
+      fallbackMessage: WORKSPACE_NOT_FOUND_FALLBACK,
     };
   }
 
@@ -368,6 +385,18 @@ export async function executeTurn(input: {
   // getAIClient's behavior whenever the flag is off or any lookup
   // fails, so this is a no-op today until Max flips the flag.
   const aiResolution = await resolveRuntimeAiClient({ orgId: agent.orgId });
+  const runtimeModel = aiResolution.model ?? MODEL;
+  if (input.publicPilotSpend && (
+    aiResolution.provider !== "platform" ||
+    runtimeModel !== "deepseek-flash" ||
+    process.env.MODEL_BASE_URL?.replace(/\/+$/, "") !== "https://api.deepseek.com/anthropic"
+  )) {
+    return {
+      ok: false,
+      reason: "llm_not_configured",
+      fallbackMessage: PROVIDER_NOT_CONFIGURED_FALLBACK,
+    };
+  }
 
   // Per-sub-account usage meter (2026-07-08) — Task 4: the "capped" branch
   // (flag SF_USAGE_CAP_PAUSE, D5). An inherited-key sub-account whose agency
@@ -421,6 +450,9 @@ export async function executeTurn(input: {
       toolResults: [],
       tokensIn: 0,
       tokensOut: 0,
+      model: runtimeModel,
+      usageComplete: true,
+      providerCalls: 0,
       latencyMs,
     };
   }
@@ -430,7 +462,7 @@ export async function executeTurn(input: {
       ok: false,
       reason: "llm_not_configured",
       fallbackMessage:
-        "I'm not set up to chat yet — the team is finishing my configuration. Please reach out directly and we'll be in touch right away.",
+        PROVIDER_NOT_CONFIGURED_FALLBACK,
     };
   }
   const anthropic: Anthropic = aiResolution.client;
@@ -438,6 +470,8 @@ export async function executeTurn(input: {
   // 6. Loop over LLM ↔ tools until we get a stop_reason of "end_turn"
   let totalTokensIn = 0;
   let totalTokensOut = 0;
+  let usageComplete = true;
+  let providerCalls = 0;
   const allToolCalls: AgentToolCall[] = [];
   const allToolResults: AgentToolResult[] = [];
   let finalText = "";
@@ -455,15 +489,15 @@ export async function executeTurn(input: {
   let priorToolError = false;
   // The model actually used for the LAST call this turn — persisted on the
   // assistant turn row so cost/observability reflect what was spent, not MODEL.
-  let lastModelUsed = MODEL;
+  let lastModelUsed = runtimeModel;
 
   for (let iter = 0; iter < MAX_TURN_ITERATIONS; iter++) {
-    const turnModel = resolveTurnModel({
+    const turnModel = input.publicPilotSpend ? runtimeModel : resolveTurnModel({
       userMessage: input.userMessage,
       toolNamesAvailable,
       priorToolError,
       turnIndex: nextTurnIndex,
-      defaultModel: MODEL,
+      defaultModel: runtimeModel,
     });
     lastModelUsed = turnModel;
     let response: Anthropic.Messages.Message;
@@ -474,21 +508,36 @@ export async function executeTurn(input: {
       // each; the moving breakpoint on the last message block makes both the
       // next loop iteration and the NEXT TURN's history rebuild a cache READ
       // instead of full-price input. Three markers total (≤ the API's 4).
-      response = await anthropic.messages.create({
+      const requestParams = {
         model: turnModel,
-        max_tokens: 1024,
-        system: cachedSystemBlocks(systemPrompt) as Anthropic.Messages.MessageCreateParams["system"],
-        tools: cachedToolParams(
+        max_tokens: DEEPSEEK_FLASH_PRICING.loopOutputTokens,
+        system: (input.publicPilotSpend ? systemPrompt : cachedSystemBlocks(systemPrompt)) as Anthropic.Messages.MessageCreateParams["system"],
+        tools: (input.publicPilotSpend ?
+          tools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.jsonSchema as Anthropic.Messages.Tool.InputSchema,
+          })) : cachedToolParams(
           tools.map((t) => ({
             name: t.name,
             description: t.description,
             input_schema: t.jsonSchema as Anthropic.Messages.Tool.InputSchema,
           })),
-        ) as Anthropic.Messages.ToolUnion[],
-        messages: withMovingCacheBreakpoint(
+        )) as Anthropic.Messages.ToolUnion[],
+        messages: (input.publicPilotSpend ? messages : withMovingCacheBreakpoint(
           messages as LooseMessage[],
-        ) as Anthropic.Messages.MessageParam[],
-      });
+        )) as Anthropic.Messages.MessageParam[],
+      } satisfies Anthropic.Messages.MessageCreateParams;
+      if (input.publicPilotSpend && !isWithinModelRequestLimit(requestParams)) {
+        return {
+          ok: false,
+          reason: "request_too_large",
+          fallbackMessage: "This conversation has reached its safe context limit. Please start a new chat.",
+          providerCalls,
+        };
+      }
+      providerCalls += 1;
+      response = await anthropic.messages.create(requestParams, input.publicPilotSpend ? { maxRetries: 0 } : undefined);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       const errClass = classifyAnthropicError(detail);
@@ -498,12 +547,13 @@ export async function executeTurn(input: {
       return {
         ok: false,
         reason: errClass.reason,
+        providerCalls,
         // Test-mode = Seldon client testing in sandbox → return real diagnostic.
         // Live/active = end customer talking to agent → return gentle fallback.
         fallbackMessage:
           conv.status === "test"
             ? `[runtime error: ${errClass.reason}] ${errClass.operatorHint}`
-            : "I'm having a hiccup. Can I have someone follow up with you? What's your email?",
+            : TEMPORARY_RUNTIME_ERROR_FALLBACK,
       };
     }
 
@@ -527,8 +577,13 @@ export async function executeTurn(input: {
       // Never let analytics affect the agent runtime loop.
     }
 
-    totalTokensIn += response.usage?.input_tokens ?? 0;
-    totalTokensOut += response.usage?.output_tokens ?? 0;
+    const usage = extractCompletePublicUsage(response.usage);
+    if (!usage) {
+      usageComplete = false;
+    } else {
+      totalTokensIn += usage.inputTokens;
+      totalTokensOut += usage.outputTokens;
+    }
 
     // Extract text + tool_use blocks
     const textBlocks: string[] = [];
@@ -612,6 +667,7 @@ export async function executeTurn(input: {
         agentId: agent.id,
         conversationId: conv.id,
         testMode: conv.status === "test",
+        trustedRelayToolContext: input.trustedRelayToolContext,
         // ICP-3 — deployed-agent calendar binding (chat/SMS/email parity with
         // voice). Undefined for workspace agents → ctx.booking stays undefined.
         // Per-client booking policy threaded alongside (P1).
@@ -715,6 +771,10 @@ export async function executeTurn(input: {
     // claims are backed by successful tool calls.
     turnToolCalls: allToolCalls,
     turnToolResults: allToolResults,
+    trustedRelayToolContext: input.trustedRelayToolContext,
+    currentChatwootConversationId,
+    currentAgentId: agent.id,
+    currentWorkspaceId: orgRow.id,
     // v1.40.12 — pass previous turns' successful tool names so the
     // hallucination validator allows legitimate follow-up confirmations.
     recentSuccessfulTools,
@@ -749,17 +809,17 @@ export async function executeTurn(input: {
       // Regeneration IS a hard turn — the model just produced a critically-
       // failing response and gets one chance to recover. Escalate to premium
       // (priorToolError-equivalent recovery signal). Fail-soft → MODEL.
-      const regenModel = resolveTurnModel({
+      const regenModel = input.publicPilotSpend ? runtimeModel : resolveTurnModel({
         userMessage: input.userMessage,
         toolNamesAvailable,
         priorToolError: true,
         turnIndex: nextTurnIndex,
-        defaultModel: MODEL,
+        defaultModel: runtimeModel,
       });
       lastModelUsed = regenModel;
-      const regenResponse = await anthropic.messages.create({
+      const regenParams = {
         model: regenModel,
-        max_tokens: 512,
+        max_tokens: DEEPSEEK_FLASH_PRICING.regenerationOutputTokens,
         // Deliberately UNCACHED (token economy): this call has no tools, so
         // its prefix can never match the loop's cached [tools, system, …]
         // prefix — a marker here would pay the cache-write premium with no
@@ -769,9 +829,21 @@ export async function executeTurn(input: {
         // another tool-loop iteration. The original turn already
         // resolved any tool calls; we're fixing the FINAL TEXT.
         messages: regenMessages as Anthropic.Messages.MessageParam[],
-      });
-      totalTokensIn += regenResponse.usage?.input_tokens ?? 0;
-      totalTokensOut += regenResponse.usage?.output_tokens ?? 0;
+      } satisfies Anthropic.Messages.MessageCreateParams;
+      if (input.publicPilotSpend && !isWithinModelRequestLimit(regenParams)) {
+        usageComplete = false;
+        // The earlier inference was already billed; a request beyond the provider window would only fail there.
+        finalText = selectFinalFallback(failedNames);
+      } else {
+        providerCalls += 1;
+        const regenResponse = await anthropic.messages.create(regenParams, input.publicPilotSpend ? { maxRetries: 0 } : undefined);
+      const regenUsage = extractCompletePublicUsage(regenResponse.usage);
+      if (!regenUsage) {
+        usageComplete = false;
+      } else {
+        totalTokensIn += regenUsage.inputTokens;
+        totalTokensOut += regenUsage.outputTokens;
+      }
       const regenText = regenResponse.content
         .filter(
           (b): b is Anthropic.Messages.TextBlock => b.type === "text",
@@ -787,6 +859,10 @@ export async function executeTurn(input: {
           conversationContext,
           turnToolCalls: allToolCalls,
           turnToolResults: allToolResults,
+          trustedRelayToolContext: input.trustedRelayToolContext,
+          currentChatwootConversationId,
+          currentAgentId: agent.id,
+          currentWorkspaceId: orgRow.id,
           recentSuccessfulTools,
           blueprint,
           soul: soulForValidators,
@@ -814,6 +890,7 @@ export async function executeTurn(input: {
       } else {
         // Regeneration returned no text — shouldn't happen, but fall back.
         finalText = selectFinalFallback(failedNames);
+      }
       }
     } catch (regenErr) {
       console.error(
@@ -906,6 +983,9 @@ export async function executeTurn(input: {
     toolResults: allToolResults,
     tokensIn: totalTokensIn,
     tokensOut: totalTokensOut,
+    model: lastModelUsed,
+    usageComplete,
+    providerCalls,
     latencyMs,
   };
 }

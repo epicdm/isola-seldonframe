@@ -33,6 +33,7 @@
 // same MD input and is asked for the same JSON output.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { createWizardAnthropic, wizardModelDefault } from "@/lib/ai/platform-client";
 
 import {
   EXTRACTION_INSTRUCTIONS_MD,
@@ -57,7 +58,7 @@ export type { WebFetchErrorReason };
 //   2. process.env.WEB_ONBOARDING_MODEL (deployment-level override)
 //   3. claude-opus-4-7
 const DEFAULT_MODEL =
-  process.env.WEB_ONBOARDING_MODEL?.trim() || "claude-opus-4-7";
+  process.env.WEB_ONBOARDING_MODEL?.trim() || wizardModelDefault("claude-opus-4-7");
 
 // Output is JSON only (no tool-use reasoning). 4096 proved too tight for
 // content-rich sites: a long services_detailed + photos[] + faq +
@@ -214,7 +215,7 @@ export async function extractBusinessFactsFromUrl(params: {
   model?: string;
 }): Promise<ExtractedBusinessFacts> {
   const client = (params.anthropicClient ??
-    new Anthropic({ apiKey: params.byokKey })) as AnthropicLike;
+    createWizardAnthropic(params.byokKey)) as AnthropicLike;
   const modelInUse = params.model || DEFAULT_MODEL;
 
   // Step 1: Firecrawl scrape -> Markdown.

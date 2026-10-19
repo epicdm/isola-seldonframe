@@ -24,17 +24,52 @@
 // for typewriter UX. Real Anthropic-streaming-passthrough lands in v1.27
 // alongside the multi-step tool-call streaming story.
 
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  authorizePublicConversationContinuation,
+  isValidAnonymousSessionId,
+  isValidPublicConversationId,
+  issuePublicConversationCapability,
+  resolvePublicConversationSecret,
+} from "@/lib/agents/public-conversation-capability";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { agentConversations, agents, organizations } from "@/db/schema";
 import { executeTurn } from "@/lib/agents/runtime";
+import {
+  agentHasPilotGate,
+  markPublicTurnSpendUncertain,
+  releasePublicTurnSpend,
+  reservePublicTurnSpend,
+  settlePublicTurnSpend,
+} from "@/lib/agents/public-turn-spend";
 import { decidePublicConversationStatus } from "@/lib/agents/public-turn-status";
-import { getCurrentUser } from "@/lib/auth/helpers";
+import { canAccessAgentTurn } from "@/lib/agents/public-agent-access";
+import {
+  PUBLIC_CHAT_UNAVAILABLE_MESSAGE,
+  resolvePublicPilotTarget,
+} from "@/lib/agents/public-pilot-controls";
+import { publicTurnFallbackEvents, publicTurnFallbackResponse } from "@/lib/agents/public-turn-response";
+import {
+  readRelayContextKey,
+  RELAY_CONTEXT_BINDING_KEY,
+  sameRelayBinding,
+  verifyRelayContext,
+  type TrustedRelayToolContext,
+} from "@/lib/agents/mcp/relay-context";
+import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
+import {
+  PUBLIC_TURN_RATE_LIMITED_MESSAGE,
+  checkPublicTurnAllowed,
+  resolvePublicRequestIp,
+  resolvePublicTurnLimits,
+} from "@/lib/agents/public-turn-limits";
 
 type Body = {
-  conversation_id?: string;
-  anonymous_session_id?: string;
+  conversation_id?: unknown;
+  anonymous_session_id?: unknown;
+  conversation_capability?: unknown;
   message?: string;
   channel_meta?: Record<string, unknown>;
   stream?: boolean;
@@ -59,9 +94,9 @@ const CRITICAL_VALIDATORS = [
 //
 // Origin = "*" is correct here: the chatbot is intentionally embeddable on
 // any operator's site (that's the entire point), and the endpoint serves
-// only public, conversation-scoped data. The downstream agent runtime
-// already enforces per-conversation auth via conversation_id + anonymous
-// session id. Loosening CORS doesn't loosen application authorization.
+// only public, conversation-scoped data. This route validates a server-signed
+// conversation capability bound to the visitor session before the runtime is
+// called. Loosening CORS does not bypass that authorization check.
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -139,36 +174,251 @@ export async function POST(
     );
   }
 
-  if (agentRow.status !== "live" && agentRow.status !== "test") {
-    return NextResponse.json(
-      { error: "agent_not_active", status: agentRow.status },
-      { status: 403, headers: CORS_HEADERS },
-    );
-  }
-
-  // 2026-05-22 — conversation status decision is now centralized in
-  // decidePublicConversationStatus(). Pre-fix this endpoint copied
-  // `agent.status === "test"` straight onto the conversation, which
-  // caused the runtime testMode plumbing (tools.ts:120, 291) to short-
-  // circuit booking + escalation tools for public visitors talking to
-  // auto-deployed chatbots. Now anonymous callers always get "active";
-  // only authenticated operators sending `x-test-mode: 1` get "test".
-  // The /agents/[id]/test sandbox sends that header explicitly.
+  // A client session id is an identity label, not proof of ownership. Anonymous
+  // continuations also require a server-signed capability bound to this exact
+  // conversation, workspace, agent and session. Authenticated operator test
+  // sessions retain the existing native test-mode path.
   const requestedTestMode =
     request.headers.get("x-test-mode")?.trim() === "1" ||
     request.nextUrl.searchParams.get("dryRun") === "1";
   let isAuthenticatedOperator = false;
   if (requestedTestMode) {
-    // Only resolve the session when the caller is asking for test mode —
-    // avoids paying the auth round-trip on every public turn.
     try {
       const user = await getCurrentUser();
-      isAuthenticatedOperator = Boolean(user?.id);
+      // The test-mode bypass is for the operators OF THIS WORKSPACE only. A signed-in user of another workspace
+      // (or an admin-token guest of another workspace) is treated like any anonymous caller.
+      isAuthenticatedOperator = Boolean(user?.id) && (await getOrgId()) === agentRow.orgId;
     } catch {
-      // Auth resolution failure → treat as anonymous (safe default).
       isAuthenticatedOperator = false;
     }
   }
+  const operatorTestSession = requestedTestMode && isAuthenticatedOperator;
+  // Public callers may use only the published live agent. The native operator
+  // sandbox sends x-test-mode and is accepted only after same-workspace auth.
+  if (!canAccessAgentTurn(agentRow.status, operatorTestSession)) {
+    return NextResponse.json(
+      { error: "agent_not_active", status: agentRow.status },
+      { status: 403, headers: CORS_HEADERS },
+    );
+  }
+  let pilotTarget = resolvePublicPilotTarget(agentRow.orgId, agentRow.id);
+  // The environment decides whether a request is metered; a typo in PUBLIC_PILOT_ORG_ID / PUBLIC_PILOT_AGENT_ID must NOT leave
+  // the pilot agent public and unmetered. If the database holds a pilot gate row for this agent but the environment does not
+  // identify it as the pilot target, fail closed (found by Lane A in acceptance: org-mismatch served the agent unmetered).
+  if (!operatorTestSession && pilotTarget === "other" && (await agentHasPilotGate(agentRow.id))) pilotTarget = "incomplete";
+  if (!operatorTestSession && pilotTarget === "incomplete") {
+    return NextResponse.json({ error: "PUBLIC_CHAT_UNAVAILABLE", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE }, { status: 503, headers: CORS_HEADERS });
+  }
+  const pilotPublicRequest = !operatorTestSession && pilotTarget === "target";
+  const signingSecret = resolvePublicConversationSecret();
+
+  const rawConversationId = body.conversation_id;
+  if (rawConversationId == null && body.conversation_capability != null) {
+    return NextResponse.json(
+      { error: "conversation_not_found" },
+      { status: 404, headers: CORS_HEADERS },
+    );
+  }
+  if (rawConversationId != null && typeof rawConversationId !== "string") {
+    return NextResponse.json(
+      { error: "conversation_not_found" },
+      { status: 404, headers: CORS_HEADERS },
+    );
+  }
+  if (typeof rawConversationId === "string" && !rawConversationId) {
+    return NextResponse.json(
+      { error: "conversation_not_found" },
+      { status: 404, headers: CORS_HEADERS },
+    );
+  }
+  const isNewConversation = rawConversationId == null;
+  let conversationId = typeof rawConversationId === "string" ? rawConversationId : randomUUID();
+  let conversationCapability: string | undefined;
+  let existingChannelMeta: unknown;
+
+  if (!operatorTestSession) {
+    const validSession = isValidAnonymousSessionId(body.anonymous_session_id);
+    if (!validSession) {
+      return NextResponse.json(
+        { error: isNewConversation ? "invalid_anonymous_session" : "conversation_not_found" },
+        { status: isNewConversation ? 400 : 404, headers: CORS_HEADERS },
+      );
+    }
+    if (!signingSecret) {
+      return NextResponse.json(
+        { error: "temporarily_unavailable", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE },
+        { status: 503, headers: CORS_HEADERS },
+      );
+    }
+  }
+
+  // Resolve and authorize an existing conversation before rate-limit counters,
+  // turn persistence or executeTurn/model access.
+  if (!isNewConversation) {
+    const owned = isValidPublicConversationId(conversationId)
+      ? (
+          await db
+            .select({
+              id: agentConversations.id,
+              anonymousSessionId: agentConversations.anonymousSessionId,
+              channelMeta: agentConversations.channelMeta,
+            })
+            .from(agentConversations)
+            .where(
+              and(
+                eq(agentConversations.id, conversationId),
+                eq(agentConversations.agentId, agentRow.id),
+                eq(agentConversations.orgId, agentRow.orgId),
+              ),
+            )
+            .limit(1)
+        )[0]
+      : undefined;
+    if (!owned) {
+      return NextResponse.json(
+        { error: "conversation_not_found" },
+        { status: 404, headers: CORS_HEADERS },
+      );
+    }
+    existingChannelMeta = owned.channelMeta;
+
+    if (!operatorTestSession) {
+      const sessionId = body.anonymous_session_id as string;
+      const authorized = authorizePublicConversationContinuation({
+        row: {
+          conversationId: owned.id,
+          organizationId: agentRow.orgId,
+          agentId: agentRow.id,
+          anonymousSessionId: owned.anonymousSessionId,
+        },
+        request: {
+          conversationId,
+          organizationId: agentRow.orgId,
+          agentId: agentRow.id,
+          anonymousSessionId: sessionId,
+        },
+        capability: body.conversation_capability,
+        secret: signingSecret,
+      });
+      if (!authorized) {
+        return NextResponse.json(
+          { error: "conversation_not_found" },
+          { status: 404, headers: CORS_HEADERS },
+        );
+      }
+      conversationCapability = body.conversation_capability as string;
+    }
+  }
+
+  // A relay proof is an optional signed server-to-server context. It is never
+  // accepted from JSON, persisted as a token, or added to model arguments.
+  // A supplied but invalid proof fails before conversation writes, spend
+  // reservation, and model execution. The ordinary website path is unchanged.
+  const relayProof = request.headers.get("x-isola-relay-context");
+  let trustedRelayToolContext: TrustedRelayToolContext | undefined;
+  if (relayProof !== null) {
+    const relayKey = await readRelayContextKey();
+    const configuredWorkspaceId = process.env.UPLINK_RELAY_WORKSPACE_ID?.trim();
+    const configuredAgentSlug = process.env.UPLINK_RELAY_AGENT_SLUG?.trim();
+    const configuredAccountId = process.env.UPLINK_RELAY_CHATWOOT_ACCOUNT_ID?.trim();
+    const configuredInboxId = process.env.UPLINK_RELAY_CHATWOOT_INBOX_ID?.trim();
+    const canonicalAgentSlug = `${agentRow.orgSlug}--${agentRow.agentSlug}`;
+    const sessionId = body.anonymous_session_id;
+    const verified = relayKey && typeof sessionId === "string"
+      ? verifyRelayContext({
+          token: relayProof,
+          key: relayKey.key,
+          kid: relayKey.kid,
+          message,
+          expected: {
+            accountId: Number(configuredAccountId),
+            inboxId: Number(configuredInboxId),
+            workspaceId: agentRow.orgId,
+            agentId: agentRow.id,
+            agentSlug: canonicalAgentSlug,
+            sessionId,
+            uplinkConversationId: isNewConversation ? null : conversationId,
+          },
+        })
+      : { ok: false as const };
+
+    const claims = verified.ok ? verified.claims : null;
+    const envScopeMatches = relayKey !== null
+      && configuredWorkspaceId === agentRow.orgId
+      && configuredAgentSlug === canonicalAgentSlug
+      && configuredAccountId === String(claims?.accountId ?? "")
+      && configuredInboxId === String(claims?.inboxId ?? "");
+    const expectedBinding = claims ? {
+      accountId: claims.accountId,
+      inboxId: claims.inboxId,
+      chatwootConversationId: claims.chatwootConversationId,
+      workspaceId: claims.workspaceId,
+      agentId: claims.agentId,
+      agentSlug: claims.agentSlug,
+      sessionId: claims.sessionId,
+    } : null;
+    const priorBinding = existingChannelMeta && typeof existingChannelMeta === "object"
+      ? (existingChannelMeta as Record<string, unknown>)[RELAY_CONTEXT_BINDING_KEY]
+      : undefined;
+    const bindingMatches = isNewConversation
+      ? true
+      : expectedBinding !== null && sameRelayBinding(priorBinding, expectedBinding);
+
+    if (!verified.ok || !envScopeMatches || !bindingMatches) {
+      return NextResponse.json({ error: "invalid_channel_context" }, { status: 403, headers: CORS_HEADERS });
+    }
+    trustedRelayToolContext = {
+      kind: "chatwoot",
+      proof: relayProof,
+      binding: verified.binding,
+    };
+  }
+
+  // Public callers require a trustworthy ingress peer and the durable spend
+  // reservation. Authenticated same-workspace operator test mode intentionally
+  // retains native testing even while the public pilot gate is disabled.
+  let spendReservation: { id: string } | null = null;
+  if (!operatorTestSession) {
+    const requestIp = resolvePublicRequestIp(request.headers);
+    if (!requestIp) {
+      return NextResponse.json({ error: "temporarily_unavailable", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE }, { status: 503, headers: CORS_HEADERS });
+    }
+    const allowed = await checkPublicTurnAllowed({
+      ip: requestIp,
+      agentId: agentRow.id,
+      limits: resolvePublicTurnLimits(),
+      // The durable dollar gate is the primary control. The per-IP limiter is process-local unless a
+      // distributed limiter is configured AND the operator opts in to requiring it.
+      failClosed: pilotPublicRequest && process.env.PUBLIC_PILOT_REQUIRE_DISTRIBUTED_LIMITER === "1",
+    });
+    if (!allowed.ok) {
+      if (allowed.scope === "limiter_error") {
+        return NextResponse.json({ error: "temporarily_unavailable", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE }, { status: 503, headers: CORS_HEADERS });
+      }
+      return NextResponse.json(
+        { error: "rate_limited", message: PUBLIC_TURN_RATE_LIMITED_MESSAGE },
+        { status: 429, headers: { ...CORS_HEADERS, "Retry-After": "60" } },
+      );
+    }
+
+    if (pilotPublicRequest) {
+      // Allocate the ID before reservation so first turns count against the
+      // same per-conversation limit as continuations. Write only after reserve.
+      spendReservation = await reservePublicTurnSpend({
+        organizationId: agentRow.orgId,
+        agentId: agentRow.id,
+        conversationId,
+        verifiedRelay: Boolean(trustedRelayToolContext),
+      });
+      if (!spendReservation) {
+        return NextResponse.json(
+          { error: "PUBLIC_CHAT_UNAVAILABLE", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE },
+          { status: 503, headers: CORS_HEADERS },
+        );
+      }
+    }
+  }
+
   const conversationStatus = decidePublicConversationStatus({
     agentStatus: agentRow.status,
     requestedTestMode,
@@ -176,31 +426,62 @@ export async function POST(
   });
 
   // Get-or-create conversation
-  let conversationId = body.conversation_id;
-  if (!conversationId) {
-    const [agentForVersion] = await db
-      .select({ currentVersion: agents.currentVersion })
-      .from(agents)
-      .where(eq(agents.id, agentRow.id))
-      .limit(1);
-    const [created] = await db
-      .insert(agentConversations)
-      .values({
-        agentId: agentRow.id,
-        agentVersion: agentForVersion?.currentVersion ?? 1,
-        orgId: agentRow.orgId,
-        anonymousSessionId: body.anonymous_session_id ?? null,
-        channelMeta: body.channel_meta ?? {},
-        status: conversationStatus,
-      })
-      .returning({ id: agentConversations.id });
+  if (isNewConversation) {
+    let agentForVersion: { currentVersion: number } | undefined;
+    let created: { id: string } | undefined;
+    try {
+      [agentForVersion] = await db
+        .select({ currentVersion: agents.currentVersion })
+        .from(agents)
+        .where(eq(agents.id, agentRow.id))
+        .limit(1);
+      [created] = await db
+        .insert(agentConversations)
+        .values({
+          id: conversationId,
+          agentId: agentRow.id,
+          agentVersion: agentForVersion?.currentVersion ?? 1,
+          orgId: agentRow.orgId,
+          anonymousSessionId: isValidAnonymousSessionId(body.anonymous_session_id)
+            ? body.anonymous_session_id
+            : null,
+          channelMeta: (() => {
+            const metadata = body.channel_meta && typeof body.channel_meta === "object" && !Array.isArray(body.channel_meta)
+              ? { ...body.channel_meta }
+              : {};
+            delete metadata[RELAY_CONTEXT_BINDING_KEY];
+            if (trustedRelayToolContext) metadata[RELAY_CONTEXT_BINDING_KEY] = trustedRelayToolContext.binding;
+            return metadata;
+          })(),
+          status: conversationStatus,
+        })
+        .returning({ id: agentConversations.id });
+    } catch {
+      if (spendReservation) await releasePublicTurnSpend(spendReservation.id);
+      return NextResponse.json(
+        { error: "conversation_create_failed" },
+        { status: 500, headers: CORS_HEADERS },
+      );
+    }
     if (!created) {
+      if (spendReservation) await releasePublicTurnSpend(spendReservation.id);
       return NextResponse.json(
         { error: "conversation_create_failed" },
         { status: 500, headers: CORS_HEADERS },
       );
     }
     conversationId = created.id;
+    if (!operatorTestSession) {
+      conversationCapability = issuePublicConversationCapability(
+        {
+          conversationId,
+          organizationId: agentRow.orgId,
+          agentId: agentRow.id,
+          anonymousSessionId: body.anonymous_session_id as string,
+        },
+        signingSecret!,
+      );
+    }
 
     // 2026-08-07 — activation-moment analytics. Only for real ("active")
     // conversations — the operator test sandbox routes through this same
@@ -208,22 +489,21 @@ export async function POST(
     // and that traffic must never count as activation. Fire-and-forget:
     // never awaited, internally swallows every error.
     if (conversationStatus === "active") {
-      const { recordAgentConversationStarted } = await import(
-        "@/lib/analytics/record-agent-activation"
-      );
-      void recordAgentConversationStarted({
-        orgId: agentRow.orgId,
-        agentId: agentRow.id,
-        conversationId,
-        channel: "web",
-      });
+      try {
+        const { recordAgentConversationStarted } = await import(
+          "@/lib/analytics/record-agent-activation"
+        );
+        void recordAgentConversationStarted({
+          orgId: agentRow.orgId,
+          agentId: agentRow.id,
+          conversationId,
+          channel: "web",
+        });
+      } catch {
+        // Analytics is optional and must not block a metered customer turn.
+      }
     }
   }
-
-  // 2026-10-19 — a caller-supplied conversation_id must belong to THIS agent
-  // and workspace; otherwise the runtime answers exactly as for an unknown id
-  // (lib/agents/conversation-ownership.ts).
-  const expectedAgent = { agentId: agentRow.id, orgId: agentRow.orgId };
 
   // SSE branch ───────────────────────────────────────────────────────────
   if (wantsStream) {
@@ -236,19 +516,21 @@ export async function POST(
           );
         };
         try {
-          send("start", { conversation_id: conversationId });
-          const result = await executeTurn({
+          send("start", {
+            conversation_id: conversationId,
+            ...(conversationCapability ? { conversation_capability: conversationCapability } : {}),
+          });
+          const result = await executeBoundedPublicTurn({
+            reservationId: spendReservation?.id,
+            metered: pilotPublicRequest,
             conversationId: conversationId!,
             userMessage: message,
-            expectedAgent,
+            trustedRelayToolContext,
           });
           if (!result.ok) {
-            send("delta", { text: result.fallbackMessage });
-            send("done", {
-              conversation_id: conversationId,
-              degraded: true,
-              reason: result.reason,
-            });
+            for (const event of publicTurnFallbackEvents(conversationId!, result, conversationCapability)) {
+              send(event.event, event.data);
+            }
             controller.close();
             return;
           }
@@ -263,6 +545,7 @@ export async function POST(
           }
           send("done", {
             conversation_id: conversationId,
+            ...(conversationCapability ? { conversation_capability: conversationCapability } : {}),
             validators_critical_failed: result.validators.some(
               (v) => !v.passed && CRITICAL_VALIDATORS.includes(v.name),
             ),
@@ -291,27 +574,32 @@ export async function POST(
   }
 
   // Non-streaming JSON branch (back-compat) ──────────────────────────────
-  const result = await executeTurn({
+  const result = await executeBoundedPublicTurn({
+    reservationId: spendReservation?.id,
+    metered: pilotPublicRequest,
     conversationId,
     userMessage: message,
-    expectedAgent,
+    trustedRelayToolContext,
   });
 
   if (!result.ok) {
-    return NextResponse.json(
-      {
-        conversation_id: conversationId,
-        message: result.fallbackMessage,
-        degraded: true,
-        reason: result.reason,
-      },
-      { headers: CORS_HEADERS },
-    );
+    // A WhatsApp (relay) conversation that outgrew the provider's context window: answer the machine code the relay acts on
+    // (rc10l starts a fresh Uplink conversation with the earlier messages carried over) instead of "start a new chat", which a
+    // WhatsApp customer cannot do. ONLY when this turn made no model call: if the guard fired mid tool-loop, tools have already run
+    // and a relay re-send could repeat them, so that turn gets the ordinary fallback and the NEXT message rotates cleanly.
+    if (result.reason === "request_too_large" && trustedRelayToolContext && result.providerCalls === 0) {
+      return NextResponse.json(
+        { error: "PUBLIC_CHAT_CONVERSATION_LIMIT", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE },
+        { status: 503, headers: CORS_HEADERS },
+      );
+    }
+    return publicTurnFallbackResponse(conversationId, result, CORS_HEADERS, conversationCapability);
   }
 
   return NextResponse.json(
     {
       conversation_id: conversationId,
+      ...(conversationCapability ? { conversation_capability: conversationCapability } : {}),
       message: result.assistantMessage,
       validators_critical_failed: result.validators.some(
         (v) => !v.passed && CRITICAL_VALIDATORS.includes(v.name),
@@ -319,6 +607,54 @@ export async function POST(
     },
     { headers: CORS_HEADERS },
   );
+}
+
+async function executeBoundedPublicTurn(input: {
+  reservationId?: string;
+  metered: boolean;
+  conversationId: string;
+  userMessage: string;
+  trustedRelayToolContext?: TrustedRelayToolContext;
+}) {
+  let result: Awaited<ReturnType<typeof executeTurn>>;
+  try {
+    result = await executeTurn({
+      conversationId: input.conversationId,
+      userMessage: input.userMessage,
+      publicPilotSpend: input.metered,
+      trustedRelayToolContext: input.trustedRelayToolContext,
+  });
+  } catch (error) {
+    if (input.metered && input.reservationId) await markPublicTurnSpendUncertain(input.reservationId);
+    throw error;
+  }
+
+  if (!result.ok) {
+    if (input.metered && input.reservationId) {
+      if (result.providerCalls === 0 || ["conversation_not_found", "agent_not_found", "org_not_found", "llm_not_configured"].includes(result.reason)) {
+        await releasePublicTurnSpend(input.reservationId);
+      } else {
+        await markPublicTurnSpendUncertain(input.reservationId);
+      }
+    }
+    return result;
+  }
+
+  if (!input.metered || !input.reservationId) return result;
+  if (result.providerCalls === 0) {
+    await releasePublicTurnSpend(input.reservationId);
+    return result;
+  }
+
+  const settled = await settlePublicTurnSpend({
+    reservationId: input.reservationId,
+    model: result.model,
+    inputTokens: result.tokensIn,
+    outputTokens: result.tokensOut,
+    usageComplete: result.usageComplete,
+  });
+  if (!settled) await markPublicTurnSpendUncertain(input.reservationId);
+  return result;
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────

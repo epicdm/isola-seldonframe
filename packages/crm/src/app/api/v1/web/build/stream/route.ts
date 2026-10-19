@@ -45,6 +45,7 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
+import { resolvePlatformWizardKey } from "@/lib/ai/platform-client";
 import { runCreateFromUrl } from "@/lib/web-onboarding/run-create-from-url";
 import { createFullWorkspace } from "@/lib/workspace/create-full";
 import { extractBusinessFactsFromUrl } from "@/lib/web-onboarding/markdown-extractor";
@@ -61,6 +62,7 @@ import {
 import { checkRateLimit } from "@/lib/utils/rate-limit";
 import { assertPublicHttpUrl } from "@/lib/security/ssrf-guard";
 import { createSseStream, SSE_RESPONSE_HEADERS } from "@/lib/web-onboarding/sse";
+import { resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 
 export const dynamic = "force-dynamic";
 // Pin Node.js runtime (drizzle + node:crypto + SDKs) — matches the authed
@@ -140,7 +142,7 @@ async function runAnonymousBuild(url: string | null): Promise<Response> {
       // against. Returns null (→ extraction_unavailable) if the platform
       // key isn't configured on this deployment.
       resolveExtractionKey: async () => {
-        const platformKey = process.env.ANTHROPIC_API_KEY?.trim();
+        const platformKey = process.env.ANTHROPIC_API_KEY?.trim() || (await resolvePlatformWizardKey());
         return platformKey ? { key: platformKey } : null;
       },
       // Wrapped with the shared url_extraction_cache so repeated public
@@ -181,7 +183,7 @@ async function runAnonymousBuild(url: string | null): Promise<Response> {
       seedClientContactInAgencyCrm: async () => undefined,
       seedSoulWikiSourceUrl: async () => undefined,
       seedDefaultOutboundTriggers: async () => undefined,
-      workspaceBaseDomain: process.env.WORKSPACE_BASE_DOMAIN ?? "app.seldonframe.com",
+      workspaceBaseDomain: resolveWorkspaceBaseDomain(),
     },
     body: { url },
     sessionUser: null,

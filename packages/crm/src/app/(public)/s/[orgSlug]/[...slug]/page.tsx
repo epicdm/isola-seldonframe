@@ -39,6 +39,8 @@ import { Navbar } from "@/components/landing-r1/chrome/navbar";
 import { SiteShell } from "@/components/landing-r1/shell/site-shell";
 import { ServicePageTemplate } from "@/components/landing-r1/sections/service-page";
 import { findServicePage, getServicePages } from "@/lib/landing/r1-site-tree";
+import { workspacePageMetadata } from "@/lib/seo/public-origins";
+import { resolvePlatformBranding } from "@/lib/branding/platform";
 
 type PageProps = {
   params: Promise<{ orgSlug: string; slug: string[] }>;
@@ -66,19 +68,20 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       // Task 8: unclaimed anonymous web-build workspaces stay noindexed on
       // the subdomain too — same predicate as /w/[slug].
       const indexable = shouldIndexWorkspace(r1Data.ownerId, r1Data.settings);
-      return {
+      const metadata = workspacePageMetadata({
+        slug: orgSlug,
         title,
         description: page.summary,
-        openGraph: {
-          title,
-          description: page.summary,
-          ...(page.heroPhoto ? { images: [{ url: page.heroPhoto.src }] } : {}),
-          type: "website",
-        },
+        image: page.heroPhoto?.src,
+        path: `services/${slug[1]}`,
+      });
+      return {
+        ...metadata,
+        title,
+        description: page.summary,
         robots: { index: indexable, follow: indexable },
         // Canonical uses relative path style, matching the home-page metadata
         // above which uses `/w/${orgSlug}` (not an absolute subdomain URL).
-        alternates: { canonical: `/w/${orgSlug}/services/${slug[1]}` },
       };
     }
     // No payload or unknown service → fall through to home/default handling.
@@ -93,19 +96,19 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       // the subdomain too — same predicate as /w/[slug]. Without this, a
       // workspace noindexed on /w was still indexable on its subdomain.
       const indexable = shouldIndexWorkspace(r1Data.ownerId, r1Data.settings);
-      return {
+      const metadata = workspacePageMetadata({
+        slug: orgSlug,
         title: seo.title,
         description: seo.description,
-        openGraph: {
-          title: seo.title,
-          description: seo.description,
-          ...(seo.ogImage ? { images: [{ url: seo.ogImage }] } : {}),
-          type: "website",
-        },
+        image: seo.ogImage || payload.logo || resolvePlatformBranding().logoUrl,
+      });
+      return {
+        ...metadata,
+        title: seo.title,
+        description: seo.description,
         robots: { index: indexable, follow: indexable },
         // Canonical points to /w/[slug] — that is the authoritative URL
         // for the R-framework page; /s/[slug]/home is the proxy rewrite.
-        alternates: { canonical: `/w/${orgSlug}` },
         other: {
           "application/ld+json": JSON.stringify({
             "@context": "https://schema.org",
@@ -147,16 +150,16 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       // ctx is non-null here (soul came from it above).
       const indexable = shouldIndexWorkspace(ctx!.ownerId, ctx!.settings);
       return {
+        ...workspacePageMetadata({
+          slug: orgSlug,
+          title: soul.business_name,
+          description,
+          image: resolvePlatformBranding().logoUrl,
+        }),
         title: soul.business_name,
         ...(description ? { description } : {}),
-        openGraph: {
-          title: soul.business_name,
-          ...(description ? { description } : {}),
-          type: "website",
-        },
         robots: { index: indexable, follow: indexable },
         // Canonical points at /w/[slug] — that is the authoritative URL.
-        alternates: { canonical: `/w/${orgSlug}` },
       };
     }
   }
