@@ -8,6 +8,9 @@ REPO=$(git rev-parse --show-toplevel)
 C=$(git -C "$REPO" rev-parse "$REV^{commit}")
 TAG=${2:-lane-a-uplink:release-${C:0:8}}
 OUT=${OUT:-$HOME/zz-uplink-release-${C:0:8}}
+# OUT is removed and recreated below: accept only a release scratch directory under $HOME (Codex LOW).
+case "$OUT" in "$HOME"/zz-uplink-release-?*) ;; *) echo "refusing OUT outside $HOME/zz-uplink-release-*: $OUT" >&2; exit 2 ;; esac
+case "$OUT" in *..*) echo "refusing OUT containing ..: $OUT" >&2; exit 2 ;; esac
 rm -rf "$OUT"; mkdir -p "$OUT/ctx"
 git -C "$REPO" archive --format=tar "$C" packages/crm > "$OUT/crm.tar"
 tar -x -C "$OUT/ctx" -f "$OUT/crm.tar" && mv "$OUT/ctx/packages/crm" "$OUT/ctx/crm" && rmdir "$OUT/ctx/packages"
