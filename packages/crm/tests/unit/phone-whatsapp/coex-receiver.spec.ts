@@ -43,7 +43,8 @@ const stateBody = () => body("smb_app_state_sync", { state_sync: [
   { type: "contact", action: "add", contact: { first_name: "Bo", phone_number: "+1 555 0005" } },
 ] });
 
-function harness(o: { holders?: ReceiverBinding[]; forwardStatus?: number | "throw"; chatwootFails?: boolean; bot?: "none" | "attached" | "fails" | "ambiguous"; skippedPre?: string[] } = {}) {
+function harness(o: { holders?: ReceiverBinding[]; forwardStatus?: number | "throw"; chatwootFails?: boolean; bot?: "none" | "attached" | "captain" | "fails" | "ambiguous"; skippedPre?: string[]; botAfterChecks?: number; failAfterChecks?: number; recordSkipFails?: boolean } = {}) {
+  const captainChecks: number[] = [];
   const skips: Array<{ syncType: string; status: string }> = [];
   const audits: string[] = [];
   const botChecks: number[] = [];
@@ -61,8 +62,10 @@ function harness(o: { holders?: ReceiverBinding[]; forwardStatus?: number | "thr
     async inboxBotAttached(inboxId) {
       botChecks.push(inboxId);
       if (o.bot === "fails" || o.bot === "ambiguous") throw new Error("bot check");
-      return o.bot === "attached";
+      if (o.failAfterChecks !== undefined && botChecks.length > o.failAfterChecks) throw new Error("bot check");
+      return o.bot === "attached" || (o.botAfterChecks !== undefined && botChecks.length > o.botAfterChecks);
     },
+    async inboxCaptainAttached(inboxId) { captainChecks.push(inboxId); return o.bot === "captain"; },
   };
   const deps: ReceiverDeps = {
     appSecret: SECRET,
@@ -78,12 +81,12 @@ function harness(o: { holders?: ReceiverBinding[]; forwardStatus?: number | "thr
     async seen(_o, _p, k) { return marked.has(k); },
     async mark(_o, _p, k) { marked.add(k); },
     async skipped() { return new Set(skippedSet); },
-    async recordSkip(_o, _p, syncType, status) { skips.push({ syncType, status }); skippedSet.add(syncType); },
+    async recordSkip(_o, _p, syncType, status) { if (o.recordSkipFails) throw new Error("db"); skips.push({ syncType, status }); skippedSet.add(syncType); },
     audit: (_o, step) => audits.push(step),
     log: (l) => logs.push(l),
   };
   const post = (raw: string, sig: string | null = sign(raw)) => handleReceiverPost(raw, sig, deps);
-  return { post, forwards, notes, contacts, marked, logs, skips, audits, botChecks };
+  return { post, forwards, notes, contacts, marked, logs, skips, audits, botChecks, captainChecks, opts: o };
 }
 
 describe("signature", () => {
@@ -189,7 +192,8 @@ describe("bot guard: history and contacts are imported only into an inbox with N
     assert.equal((await h.post(historyBody())).status, 200);
     const fromHistory = h.contacts.length; // history threads create their contacts too
     assert.equal((await h.post(stateBody())).status, 200);
-    assert.deepEqual(h.botChecks, [77, 77]);
+    assert.ok(h.botChecks.length >= 2 && h.botChecks.every((i) => i === 77), String(h.botChecks));
+    assert.ok(h.captainChecks.length >= 2 && h.captainChecks.every((i) => i === 77));
     assert.equal(h.notes.length, 3);
     assert.equal(h.contacts.length - fromHistory, 2);
     assert.deepEqual(h.skips, []);
@@ -233,5 +237,83 @@ describe("bot guard: history and contacts are imported only into an inbox with N
     assert.equal((await h.post(msgBody())).status, 200);
     assert.equal(h.forwards.length, 1);
     assert.deepEqual(h.botChecks, []);
+  });
+});
+
+describe("Codex fixes: Captain, mid-import attach, unrecorded skip, digest-first ordering", () => {
+  const mixedBody = () => {
+    const h = JSON.parse(historyBody()); const m = JSON.parse(msgBody());
+    h.entry[0].changes.push(m.entry[0].changes[0]);
+    return JSON.stringify(h);
+  };
+
+  test("a Captain assistant on the inbox -> nothing imported, skip recorded (twin: no AI -> imported, shown above)", async () => {
+    const h = harness({ bot: "captain" });
+    const r = await h.post(historyBody());
+    assert.equal(r.status, 200);
+    assert.deepEqual([r.body.code, r.body.ai], ["skipped_bot_attached", "captain"]);
+    assert.deepEqual([h.notes.length, h.contacts.length], [0, 0]);
+    assert.deepEqual(h.skips, [{ syncType: "history", status: "skipped_bot_attached" }]);
+  });
+
+  test("an AI attached MID-import stops the remaining writes and records the skip (twin: no attach -> all 3 entries)", async () => {
+    const h = harness({ botAfterChecks: 2 }); // check 1 (before the chunk) and 2 (thread 1) clear; check 3 (thread 2) finds a bot
+    const r = await h.post(historyBody());
+    assert.equal(r.status, 200);
+    assert.deepEqual([r.body.code, r.body.partial], ["skipped_bot_attached", true]);
+    assert.equal(h.notes.length, 2); // thread 1 only; thread 2's entry was never written
+    assert.equal(h.marked.size, 0); // the chunk is not marked imported
+    assert.deepEqual(h.skips, [{ syncType: "history", status: "skipped_bot_attached" }]);
+    const t = harness();
+    await t.post(historyBody());
+    assert.equal(t.notes.length, 3);
+  });
+
+  test("the AI check failing MID-import -> 503, remaining writes stopped, nothing marked or recorded (twin: no failure -> 3 entries, 200)", async () => {
+    const h = harness({ failAfterChecks: 2 }); // checks 1-2 clear, check 3 (thread 2) fails
+    const r = await h.post(historyBody());
+    assert.deepEqual([r.status, r.body.code], [503, "bot_check_failed"]);
+    assert.deepEqual([h.notes.length, h.marked.size, h.skips.length], [2, 0, 0]);
+    const t = harness();
+    assert.equal((await t.post(historyBody())).status, 200);
+    assert.equal(t.notes.length, 3);
+  });
+
+  test("the sticky skip cannot be recorded -> 503 (Meta redelivers), NOT 200, nothing imported (twin: recorded -> 200)", async () => {
+    const h = harness({ bot: "attached", recordSkipFails: true });
+    const r = await h.post(historyBody());
+    assert.deepEqual([r.status, r.body.code], [503, "skip_record_failed"]);
+    assert.deepEqual([h.notes.length, h.contacts.length], [0, 0]);
+    assert.ok(h.audits.includes("import_skip_record_failed"));
+    const t = harness({ bot: "attached" });
+    assert.equal((await t.post(historyBody())).status, 200);
+  });
+
+  test("digest FIRST: a delivery with history AND a message whose digest fails forwards NOTHING; the redelivery forwards exactly once", async () => {
+    const h = harness({ chatwootFails: true });
+    const raw = mixedBody();
+    // the history thread fails at its first Chatwoot write; the message is not forwarded yet
+    const r1 = await h.post(raw);
+    assert.equal(r1.status, 500);
+    assert.equal(h.forwards.length, 0);
+    h.opts.chatwootFails = false; // Chatwoot recovers; Meta redelivers the SAME delivery
+    const r2 = await h.post(raw);
+    assert.equal(r2.status, 200);
+    assert.equal(h.forwards.length, 1);
+    assert.equal(h.forwards[0].raw, raw);
+    // and a further redelivery of an imported chunk imports nothing new (the chunk is marked)
+    const before = h.notes.length;
+    await h.post(raw);
+    assert.equal(h.notes.length, before);
+  });
+
+  test("an AI-check refusal (503) also forwards nothing, so the redelivery forwards once", async () => {
+    const h = harness({ bot: "fails" });
+    const raw = mixedBody();
+    assert.equal((await h.post(raw)).status, 503);
+    assert.equal(h.forwards.length, 0);
+    h.opts.bot = "none";
+    assert.equal((await h.post(raw)).status, 200);
+    assert.equal(h.forwards.length, 1);
   });
 });

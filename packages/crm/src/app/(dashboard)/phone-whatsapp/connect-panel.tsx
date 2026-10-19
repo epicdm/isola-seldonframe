@@ -50,8 +50,8 @@ const SYNC_TEXT: Record<string, string> = {
   requested: "requested from Meta (it arrives over the next hours)",
   rejected: "refused by Meta (Meta allows it only once, within 24 hours of connecting)",
   unknown: "requested, but Meta did not confirm (it is not repeated automatically; EPIC will check)",
-  skipped_bot_attached: "History not imported: an AI bot is attached to this inbox (it would receive every imported note). Meta allows the copy only once, so it is not repeated",
-  skipped_check_failed: "not imported: EPIC could not confirm that no AI bot is attached to this inbox, so nothing was copied (Meta allows the copy only once; it is not repeated automatically)",
+  skipped_bot_attached: "History not imported: an AI bot is attached to this inbox (an agent bot or a Captain assistant). Meta allows the copy only once, so it is not repeated",
+  skipped_check_failed: "not imported: EPIC could not confirm that no AI bot (agent bot or Captain assistant) is attached to this inbox, so nothing was copied (Meta allows the copy only once; it is not repeated automatically)",
 };
 
 async function post(url: string, body: unknown) {
@@ -164,7 +164,7 @@ export function ConnectPanel({ states = [], coexistenceAvailable = false }: { st
               working. WhatsApp calls to this number still ring only in the app: calling through EPIC needs the API-only setup.
               <span className="block text-muted-foreground">
                 Contacts from the app: {SYNC_TEXT[s.syncs?.smb_app_state_sync ?? ""] ?? "not requested yet"}. Chat history from the app (imported as
-                private notes):{" "}{SYNC_TEXT[s.syncs?.history ?? ""] ?? "not requested yet"}.
+                internal notes):{" "}{SYNC_TEXT[s.syncs?.history ?? ""] ?? "not requested yet"}.
               </span>
             </li>
           ))}
@@ -180,9 +180,8 @@ export function ConnectPanel({ states = [], coexistenceAvailable = false }: { st
               <strong>I use the WhatsApp Business app on this number and want to keep it.</strong> Your app keeps working and your chats stay on your phone. Limits while
               you keep the app: WhatsApp calls are not available through EPIC; sending is limited to 20 messages per second; group chats are not synced. Your
               contacts, and up to 6 months of chat history, can be copied in once, only within 24 hours of connecting. Past chats are imported as{" "}
-              <strong>private notes</strong> that your staff see inside each conversation: they are not part of the WhatsApp conversation, they are never sent to
-              your customers, and connecting attaches no AI agent. If an AI bot is attached to the inbox, the history is not imported at all (an AI bot would receive every
-              imported note).
+              <strong>internal notes</strong> that your staff see inside each conversation: they are not part of the WhatsApp conversation, they are never sent to
+              your customers, and connecting attaches no AI agent. If an AI bot is attached to the inbox, the history is not imported at all (an agent bot or a Captain assistant).
             </span>
           </label>
         ) : null}

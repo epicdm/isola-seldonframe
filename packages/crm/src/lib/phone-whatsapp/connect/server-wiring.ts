@@ -24,7 +24,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { trackEvent } from "@/lib/analytics/track";
 import { encryptValue } from "@/lib/encryption";
-import { makeChatwootClient } from "./chatwoot-client";
+import { aiAttached, makeChatwootClient } from "./chatwoot-client";
 import { chatwootInboxWebhookUrl, loadCoexConfig } from "./coexistence-config";
 import { loadConnectConfig, type ConnectConfig } from "./config";
 import { MAX_LIVE_ATTEMPTS, type CoexBinding, type ConnectStore, type ConnectionStatus, type FinalizeDeps, type SyncOutcome, type SyncType } from "./finalize";
@@ -332,7 +332,7 @@ export function makeFinalizeDeps(cfg: Extract<ConnectConfig, { ok: true }>, orgI
             },
             setOverride: (token, phone) => g.setPhoneOverride(token, phone, coexCfg.receiverUrl, coexCfg.verifyToken),
             requestSync: (token, phone, t) => g.requestSmbSync(token, phone, t),
-            async inboxBotAttached(a) {
+            async inboxAiAttached(a) {
               let accountId = coexCfg.chatwootAccountId;
               let inboxId = a.inboxId;
               if (inboxId === null) {
@@ -342,7 +342,7 @@ export function makeFinalizeDeps(cfg: Extract<ConnectConfig, { ok: true }>, orgI
                 inboxId = mine[0].binding!.inboxId;
               }
               const cw = makeChatwootClient({ base: coexCfg.chatwootApiBase, accountId, apiToken: coexCfg.chatwootApiToken });
-              return cw.inboxBotAttached(inboxId);
+              return (await aiAttached(cw, inboxId)) !== null;
             },
           },
         }

@@ -105,9 +105,9 @@ describe("Chatwoot client request shapes (Chatwoot v4.18 routes)", () => {
     const bad = fake({ "GET /inboxes": { payload: [{ id: 5, channel_type: "Channel::Whatsapp", phone_number: "+15550100", provider_config: { phone_number_id: "900000000000999" } }] } });
     await assert.rejects(bad.cw.ensureWhatsappInbox({ name: "x", phoneE164: "+15550100", phoneNumberId: "900000000000002", wabaId: WABA, businessToken: "t" }), /409/);
   });
-  test("history notes are PRIVATE outgoing notes with a source id (never sent to WhatsApp)", async () => {
+  test("history entries are ACTIVITY + private with a source id (never sent to WhatsApp, never dispatched to agent bots; Codex 2026-10-19)", async () => {
     const { seen, cw } = fake({ "POST /conversations/9/messages": { id: 1 } });
     await cw.createNote({ conversationId: 9, content: "x", sourceId: "history:wamid.1" });
-    assert.deepEqual(seen[0].body, { content: "x", message_type: "outgoing", private: true, source_id: "history:wamid.1" });
+    assert.deepEqual(seen[0].body, { content: "x", message_type: "activity", private: true, source_id: "history:wamid.1" });
   });
 });

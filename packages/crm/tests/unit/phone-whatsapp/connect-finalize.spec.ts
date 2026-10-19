@@ -115,7 +115,7 @@ function harness(over: Over = {}) {
           if (cfg.syncFails === "unknown") throw new Error("timeout");
           return `req-${t}`;
         },
-        async inboxBotAttached(a: { inboxId: number | null }) {
+        async inboxAiAttached(a: { inboxId: number | null }) {
           botChecks.push(a.inboxId);
           if (cfg.botCheck === "fails") throw new Error("chatwoot down");
           return cfg.botCheck === "attached";

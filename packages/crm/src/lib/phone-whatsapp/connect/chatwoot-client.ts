@@ -7,9 +7,15 @@
 //    should_auto_setup_webhooks?). Without it Chatwoot would subscribe the WABA itself and point the phone override at its own URL, replacing
 //    ours, and (for a number Meta did not report as on the Business app) could call /register. We set the override ourselves.
 //  * Chatwoot refuses API-created INCOMING messages outside API inboxes (MessageBuilder#message_type: "Incoming messages are only allowed in
-//    Api inboxes"), so imported history is written as PRIVATE NOTES, one per historical message, labelled with who sent it and when. A
-//    private note is never sent to WhatsApp (Base::SendOnChannelService#invalid_message?), never wakes an agent bot, and does not open a
-//    24-hour reply window on an old contact, which a re-played inbound message would.
+//    Api inboxes"), so imported history is written as internal entries, one per historical message, labelled with who sent it and when.
+//    They are written as message_type ACTIVITY with private: true (2026-10-19, Codex): an OUTGOING private note IS dispatched to an attached
+//    agent bot and to account webhooks as message_created (AgentBotListener / WebhookListener gate on Message#webhook_sendable?, which is
+//    incoming || outgoing || template and ignores private), and its content is rendered as a Liquid template (MessageBuilder
+//    #should_process_liquid?). An ACTIVITY entry is not webhook_sendable, so no agent bot and no account webhook receives it; automation
+//    rules ignore activity (AutomationRuleListener#ignore_message_created_event?); it is not notifiable and not Liquid-rendered; Captain reads
+//    only incoming/outgoing, non-private messages; and private: true keeps it off WhatsApp (SendOnChannelService#invalid_message?). It
+//    opens no 24-hour reply window. RESIDUAL: Chatwoot integration hooks (HookListener: slack, dialogflow, google_translate, linear) still
+//    receive message.created for every message type; the import guard below covers agent bots and Captain only.
 // The customer's business token is passed to Chatwoot as provider_config.api_key: Chatwoot needs it to send the replies its agents write.
 // Nothing here logs a token or message content.
 
@@ -28,10 +34,19 @@ export interface ChatwootPort {
   ensureContact(a: { inboxId: number; phoneDigits: string; name?: string }): Promise<{ contactId: number; created: boolean }>;
   /** Latest conversation of this contact in this inbox, else a new RESOLVED one (history is a record, not a live conversation). */
   ensureConversation(a: { inboxId: number; contactId: number; phoneDigits: string }): Promise<number>;
-  /** A private note (never sent to WhatsApp). */
+  /** An internal entry (activity, private): never sent to WhatsApp, never dispatched to agent bots or account webhooks. */
   createNote(a: { conversationId: number; content: string; sourceId: string }): Promise<void>;
   /** True when an agent bot is attached to the inbox (active or not). Throws on any failure or unexpected shape: callers fail closed. */
   inboxBotAttached(inboxId: number): Promise<boolean>;
+  /** True when a Captain assistant is linked to the inbox (captain_inboxes). Throws on any failure or unexpected shape: callers fail closed. */
+  inboxCaptainAttached(inboxId: number): Promise<boolean>;
+}
+
+/** Which AI, if any, is attached to the inbox: an agent bot first, then Captain. Throws when either cannot be confirmed (callers fail closed). */
+export async function aiAttached(cw: ChatwootPort, inboxId: number): Promise<"agent_bot" | "captain" | null> {
+  if (await cw.inboxBotAttached(inboxId)) return "agent_bot";
+  if (await cw.inboxCaptainAttached(inboxId)) return "captain";
+  return null;
 }
 
 export function makeChatwootClient(opts: { base: string; accountId: string; apiToken: string; fetch?: Fetch; timeoutMs?: number }): ChatwootPort {
@@ -112,7 +127,7 @@ export function makeChatwootClient(opts: { base: string; accountId: string; apiT
     async createNote(a) {
       await call("note create", "POST", `/conversations/${a.conversationId}/messages`, {
         content: a.content,
-        message_type: "outgoing",
+        message_type: "activity",
         private: true,
         source_id: a.sourceId,
       });
@@ -131,6 +146,23 @@ export function makeChatwootClient(opts: { base: string; accountId: string; apiT
       if (Object.keys(bot as object).length === 0) return false;
       if (idOf((bot as { id?: unknown }).id)) return true;
       throw new ChatwootError(502, "inbox agent bot"); // non-empty without an id: ambiguous, never read as 'no bot'
+    },
+
+    async inboxCaptainAttached(inboxId) {
+      // Captain (enterprise, v4.18): captain_inboxes links ONE assistant to an inbox (unique inbox_id). There is no inbox->assistant read,
+      // so: list the account's assistants (GET captain/assistants; Captain::AssistantPolicy#index? is true) and each assistant's inboxes
+      // (GET captain/assistants/:id/inboxes). Any failure, unexpected shape or an implausible number of assistants throws.
+      if (!idOf(inboxId)) throw new ChatwootError(400, "captain inboxes");
+      const assistants = (await call("captain assistants", "GET", "/captain/assistants")).payload;
+      if (!Array.isArray(assistants) || assistants.length > 50) throw new ChatwootError(502, "captain assistants");
+      for (const a of assistants as Array<{ id?: unknown }>) {
+        const id = idOf(a?.id);
+        if (!id) throw new ChatwootError(502, "captain assistants");
+        const inboxes = (await call("captain inboxes", "GET", `/captain/assistants/${id}/inboxes`)).payload;
+        if (!Array.isArray(inboxes)) throw new ChatwootError(502, "captain inboxes");
+        if ((inboxes as Array<{ id?: unknown }>).some((i) => idOf(i?.id) === inboxId)) return true;
+      }
+      return false;
     },
   };
 }

@@ -11,7 +11,7 @@
 // (Chatwoot refuses API-created incoming messages outside API inboxes); and each history chunk is imported once (phase:chunk_order key).
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import type { ChatwootPort } from "./chatwoot-client";
+import { aiAttached, type ChatwootPort } from "./chatwoot-client";
 
 export const DIGEST_FIELDS = new Set(["history", "smb_app_state_sync"]);
 export const MAX_HISTORY_MESSAGES_PER_CHUNK = 5000;
@@ -71,8 +71,26 @@ export type DigestCtx = {
   seen(chunkKey: string): Promise<boolean>;
   /** Records the chunk key after a successful import. */
   mark(chunkKey: string): Promise<void>;
+  /** Re-checked before EACH conversation's entries: throws AiAttachedError when an AI is now attached; any other throw = check failed. */
+  aiCheck(): Promise<void>;
   log(line: string): void;
 };
+
+/** An AI (agent bot or Captain) was attached to the inbox while importing: the remaining entries are not written. */
+export class AiAttachedError extends Error {
+  constructor(public readonly ai: "agent_bot" | "captain") {
+    super(`ai attached: ${ai}`);
+    this.name = "AiAttachedError";
+  }
+}
+
+/** The AI check itself failed while importing (fail closed: the remaining entries are not written). */
+export class AiCheckFailedError extends Error {
+  constructor(public readonly reason: unknown) {
+    super("ai check failed");
+    this.name = "AiCheckFailedError";
+  }
+}
 
 export type DigestCounts = { chunks: number; skippedChunks: number; threads: number; notes: number; contacts: number; capped: boolean };
 
@@ -96,6 +114,7 @@ export async function digestHistory(value: any, ctx: DigestCtx, counts: DigestCo
       const messages = (Array.isArray(thread?.messages) ? thread.messages : []).filter((m: any) => extractMessageText(m));
       if (messages.length === 0) continue;
       counts.threads++;
+      await ctx.aiCheck(); // re-checked before each conversation's entries (the entries themselves are never dispatched to a bot; see client)
       const { contactId } = await ctx.chatwoot.ensureContact({ inboxId: ctx.inboxId, phoneDigits: customer });
       const conversationId = await ctx.chatwoot.ensureConversation({ inboxId: ctx.inboxId, contactId, phoneDigits: customer });
       for (const m of messages) {
@@ -152,6 +171,7 @@ export type ReceiverDeps = {
   /** Sync types whose import was skipped for this connection (sticky: recorded once, never cleared automatically). */
   skipped(orgId: string, phoneNumberId: string): Promise<Set<string>>;
   /** Records, once per sync type, that its import was skipped because an agent bot is attached to the inbox. */
+  /** Records, once per sync type, that its import was skipped because an AI (agent bot or Captain) is attached. Throws when not recorded. */
   recordSkip(orgId: string, phoneNumberId: string, syncType: string, status: "skipped_bot_attached"): Promise<void>;
   /** Audit record (no secrets, no message content). Must never throw. */
   audit?(orgId: string, step: string, props: Record<string, unknown>): void;
@@ -178,6 +198,18 @@ export async function handleReceiverPost(raw: string, signature: string | null, 
   const h = holders[0];
   const b = h.binding!;
 
+  // ORDER (2026-10-19, Codex): DIGEST FIRST, FORWARD SECOND. Every refusal of the import (AI check failed, skip not recorded, digest failed)
+  // answers 5xx BEFORE anything is forwarded, so Meta's redelivery of the SAME delivery forwards it exactly once; history chunks already
+  // imported are marked and are not imported again. A forward failure after the digest answers 502: the redelivery skips the marked chunks
+  // and forwards again, which re-sends only what Chatwoot did not acknowledge (and Chatwoot's WhatsApp intake ignores a message or echo whose
+  // source id it already has: Whatsapp::IncomingMessageBaseService, find_message_by_source_id).
+  let digestInfo: Record<string, unknown> = {};
+  if (plan.digest.length) {
+    const r = await digestGuarded(plan.phoneNumberId, plan.digest, h, b, deps);
+    if ("status" in r) return r;
+    digestInfo = r.info;
+  }
+
   if (plan.forward) {
     let st: number | "network_error";
     try {
@@ -190,60 +222,101 @@ export async function handleReceiverPost(raw: string, signature: string | null, 
       return { status: 502, body: { ok: false, code: "forward_failed" } };
     }
   }
+  return { status: 200, body: { ok: true, ...digestInfo } };
+}
 
-  if (plan.digest.length) {
-    const chatwoot = deps.chatwootFor(b);
-    const fields = [...new Set(plan.digest.map((d) => d.field))];
-    // BOT GUARD (2026-10-19). An agent bot attached to the inbox receives every imported note as a message_created event (Chatwoot v4.18
-    // AgentBotListener does not exclude private notes), so history and contacts are imported ONLY into an inbox with no bot attached.
-    // Fail closed: a failed or ambiguous check imports nothing and answers 503 (nothing is marked; Meta redelivers the SAME delivery, so no
-    // request is ever changed, Law 10). A skip is recorded once per sync type and is sticky: later chunks of that type are never imported,
-    // even if the bot is removed later (no partial history).
-    let skipped: Set<string>;
-    let attached: boolean;
-    try {
-      skipped = await deps.skipped(h.orgId, plan.phoneNumberId);
-      attached = fields.every((f) => skipped.has(f)) ? false : await chatwoot.inboxBotAttached(b.inboxId);
-    } catch (e) {
-      deps.log(`[coex-recv] bot check failed (${e instanceof Error ? e.name : "error"}) phone_number_id=${plan.phoneNumberId} fields=${fields.join(",")}: nothing imported`);
-      deps.audit?.(h.orgId, "import_bot_check_failed", { phoneNumberId: plan.phoneNumberId, fields });
-      return { status: 503, body: { ok: false, code: "bot_check_failed" } };
-    }
-    if (attached) {
-      for (const f of fields) {
-        if (skipped.has(f)) continue;
-        await deps.recordSkip(h.orgId, plan.phoneNumberId, f, "skipped_bot_attached").catch(() => deps.log(`[coex-recv] skip record failed field=${f}`));
+type DigestItem = { field: string; value: unknown };
+
+/**
+ * AI GUARD (2026-10-19). An AI attached to the inbox (an agent bot, or a Captain assistant) must never be handed the imported history, so
+ * history and contacts are imported ONLY into an inbox with neither attached. Fail closed: a failed or ambiguous check imports nothing and
+ * answers 503 (nothing is marked; Meta redelivers the SAME delivery, Law 10). A skip is recorded once per sync type and is sticky; if it
+ * cannot be recorded the answer is 503 (never 200), so a later delivery cannot import after the AI is removed. The check is repeated before
+ * each conversation's entries; an AI found mid-import stops the remaining writes and records the skip.
+ */
+async function digestGuarded(
+  phoneNumberId: string,
+  items: DigestItem[],
+  h: ReceiverBinding,
+  b: NonNullable<ReceiverBinding["binding"]>,
+  deps: ReceiverDeps,
+): Promise<ReceiverResult | { info: Record<string, unknown> }> {
+  const chatwoot = deps.chatwootFor(b);
+  const fields = [...new Set(items.map((d) => d.field))];
+  const checkFailed = (e: unknown): ReceiverResult => {
+    deps.log(`[coex-recv] AI check failed (${e instanceof Error ? e.name : "error"}) phone_number_id=${phoneNumberId} fields=${fields.join(",")}: nothing more imported`);
+    deps.audit?.(h.orgId, "import_bot_check_failed", { phoneNumberId, fields });
+    return { status: 503, body: { ok: false, code: "bot_check_failed" } };
+  };
+  const recordSkips = async (skipped: Set<string>, ai: string): Promise<ReceiverResult | null> => {
+    for (const f of fields) {
+      if (skipped.has(f)) continue;
+      try {
+        await deps.recordSkip(h.orgId, phoneNumberId, f, "skipped_bot_attached");
+      } catch {
+        deps.log(`[coex-recv] skip NOT recorded field=${f} phone_number_id=${phoneNumberId}: answering 503 (Meta redelivers), nothing imported`);
+        deps.audit?.(h.orgId, "import_skip_record_failed", { phoneNumberId, field: f });
+        return { status: 503, body: { ok: false, code: "skip_record_failed" } };
       }
-      deps.audit?.(h.orgId, "import_skipped_bot_attached", { phoneNumberId: plan.phoneNumberId, fields, chatwootInboxId: b.inboxId });
-      deps.log(`[coex-recv] NOT imported: an agent bot is attached to inbox ${b.inboxId} phone_number_id=${plan.phoneNumberId} fields=${fields.join(",")}`);
-      return { status: 200, body: { ok: true, imported: false, code: "skipped_bot_attached" } };
     }
-    const digest = plan.digest.filter((d) => !skipped.has(d.field));
-    if (!digest.length) {
-      deps.log(`[coex-recv] NOT imported: import skipped earlier for this connection phone_number_id=${plan.phoneNumberId} fields=${fields.join(",")}`);
-      return { status: 200, body: { ok: true, imported: false, code: "import_skipped_earlier" } };
-    }
-    const counts = emptyCounts();
-    const ctx: DigestCtx = {
-      chatwoot,
-      inboxId: b.inboxId,
-      seen: (k) => deps.seen(h.orgId, plan.phoneNumberId, k),
-      mark: (k) => deps.mark(h.orgId, plan.phoneNumberId, k),
-      log: deps.log,
-    };
-    try {
-      for (const d of digest) {
-        if (d.field === "history") await digestHistory(d.value, ctx, counts);
-        else if (d.field === "smb_app_state_sync") await digestStateSync(d.value, ctx, counts);
-      }
-    } catch (e) {
-      // Not marked: Meta redelivers and the unfinished chunk is imported again (a crash mid-chunk can duplicate notes; documented limit).
-      deps.log(`[coex-recv] digest failed (${e instanceof Error ? e.name : "error"}) phone_number_id=${plan.phoneNumberId} counts=${JSON.stringify(counts)}`);
-      return { status: 500, body: { ok: false, code: "digest_failed" } };
-    }
-    deps.log(`[coex-recv] digested phone_number_id=${plan.phoneNumberId} counts=${JSON.stringify(counts)}`);
+    deps.audit?.(h.orgId, "import_skipped_bot_attached", { phoneNumberId, fields, chatwootInboxId: b.inboxId, ai });
+    deps.log(`[coex-recv] NOT imported: ${ai} attached to inbox ${b.inboxId} phone_number_id=${phoneNumberId} fields=${fields.join(",")}`);
+    return null;
+  };
+
+  let skipped: Set<string>;
+  let ai: "agent_bot" | "captain" | null;
+  try {
+    skipped = await deps.skipped(h.orgId, phoneNumberId);
+    ai = fields.every((f) => skipped.has(f)) ? null : await aiAttached(chatwoot, b.inboxId);
+  } catch (e) {
+    return checkFailed(e);
   }
-  return { status: 200, body: { ok: true } };
+  if (ai) {
+    const fail = await recordSkips(skipped, ai);
+    return fail ?? { info: { imported: false, code: "skipped_bot_attached", ai } };
+  }
+  const digest = items.filter((d) => !skipped.has(d.field));
+  if (!digest.length) {
+    deps.log(`[coex-recv] NOT imported: import skipped earlier for this connection phone_number_id=${phoneNumberId} fields=${fields.join(",")}`);
+    return { info: { imported: false, code: "import_skipped_earlier" } };
+  }
+  const counts = emptyCounts();
+  const ctx: DigestCtx = {
+    chatwoot,
+    inboxId: b.inboxId,
+    seen: (k) => deps.seen(h.orgId, phoneNumberId, k),
+    mark: (k) => deps.mark(h.orgId, phoneNumberId, k),
+    async aiCheck() {
+      let now: "agent_bot" | "captain" | null;
+      try {
+        now = await aiAttached(chatwoot, b.inboxId);
+      } catch (e) {
+        throw new AiCheckFailedError(e);
+      }
+      if (now) throw new AiAttachedError(now);
+    },
+    log: deps.log,
+  };
+  try {
+    for (const d of digest) {
+      if (d.field === "history") await digestHistory(d.value, ctx, counts);
+      else if (d.field === "smb_app_state_sync") await digestStateSync(d.value, ctx, counts);
+    }
+  } catch (e) {
+    if (e instanceof AiAttachedError) {
+      const fail = await recordSkips(skipped, e.ai);
+      deps.log(`[coex-recv] import STOPPED mid-way: ${e.ai} attached phone_number_id=${phoneNumberId} counts=${JSON.stringify(counts)}`);
+      return fail ?? { info: { imported: false, code: "skipped_bot_attached", ai: e.ai, partial: counts.notes > 0 || counts.contacts > 0 } };
+    }
+    // AI check failed mid-way (503), or a Chatwoot write failed (500): not marked; Meta redelivers and the unfinished chunk is imported again
+    // (a crash mid-chunk can duplicate entries; documented limit).
+    if (e instanceof AiCheckFailedError) return checkFailed(e.reason);
+    deps.log(`[coex-recv] digest failed (${e instanceof Error ? e.name : "error"}) phone_number_id=${phoneNumberId} counts=${JSON.stringify(counts)}`);
+    return { status: 500, body: { ok: false, code: "digest_failed" } };
+  }
+  deps.log(`[coex-recv] digested phone_number_id=${phoneNumberId} counts=${JSON.stringify(counts)}`);
+  return { info: { imported: true } };
 }
 
 /** Meta's GET verification: echo hub.challenge only for mode=subscribe and our own verify token. */

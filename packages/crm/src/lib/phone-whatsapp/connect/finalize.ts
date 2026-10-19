@@ -92,8 +92,9 @@ export type CoexPorts = {
   /** Points the number's phone-level override at our receiver. */
   setOverride(token: string, phoneNumberId: string): Promise<void>;
   requestSync(token: string, phoneNumberId: string, syncType: SyncType): Promise<string | null>;
-  /** True when an agent bot is attached to the number's Chatwoot inbox. inboxId null = resolve it from the stored binding. Throws when unknown. */
-  inboxBotAttached(a: { orgId: string; phoneNumberId: string; inboxId: number | null }): Promise<boolean>;
+  /** True when an AI (agent bot or Captain assistant) is attached to the number's Chatwoot inbox. inboxId null = resolve it from the stored
+   *  binding. Throws when unknown (callers fail closed). */
+  inboxAiAttached(a: { orgId: string; phoneNumberId: string; inboxId: number | null }): Promise<boolean>;
 };
 
 export type FinalizeDeps = {
@@ -313,11 +314,11 @@ async function requestSyncsOnce(orgId: string, token: string, phoneNumberId: str
     return; // unknown state: request nothing (a sync is one-time at Meta); the page shows it as not requested yet
   }
   if (!(done.smb_app_state_sync && done.history)) {
-    // BOT GUARD (2026-10-19): an agent bot attached to the inbox would receive every imported note, so the one-time sync is NOT requested
+    // AI GUARD (2026-10-19): an AI (agent bot or Captain) attached to the inbox must not be handed the history, so the one-time sync is NOT requested
     // when a bot is attached, or when that cannot be confirmed (fail closed). The skip is recorded as the sync's one-time outcome.
     let gate: "clear" | "skipped_bot_attached" | "skipped_check_failed";
     try {
-      gate = (await coex.inboxBotAttached({ orgId, phoneNumberId, inboxId })) ? "skipped_bot_attached" : "clear";
+      gate = (await coex.inboxAiAttached({ orgId, phoneNumberId, inboxId })) ? "skipped_bot_attached" : "clear";
     } catch {
       gate = "skipped_check_failed";
     }
