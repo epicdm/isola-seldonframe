@@ -220,6 +220,11 @@ export async function POST(
     }
   }
 
+  // 2026-10-19 — a caller-supplied conversation_id must belong to THIS agent
+  // and workspace; otherwise the runtime answers exactly as for an unknown id
+  // (lib/agents/conversation-ownership.ts).
+  const expectedAgent = { agentId: agentRow.id, orgId: agentRow.orgId };
+
   // SSE branch ───────────────────────────────────────────────────────────
   if (wantsStream) {
     const stream = new ReadableStream<Uint8Array>({
@@ -235,6 +240,7 @@ export async function POST(
           const result = await executeTurn({
             conversationId: conversationId!,
             userMessage: message,
+            expectedAgent,
           });
           if (!result.ok) {
             send("delta", { text: result.fallbackMessage });
@@ -288,6 +294,7 @@ export async function POST(
   const result = await executeTurn({
     conversationId,
     userMessage: message,
+    expectedAgent,
   });
 
   if (!result.ok) {
