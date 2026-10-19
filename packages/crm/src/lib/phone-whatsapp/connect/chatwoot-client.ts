@@ -135,11 +135,16 @@ export function makeChatwootClient(opts: { base: string; accountId: string; apiT
 
     async inboxBotAttached(inboxId) {
       // GET inboxes/:id/agent_bot (Chatwoot v4.18 InboxesController#agent_bot = @inbox.agent_bot, through agent_bot_inbox, active OR inactive;
-      // view: { agent_bot: {...} } or { agent_bot: {} }). For an administrator token the bot object carries its access_token and secret: only
-      // the id is read here, nothing else is kept, returned or logged. Anything that is not clearly 'none' or clearly 'a bot' throws.
+      // view app/views/api/v1/accounts/inboxes/agent_bot.json.jbuilder:1-3 renders `json.agent_bot do ... end` with the partial only when
+      // @agent_bot is present, so an inbox WITHOUT a bot answers HTTP 200 with a bare {} (measured on live 4.18 and the scratch, 2026-10-19).
+      // With a bot: { agent_bot: {...} }. For an administrator token the bot object carries its access_token and secret: only the id is read
+      // here, nothing else is kept, returned or logged. Anything that is not clearly 'none' or clearly 'a bot' throws.
       if (!idOf(inboxId)) throw new ChatwootError(400, "inbox agent bot");
       const j = await call("inbox agent bot", "GET", `/inboxes/${inboxId}/agent_bot`);
-      if (!Object.prototype.hasOwnProperty.call(j, "agent_bot")) throw new ChatwootError(502, "inbox agent bot");
+      if (!Object.prototype.hasOwnProperty.call(j, "agent_bot")) {
+        if (Object.keys(j).length === 0) return false; // exactly {}: 4.18's answer for 'no bot'. Any other body without agent_bot is ambiguous.
+        throw new ChatwootError(502, "inbox agent bot");
+      }
       const bot = j.agent_bot;
       if (bot === null) return false;
       if (typeof bot !== "object" || Array.isArray(bot)) throw new ChatwootError(502, "inbox agent bot");

@@ -25,29 +25,50 @@ function client(reply: (path: string, method: string) => { status: number; json:
   return { cw, seen };
 }
 
+// Real Chatwoot v4.18 shapes. app/views/api/v1/accounts/inboxes/agent_bot.json.jbuilder:1-3 renders
+//   json.agent_bot do json.partial! 'api/v1/models/agent_bot', resource: @agent_bot if @agent_bot.present? end
+// so an inbox with NO bot answers HTTP 200 with a bare {} (measured on live 4.18 and the scratch, 2026-10-19), and an inbox WITH a bot
+// answers { agent_bot: <api/v1/models/_agent_bot.json.jbuilder> }. The earlier fixtures ({agent_bot:{}} / {agent_bot:null}) were never
+// what 4.18 sends, which is how the 503 bot_check_failed on every no-bot inbox got past the suite.
+const REAL_NO_BOT = {};
+const REAL_BOT = {
+  agent_bot: {
+    id: 3, name: "Front desk", description: "", thumbnail: "", outgoing_url: "http://bot.test/hook", bot_type: "webhook",
+    bot_config: {}, account_id: 2, access_token: FAKE, secret: FAKE, system_bot: false,
+  },
+};
+
 describe("inboxBotAttached (GET /inboxes/:id/agent_bot, Chatwoot v4.18 shape)", () => {
-  test("a bot object with an id -> attached (the instrument CAN report a bot)", async () => {
-    const { cw, seen } = client(() => ({ status: 200, json: { agent_bot: { id: 3, name: "Front desk", access_token: FAKE, secret: FAKE } } }));
+  test("real 4.18 attached shape -> attached (the instrument CAN report a bot)", async () => {
+    const { cw, seen } = client(() => ({ status: 200, json: REAL_BOT }));
     assert.equal(await cw.inboxBotAttached(77), true);
     assert.deepEqual(seen.map((s) => `${s.method} ${s.path}`), ["GET /api/v1/accounts/2/inboxes/77/agent_bot"]);
   });
 
-  test("Chatwoot's explicit empty shapes -> none ({} and null)", async () => {
+  test("real 4.18 no-bot shape: a bare {} -> none", async () => {
+    assert.equal(await client(() => ({ status: 200, json: REAL_NO_BOT })).cw.inboxBotAttached(77), false);
+  });
+
+  test("explicit empties are also none ({agent_bot:{}} and {agent_bot:null})", async () => {
     assert.equal(await client(() => ({ status: 200, json: { agent_bot: {} } })).cw.inboxBotAttached(77), false);
     assert.equal(await client(() => ({ status: 200, json: { agent_bot: null } })).cw.inboxBotAttached(77), false);
   });
 
-  test("anything else is UNKNOWN and throws (callers fail closed): HTTP error, missing key, non-object, object without an id, bad inbox id", async () => {
+  test("anything else is UNKNOWN and throws (callers fail closed): null body, array, malformed, HTTP error, bad inbox id", async () => {
     const cases: Array<{ status: number; json: unknown }> = [
-      { status: 500, json: {} },
-      { status: 404, json: { error: "not found" } },
+      { status: 200, json: null },
+      { status: 200, json: [] },
+      { status: 200, json: [{ id: 3 }] },
+      { status: 200, json: { agent_bot: "x" } },
+      { status: 200, json: { foo: 1 } },
       { status: 200, json: { id: 1 } },
-      { status: 200, json: { agent_bot: "yes" } },
       { status: 200, json: { agent_bot: [] } },
       { status: 200, json: { agent_bot: { name: "no id" } } },
+      { status: 500, json: {} },
+      { status: 404, json: { error: "not found" } },
     ];
     for (const c of cases) await assert.rejects(client(() => c).cw.inboxBotAttached(77), JSON.stringify(c));
-    await assert.rejects(client(() => ({ status: 200, json: { agent_bot: {} } })).cw.inboxBotAttached(0));
+    await assert.rejects(client(() => ({ status: 200, json: REAL_NO_BOT })).cw.inboxBotAttached(0));
   });
 });
 
@@ -56,7 +77,7 @@ describe("Connect never attaches a bot to the inbox it creates", () => {
     const { cw, seen } = client((path, method) => {
       if (path.endsWith("/inboxes") && method === "GET") return { status: 200, json: { payload: [] } };
       if (path.endsWith("/inboxes") && method === "POST") return { status: 200, json: { id: 91 } };
-      if (path.endsWith("/agent_bot")) return { status: 200, json: { agent_bot: {} } };
+      if (path.endsWith("/agent_bot")) return { status: 200, json: REAL_NO_BOT };
       return { status: 404, json: {} };
     });
     const r = await cw.ensureWhatsappInbox({ name: "WhatsApp Test", phoneE164: "+15550100", phoneNumberId: "900000000000002", wabaId: "900000000000001", businessToken: FAKE });

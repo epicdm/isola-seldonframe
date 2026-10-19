@@ -7,8 +7,8 @@
 //                                                                            has no handler for them), idempotently
 // Ported from the BFF's app/lib/webhook/coex.ts (d736dbf3a + #294): the same message-text extraction, the same business-vs-customer
 // direction rule (message.from equals the business display number), the same per-chunk cap, and contacts upserted by phone. Differences, on
-// purpose: the workspace and inbox come from OUR binding (organizations.settings), not the BFF tenant_registry; history lands as private notes
-// (Chatwoot refuses API-created incoming messages outside API inboxes); and each history chunk is imported once (phase:chunk_order key).
+// purpose: the workspace and inbox come from OUR binding (organizations.settings), not the BFF tenant_registry; history lands as private activity entries
+// (Chatwoot refuses API-created incoming messages outside API inboxes; activity entries are never dispatched to bots, webhooks or automations); and each history chunk is imported once (phase:chunk_order key).
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { aiAttached, type ChatwootPort } from "./chatwoot-client";
