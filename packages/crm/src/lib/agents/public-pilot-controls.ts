@@ -16,25 +16,30 @@ export const DEEPSEEK_FLASH_PRICING = {
  * of a human follow-up (the support line is the ratified Personal Line support text). */
 export const PUBLIC_CHAT_UNAVAILABLE_MESSAGE =
   "Chat is not available right now. Please message EPIC on WhatsApp at +1 767 818 0001. A person replies Monday to Saturday, 8:00 am to 6:00 pm Dominica time.";
-export const PUBLIC_CHAT_CONVERSATION_LIMIT_MESSAGE =
-  "This chat has reached its message limit. Refresh the page to start a new chat, or message EPIC on WhatsApp at +1 767 818 0001.";
 
+// Owner decision dec-owner-pl-remove-temporary-pilot-limits-prepare-live-2026-10-14 removed the temporary pilot refusals
+// (five-turn cutoff, 32/96 KiB request ceilings, dollar budget and expiry). The byte sizes below now only size the
+// recorded reservation ESTIMATE; nothing refuses a request for exceeding them.
 export const MAX_PUBLIC_PILOT_BUDGET_CENTS = 1_000;
 export const MAX_PUBLIC_PILOT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
-export const MAX_PUBLIC_TURNS_PER_CONVERSATION = 5;
 export const MAX_PUBLIC_PILOT_INPUT_BYTES_PER_REQUEST = DEEPSEEK_FLASH_PRICING.maxSerializedRequestBytes;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-const MICRO_USD_PER_TOKEN_SCALE = BigInt(1000000);
-
-export function isPublicPilotRequestWithinInputLimit(value: unknown): boolean {
+export const MAX_VERIFIED_RELAY_INPUT_BYTES_PER_REQUEST = 98_304;
+/** NATIVE PHYSICAL LIMIT, not a pilot allowance (plan v1.8: "the physical model context window ... not claimed unlimited"): the
+ * provider's context window. A serialized request above this is never sent - it could only fail at the provider, on every later turn,
+ * while inflating the uncertain spend. For relay (WhatsApp) traffic the route answers PUBLIC_CHAT_CONVERSATION_LIMIT, on which the
+ * relay starts a fresh Uplink conversation with the earlier messages carried over. 384 KiB ~ 100k tokens, inside a 128k-token window. */
+export const MAX_MODEL_REQUEST_BYTES = 393_216;
+export function isWithinModelRequestLimit(value: unknown): boolean {
   try {
     const serialized = JSON.stringify(value);
-    return typeof serialized === "string" && Buffer.byteLength(serialized, "utf8") <= MAX_PUBLIC_PILOT_INPUT_BYTES_PER_REQUEST;
+    return typeof serialized === "string" && Buffer.byteLength(serialized, "utf8") <= MAX_MODEL_REQUEST_BYTES;
   } catch {
     return false;
   }
 }
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const MICRO_USD_PER_TOKEN_SCALE = BigInt(1000000);
 
 export function extractCompletePublicUsage(usage: {
   input_tokens?: unknown;
@@ -147,15 +152,19 @@ function ceilDiv(numerator: bigint, denominator: bigint): bigint {
   return (numerator + denominator - BigInt(1)) / denominator;
 }
 
-/** Reserve worst-case cost for seven capped requests. Input is bounded by the
- * complete serialized API body, priced as if every byte were an uncached token. */
-export function maximumPublicTurnReservationMicroUsd(): bigint {
+/** Reserve worst-case cost for all seven permitted model calls. Each call is
+ * priced at the applicable serialized-request ceiling as uncached input plus
+ * its maximum output. The runtime checks each actual assembled JSON request
+ * against the same traffic-specific ceiling before calling the provider. */
+export function maximumPublicTurnReservationMicroUsd(
+  maxSerializedRequestBytes: number = DEEPSEEK_FLASH_PRICING.maxSerializedRequestBytes,
+): bigint {
   const calls = BigInt(DEEPSEEK_FLASH_PRICING.loopCalls + DEEPSEEK_FLASH_PRICING.regenerationCalls);
   const maxOutput = BigInt(
     DEEPSEEK_FLASH_PRICING.loopCalls * DEEPSEEK_FLASH_PRICING.loopOutputTokens +
       DEEPSEEK_FLASH_PRICING.regenerationOutputTokens,
   );
-  const maxInput = calls * BigInt(DEEPSEEK_FLASH_PRICING.maxSerializedRequestBytes);
+  const maxInput = calls * BigInt(maxSerializedRequestBytes);
   const inputCost = ceilDiv(maxInput * BigInt(DEEPSEEK_FLASH_PRICING.inputMicroUsdPerMillion), MICRO_USD_PER_TOKEN_SCALE);
   const outputCost = ceilDiv(maxOutput * BigInt(DEEPSEEK_FLASH_PRICING.outputMicroUsdPerMillion), MICRO_USD_PER_TOKEN_SCALE);
   return inputCost + outputCost;
@@ -196,6 +205,8 @@ export type PilotSpendSnapshot = {
   expiresAtMs: number;
 };
 
+/** Pure mirror of reservePublicTurnSpend's remaining refusals: missing/disabled gate (operator kill switch), wrong
+ * workspace, wrong model, or a non-positive estimate. Budget, window and turn count are recorded, never refused. */
 export function canReservePilotSpend(input: {
   gate: PilotSpendSnapshot | null;
   organizationId: string;
@@ -204,13 +215,11 @@ export function canReservePilotSpend(input: {
   reserveMicroUsd: bigint;
   nowMs: number;
   conversationTurns?: number;
+  verifiedRelay?: boolean;
 }): boolean {
   const gate = input.gate;
   // Organization-level coverage: the gate row names the configured pilot agent, but it meters every agent of the pilot workspace.
   if (!gate || !gate.enabled || gate.organizationId !== input.organizationId) return false;
   if (gate.model !== input.model || input.model !== DEEPSEEK_FLASH_PRICING.model) return false;
-  if (input.nowMs < gate.startsAtMs || input.nowMs >= gate.expiresAtMs) return false;
-  if ((input.conversationTurns ?? 0) >= MAX_PUBLIC_TURNS_PER_CONVERSATION) return false;
-  if (input.reserveMicroUsd <= BigInt(0)) return false;
-  return gate.spentMicroUsd + gate.reservedMicroUsd + gate.uncertainMicroUsd + input.reserveMicroUsd <= gate.budgetMicroUsd;
+  return input.reserveMicroUsd > BigInt(0);
 }

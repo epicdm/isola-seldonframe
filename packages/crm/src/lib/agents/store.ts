@@ -25,6 +25,7 @@ import {
 import { assertWritable } from "@/lib/demo/server";
 import { emitSeldonEvent } from "@/lib/events/bus";
 import { runEvalSuite } from "./eval-runner";
+import { mergeAgentBlueprintPatch } from "./blueprint-patch";
 
 // ─── createAgent ───────────────────────────────────────────────────────────
 
@@ -239,10 +240,10 @@ export async function updateAgentBlueprint(
     return { ok: false, error: "agent_not_found" };
   }
 
-  const next: AgentBlueprint = {
-    ...((agent.blueprint ?? {}) as AgentBlueprint),
-    ...input.patch,
-  };
+  const next: AgentBlueprint = mergeAgentBlueprintPatch(
+    (agent.blueprint ?? {}) as AgentBlueprint,
+    input.patch,
+  );
   const nextVersion = agent.currentVersion + 1;
 
   await db

@@ -61,8 +61,8 @@ export type AgentBlueprint = {
    *  content) so the operator can layer custom playbook prose on top
    *  of the platform skill pack without forking the codebase.
    *
-   *  Capped at 8000 characters (~2000 tokens) so a runaway operator
-   *  can't blow up the system prompt budget. Empty/undefined → no
+   *  Capped at 20,000 characters so a runaway operator can't create
+   *  an unbounded system prompt. Empty/undefined → no
    *  override, runtime composes the prompt as it did before. */
   customSkillMd?: string;
   /** Never-fail-compile: honest autonomy math from the recording's coverage

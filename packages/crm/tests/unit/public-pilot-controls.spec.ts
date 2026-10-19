@@ -6,7 +6,6 @@ import {
   DEEPSEEK_FLASH_PRICING,
   extractCompletePublicUsage,
   isConfiguredPublicPilotTarget,
-  isPublicPilotRequestWithinInputLimit,
   maximumPublicTurnReservationMicroUsd,
   parsePublicPilotEnvelope,
   parseTrustedProxyHops,
@@ -78,11 +77,6 @@ test("pilot targeting requires the explicit workspace ID and a well-formed pilot
   assert.equal(isConfiguredPublicPilotTarget("44444444-4444-4444-8444-444444444444", env.PUBLIC_PILOT_AGENT_ID, env), false);
 });
 
-test("serialized request ceiling includes tool/prompt payload and rejects overflow", () => {
-  assert.equal(isPublicPilotRequestWithinInputLimit({ prompt: "x".repeat(32_000) }), true);
-  assert.equal(isPublicPilotRequestWithinInputLimit({ prompt: "x".repeat(33_000) }), false);
-});
-
 test("settlement usage includes cache tokens and missing/invalid usage is incomplete", () => {
   assert.deepEqual(extractCompletePublicUsage({ input_tokens: 100, cache_creation_input_tokens: 20, cache_read_input_tokens: 30, output_tokens: 12 }), { inputTokens: 150, outputTokens: 12 });
   assert.deepEqual(extractCompletePublicUsage({ input_tokens: 100, output_tokens: 12 }), { inputTokens: 100, outputTokens: 12 });
@@ -90,7 +84,7 @@ test("settlement usage includes cache tokens and missing/invalid usage is incomp
   assert.equal(extractCompletePublicUsage({ input_tokens: 100, cache_read_input_tokens: -1, output_tokens: 12 }), null);
 });
 
-test("aggregate gate denies wrong scope, wrong model, expired, disabled and over-budget reservations", () => {
+test("gate denies wrong scope, wrong model and disabled; expiry, budget and turn count are recorded, not refused", () => {
   const bound = maximumPublicTurnReservationMicroUsd();
   const gate: PilotSpendSnapshot = {
     enabled: true,
@@ -108,26 +102,25 @@ test("aggregate gate denies wrong scope, wrong model, expired, disabled and over
   assert.equal(canReservePilotSpend(ask), true);
   // organization-level coverage: a SECOND agent of the pilot workspace shares the same gate and budget (positive control)...
   assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent" }), true);
-  // ...and is held to the identical limits as the first (disabled, expired, over budget, turn cap, wrong model)
+  // ...and is held to the identical remaining refusals as the first (disabled, wrong model)
   assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", gate: { ...gate, enabled: false } }), false);
-  assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", nowMs: 10_000 }), false);
-  assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", gate: { ...gate, spentMicroUsd: BigInt(9950000) } }), false);
-  assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", conversationTurns: 4 }), true);
-  assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", conversationTurns: 5 }), false);
   assert.equal(canReservePilotSpend({ ...ask, agentId: "second-pilot-org-agent", model: "deepseek-v4-pro" }), false);
   // a different WORKSPACE is still refused by the gate
   assert.equal(canReservePilotSpend({ ...ask, organizationId: "other-org" }), false);
   assert.equal(canReservePilotSpend({ ...ask, model: "deepseek-v4-pro" }), false);
-  assert.equal(canReservePilotSpend({ ...ask, nowMs: 10_000 }), false);
   assert.equal(canReservePilotSpend({ ...ask, gate: { ...gate, enabled: false } }), false);
-  assert.equal(canReservePilotSpend({ ...ask, gate: { ...gate, spentMicroUsd: BigInt(9950000) } }), false);
-  assert.equal(canReservePilotSpend({ ...ask, conversationTurns: 4 }), true);
-  assert.equal(canReservePilotSpend({ ...ask, conversationTurns: 5 }), false);
+  // the removed pilot limits: expiry, budget and the five-turn cap no longer refuse (owner decision 2026-10-14)
+  for (const agentId of ["live-default-agent", "second-pilot-org-agent"]) {
+    assert.equal(canReservePilotSpend({ ...ask, agentId, nowMs: 10_000 }), true);
+    assert.equal(canReservePilotSpend({ ...ask, agentId, gate: { ...gate, spentMicroUsd: BigInt(9950000) } }), true);
+    assert.equal(canReservePilotSpend({ ...ask, agentId, conversationTurns: 5 }), true);
+    assert.equal(canReservePilotSpend({ ...ask, agentId, conversationTurns: 500 }), true);
+  }
 });
 
-test("a persisted reservation snapshot blocks another worker after simulated restart", async () => {
+test("a persisted kill switch blocks another worker after simulated restart; a full old budget no longer does", async () => {
   const bound = maximumPublicTurnReservationMicroUsd();
-  const persisted = {
+  const persisted: { gate: PilotSpendSnapshot } = {
     gate: {
       enabled: true,
       organizationId: "pilot-org",
@@ -142,10 +135,15 @@ test("a persisted reservation snapshot blocks another worker after simulated res
     } satisfies PilotSpendSnapshot,
   };
   const newWorkerAfterRestart = { readGate: () => persisted.gate };
-  assert.equal(canReservePilotSpend({ gate: newWorkerAfterRestart.readGate(), organizationId: "pilot-org", agentId: "live-default-agent", model: "deepseek-flash", reserveMicroUsd: bound, nowMs: 101 }), false);
+  const ask = { organizationId: "pilot-org", agentId: "live-default-agent", model: "deepseek-flash", reserveMicroUsd: bound, nowMs: 101 };
+  // the budget is fully reserved, which used to refuse; now it is only recorded
+  assert.equal(canReservePilotSpend({ gate: newWorkerAfterRestart.readGate(), ...ask }), true);
+  // the operator kill switch persisted in the row still stops the new worker
+  persisted.gate = { ...persisted.gate, enabled: false };
+  assert.equal(canReservePilotSpend({ gate: newWorkerAfterRestart.readGate(), ...ask }), false);
 });
 
-test("concurrent reservations cannot oversubscribe the aggregate pilot cap", async () => {
+test("concurrent reservations are serialized and every one is recorded (no aggregate cap)", async () => {
   const bound = maximumPublicTurnReservationMicroUsd();
   let gate: PilotSpendSnapshot = {
     enabled: true,
@@ -177,11 +175,14 @@ test("concurrent reservations cannot oversubscribe the aggregate pilot cap", asy
   const budgetMicroUsd = bound * BigInt(7);
   gate = { ...gate, budgetMicroUsd };
   const results = await Promise.all(Array.from({ length: 50 }, () => reserve()));
-  assert.equal(results.filter(Boolean).length, 5);
-  assert.ok(gate.spentMicroUsd + gate.reservedMicroUsd + gate.uncertainMicroUsd <= gate.budgetMicroUsd);
+  assert.equal(results.filter(Boolean).length, 50);
+  assert.equal(conversationTurns, 50);
+  // telemetry: every admitted turn is reserved on the shared row, even beyond the old budget
+  assert.equal(gate.reservedMicroUsd, bound * BigInt(50));
+  assert.ok(gate.reservedMicroUsd > gate.budgetMicroUsd);
 });
 
-test("50 mock-provider requests against a two-turn cap admit only two, then stop inference", async () => {
+test("50 mock-provider requests: the operator kill switch, flipped after two, stops inference", async () => {
   const bound = maximumPublicTurnReservationMicroUsd();
   let gate: PilotSpendSnapshot = {
     enabled: true,
@@ -204,6 +205,8 @@ test("50 mock-provider requests against a two-turn cap admit only two, then stop
     await prior;
     const admitted = canReservePilotSpend({ gate, organizationId: "pilot-org", agentId: "live-default-agent", model: "deepseek-flash", reserveMicroUsd: bound, nowMs: 101 });
     if (admitted) gate = { ...gate, reservedMicroUsd: gate.reservedMicroUsd + bound };
+    // an operator disables the pilot after the second admitted turn
+    if (gate.reservedMicroUsd >= BigInt(2) * bound) gate = { ...gate, enabled: false };
     unlock();
     if (!admitted) return false;
     providerCalls += 1;
@@ -215,21 +218,25 @@ test("50 mock-provider requests against a two-turn cap admit only two, then stop
   assert.equal(gate.reservedMicroUsd, BigInt(2) * bound);
 });
 
-test("$10 permits 130 worst-case turns; request 131 is rejected before mock inference", async () => {
+test("request 131 is no longer stopped by the old $10 budget; the per-turn estimate and zero SDK retries are unchanged", async () => {
   const bound = maximumPublicTurnReservationMicroUsd();
   assert.equal(bound, BigInt(76801));
-  assert.equal(BigInt(10000000) / bound, BigInt(130));
   assert.equal(DEEPSEEK_FLASH_PRICING.sdkRetries, 0);
-  let reserved = BigInt(0);
+  const gate: PilotSpendSnapshot = {
+    enabled: true, organizationId: "pilot-org", agentId: "live-default-agent", model: "deepseek-flash",
+    budgetMicroUsd: BigInt(10000000), spentMicroUsd: BigInt(0), reservedMicroUsd: BigInt(0), uncertainMicroUsd: BigInt(0),
+    startsAtMs: 100, expiresAtMs: 10_000,
+  };
+  let current = gate;
   let mockProviderCalls = 0;
   for (let i = 0; i < 131; i += 1) {
-    if (reserved + bound > BigInt(10000000)) continue;
-    reserved += bound;
+    if (!canReservePilotSpend({ gate: current, organizationId: "pilot-org", agentId: "live-default-agent", model: "deepseek-flash", reserveMicroUsd: bound, nowMs: 101 })) continue;
+    current = { ...current, reservedMicroUsd: current.reservedMicroUsd + bound };
     mockProviderCalls += 1;
   }
-  assert.equal(mockProviderCalls, 130);
-  assert.equal(reserved, BigInt(9984130));
-  assert.ok(reserved + bound > BigInt(10000000));
+  assert.equal(mockProviderCalls, 131);
+  assert.equal(current.reservedMicroUsd, bound * BigInt(131));
+  assert.ok(current.reservedMicroUsd > gate.budgetMicroUsd);
 });
 
 test("mock-ledger failure, usage settlement, expiry and restart keep spend conservative", async () => {
@@ -296,7 +303,9 @@ test("mock-ledger failure, usage settlement, expiry and restart keep spend conse
   assert.equal(afterRestart.gate.reservedMicroUsd, bound);
   assert.equal(afterRestart.gate.uncertainMicroUsd, bound);
   assert.equal(providerCalls, 2); // One attempt per SDK call; public SDK maxRetries is zero.
-  assert.equal(await reserve("conv-c", 10_000), false); // expiry boundary
+  // the old expiry boundary no longer refuses (owner decision 2026-10-14); the held rows above stay held either way
+  assert.equal(typeof (await reserve("conv-c", 10_000)), "string");
+  assert.equal(snapshot.gate.uncertainMicroUsd, bound);
 });
 
 test("deployed-source wiring reserves before conversation creation and inference, and settles every public turn", async () => {
@@ -339,12 +348,14 @@ test("deployed-source wiring reserves before conversation creation and inference
   assert.match(runtime, /input\.publicPilotSpend \? \{ maxRetries: 0 \} : undefined/);
   assert.equal((runtime.match(/anthropic\.messages\.create\(/g) ?? []).length, 2);
   assert.equal((runtime.match(/maxRetries: 0/g) ?? []).length, 2);
-  assert.match(runtime, /isPublicPilotRequestWithinInputLimit\(requestParams\)/);
-  assert.match(runtime, /isPublicPilotRequestWithinInputLimit\(regenParams\)/);
+  // the request-size ceilings are removed from both model calls (owner decision 2026-10-14)
+  assert.doesNotMatch(runtime, /isPublicPilotRequestWithinInputLimit/);
   assert.match(runtime, /input\.publicPilotSpend \? systemPrompt : cachedSystemBlocks/);
   assert.match(spend, /SELECT id, organization_id, agent_id, model,[\s\S]*?FOR UPDATE/);
-  assert.ok(spend.includes("publicTurnSpendGates.spentMicroUsd} + ${publicTurnSpendGates.reservedMicroUsd} + ${publicTurnSpendGates.uncertainMicroUsd}"));
-  assert.match(spend, /MAX_PUBLIC_TURNS_PER_CONVERSATION/);
+  // the aggregate budget comparison and the five-turn cap are gone from the reservation
+  assert.ok(!spend.includes("publicTurnSpendGates.spentMicroUsd} + ${publicTurnSpendGates.reservedMicroUsd} + ${publicTurnSpendGates.uncertainMicroUsd}"));
+  assert.doesNotMatch(spend, /MAX_PUBLIC_TURNS_PER_CONVERSATION/);
+  // a database failure still refuses (fail closed)
   assert.match(spend, /catch \{\s*return null;\s*\}/);
   assert.match(migration, /enabled boolean NOT NULL DEFAULT false/);
   assert.doesNotMatch(migration, /INSERT INTO public_turn_spend_gates/i);

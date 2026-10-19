@@ -20,6 +20,7 @@ import { IdentifyOnAuth } from "@/components/analytics/identify-on-auth";
 import { CommandBar } from "@/components/command-bar";
 import { isWinLadderOn, isSimpleHomeOn } from "@/lib/web-build/policy";
 import { isDraftApprovalsOn } from "@/lib/agent-drafts/policy";
+import { isPhoneWhatsappEnabled } from "@/lib/phone-whatsapp/exposure";
 import { readEnabledModules } from "@/lib/workspace/surface";
 import { hasLiveSms } from "@/lib/telephony/config";
 import { buildWorkspaceUrls } from "@/lib/billing/anonymous-workspace";
@@ -359,6 +360,7 @@ export default async function DashboardLayout({
               enabledModules={enabledModules}
               smsLive={smsLive}
               draftApprovalsOn={isDraftApprovalsOn({ SF_DRAFT_APPROVALS: process.env.SF_DRAFT_APPROVALS })}
+              phoneWhatsappOn={isPhoneWhatsappEnabled(orgId, process.env.PHONE_WHATSAPP_ENABLED_ORGS)}
             />
             {/* overflow-x-clip (not overflow-x-hidden): overflow-y-auto here
                 also computes overflow-x to `auto` per CSS's overflow

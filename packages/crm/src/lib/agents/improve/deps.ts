@@ -45,7 +45,8 @@ import type { AgentBlueprint } from "@/db/schema/agents";
 import type { ImproveProposal, NewEvalRun } from "@/db/schema/eval-runs";
 import { agentImproveProposals } from "@/db/schema/eval-runs";
 import { getAIClient, getAnthropicClient } from "@/lib/ai/client";
-import { resolveStudioBuildGate, NEEDS_BYOK_MESSAGE } from "@/lib/agent-templates/studio-build-gate";
+import { NEEDS_BYOK_MESSAGE } from "@/lib/agent-templates/studio-build-gate";
+import { resolveImproveGate } from "@/lib/agents/improve/improve-gate";
 import { recallAgentMemory, recordAgentMemory } from "@/lib/agents/memory/agent-memory";
 import { makeBrainMemoryStoreForOrg } from "@/lib/agents/memory/brain-memory-store";
 import {
@@ -116,7 +117,8 @@ export async function buildImproveDeps(args: {
   const { orgId, agentId } = args;
 
   const resolution = await getAIClient({ orgId });
-  const gate = resolveStudioBuildGate(resolution.mode);
+  // EPIC: on the self-hosted file-provider deployment the improve loop may run on the platform client (improve-gate.ts).
+  const gate = resolveImproveGate(resolution.mode, Boolean(resolution.client));
   if (!gate.ok || !resolution.client) {
     return { ok: false, error: "no_llm_key", message: NEEDS_BYOK_MESSAGE };
   }

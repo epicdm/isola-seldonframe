@@ -2,20 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import {
-  PUBLIC_CHAT_CONVERSATION_LIMIT_MESSAGE,
-  PUBLIC_CHAT_UNAVAILABLE_MESSAGE,
-} from "../../src/lib/agents/public-pilot-controls";
+import * as controls from "../../src/lib/agents/public-pilot-controls";
+import { PUBLIC_CHAT_UNAVAILABLE_MESSAGE } from "../../src/lib/agents/public-pilot-controls";
 
 const root = path.resolve(__dirname, "../..");
 const read = (rel: string) => readFileSync(path.join(root, rel), "utf8");
 
 test("pilot refusal copy is truthful: no 'try again', no promise of an instant answer, names the real support line", () => {
-  for (const message of [PUBLIC_CHAT_UNAVAILABLE_MESSAGE, PUBLIC_CHAT_CONVERSATION_LIMIT_MESSAGE]) {
-    assert.match(message, /\+1 767 818 0001/);
-    assert.doesNotMatch(message, /try again|something went wrong|hiccup|someone will/i);
-  }
+  assert.match(PUBLIC_CHAT_UNAVAILABLE_MESSAGE, /\+1 767 818 0001/);
+  assert.doesNotMatch(PUBLIC_CHAT_UNAVAILABLE_MESSAGE, /try again|something went wrong|hiccup|someone will/i);
   assert.match(PUBLIC_CHAT_UNAVAILABLE_MESSAGE, /Monday to Saturday, 8:00 am to 6:00 pm Dominica time/);
+  // the five-turn cutoff and its "message limit" copy are removed (owner decision 2026-10-14)
+  assert.equal("PUBLIC_CHAT_CONVERSATION_LIMIT_MESSAGE" in controls, false);
 });
 
 test("every pilot 503 body carries a visitor-facing message (the widget shows a generic 'try again' when none is sent)", () => {
@@ -23,8 +21,10 @@ test("every pilot 503 body carries a visitor-facing message (the widget shows a 
   const bodies = route.match(/\{ error: "(?:PUBLIC_CHAT_UNAVAILABLE|temporarily_unavailable)"[^}]*\}/g) ?? [];
   assert.ok(bodies.length >= 4, `expected at least 4 refusal bodies, found ${bodies.length}`);
   for (const body of bodies) assert.match(body, /message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE/);
-  assert.match(route, /PUBLIC_CHAT_CONVERSATION_LIMIT_MESSAGE/);
-  assert.match(route, /publicConversationAtLimit\(conversationId\)/);
+  // the five-turn cutoff (its helper and its "message limit" copy) is gone; the error CODE remains only for the provider-window
+  // rotation of relay conversations
+  assert.doesNotMatch(route, /PUBLIC_CHAT_CONVERSATION_LIMIT_MESSAGE|publicConversationAtLimit/);
+  assert.equal((route.match(/"PUBLIC_CHAT_CONVERSATION_LIMIT"/g) ?? []).length, 1);
 });
 
 test("a distributed limiter (Redis) is NOT required for the pilot unless the operator opts in", () => {

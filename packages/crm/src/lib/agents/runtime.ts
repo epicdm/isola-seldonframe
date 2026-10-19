@@ -49,7 +49,7 @@ import { resolveTurnModel } from "./runtime/turn-model";
 import {
   DEEPSEEK_FLASH_PRICING,
   extractCompletePublicUsage,
-  isPublicPilotRequestWithinInputLimit,
+  isWithinModelRequestLimit,
 } from "./public-pilot-controls";
 import { createTtlPromiseCache } from "./runtime/capped-reply-cache";
 import {
@@ -528,7 +528,7 @@ export async function executeTurn(input: {
           messages as LooseMessage[],
         )) as Anthropic.Messages.MessageParam[],
       } satisfies Anthropic.Messages.MessageCreateParams;
-      if (input.publicPilotSpend && !isPublicPilotRequestWithinInputLimit(requestParams)) {
+      if (input.publicPilotSpend && !isWithinModelRequestLimit(requestParams)) {
         return {
           ok: false,
           reason: "request_too_large",
@@ -830,10 +830,9 @@ export async function executeTurn(input: {
         // resolved any tool calls; we're fixing the FINAL TEXT.
         messages: regenMessages as Anthropic.Messages.MessageParam[],
       } satisfies Anthropic.Messages.MessageCreateParams;
-      if (input.publicPilotSpend && !isPublicPilotRequestWithinInputLimit(regenParams)) {
+      if (input.publicPilotSpend && !isWithinModelRequestLimit(regenParams)) {
         usageComplete = false;
-        // The earlier inference was already billed. Do not make an unbounded
-        // regeneration request; the route keeps the reservation conservative.
+        // The earlier inference was already billed; a request beyond the provider window would only fail there.
         finalText = selectFinalFallback(failedNames);
       } else {
         providerCalls += 1;

@@ -7,31 +7,24 @@ import { publicTurnSpendGates, publicTurnSpendReservations } from "@/db/schema";
 import {
   actualPublicTurnCostMicroUsd,
   isConfiguredPublicPilotTarget,
-  MAX_PUBLIC_TURNS_PER_CONVERSATION,
+  MAX_VERIFIED_RELAY_INPUT_BYTES_PER_REQUEST,
   maximumPublicTurnReservationMicroUsd,
   parseTrustedProxyHops,
-  parsePublicPilotEnvelope,
 } from "./public-pilot-controls";
 
 const GATE_ID = "uplink-personal-line-public-14d";
 const MODEL = "deepseek-flash";
+// Owner decision dec-owner-pl-remove-temporary-pilot-limits-prepare-live-2026-10-14: the temporary pilot allowance (dollar
+// budget, start/expiry window, per-conversation turn cap) no longer refuses a turn. The gate row stays as actual-cost
+// telemetry, and its one-way operator kill switch (`enabled`) still stops public chat.
 async function effectiveEnabled(gate: {
   enabled: boolean;
   organizationId: string;
   agentId: string;
   model: string;
-  budgetMicroUsd: number;
-  startsAt: Date;
-  expiresAt: Date;
 }) {
   if (!gate.enabled || !(await publicPilotConfigReady()) || !isConfiguredPublicPilotTarget(gate.organizationId, gate.agentId)) return false;
-  const envelope = parsePublicPilotEnvelope(process.env);
-  if (!envelope) return false;
-  const now = Date.now();
-  return gate.model === MODEL &&
-    gate.budgetMicroUsd === Number(envelopeBudgetMicroUsd(envelope.budgetCents)) &&
-    gate.startsAt.getTime() === envelope.startsAtMs && gate.expiresAt.getTime() === envelope.expiresAtMs &&
-    now >= envelope.startsAtMs && now < envelope.expiresAtMs;
+  return gate.model === MODEL;
 }
 
 export type PublicSpendReservation = { id: string };
@@ -53,8 +46,9 @@ async function publicPilotConfigReady(): Promise<boolean> {
     // A distributed limiter is required only when the operator opts in; the durable dollar gate is the primary control.
     (process.env.PUBLIC_PILOT_REQUIRE_DISTRIBUTED_LIMITER !== "1" ||
       Boolean(process.env.UPSTASH_REDIS_REST_URL?.trim() && process.env.UPSTASH_REDIS_REST_TOKEN?.trim())) &&
-    parseTrustedProxyHops(process.env.TRUSTED_PROXY_HOPS) !== null &&
-    parsePublicPilotEnvelope(env),
+    // The PUBLIC_PILOT_BUDGET_CENTS / STARTS_AT / EXPIRES_AT envelope is no longer a readiness condition (owner decision
+    // 2026-10-14): changing or removing those values must not take public chat down.
+    parseTrustedProxyHops(process.env.TRUSTED_PROXY_HOPS) !== null,
   );
   if (!required) return false;
   try {
@@ -68,37 +62,30 @@ async function publicPilotConfigReady(): Promise<boolean> {
   }
 }
 
-function envelopeBudgetMicroUsd(budgetCents: number): string {
-  return (BigInt(budgetCents) * BigInt(10000)).toString();
-}
-
-function dateMillis(value: unknown): number {
-  if (value instanceof Date) return value.getTime();
-  return Date.parse(String(value));
-}
-
 /**
- * One transaction serializes all pilot admissions on its single gate row. The
- * same lock protects the aggregate dollar ceiling and per-conversation turn
- * count, so neither can be oversubscribed by concurrent requests.
+ * One transaction serializes all pilot reservations on its single gate row so
+ * the reserved/spent/uncertain telemetry stays consistent under concurrency.
  *
  * This deliberately requires DB_DRIVER=pg: Neon HTTP does not provide an
- * interactive transaction. A missing setting/config, wrong model, missing
- * gate, expiry, cap, per-conversation limit, or DB failure disables public
- * admission. Internal authenticated test-mode calls never invoke this gate.
+ * interactive transaction. A missing setting/config, wrong model, missing or
+ * disabled gate (operator kill switch), or DB failure still refuses (fail
+ * closed). The reservation amount is a recorded estimate, not a ceiling.
+ * Internal authenticated test-mode calls never invoke this gate.
  */
 export async function reservePublicTurnSpend(input: {
   organizationId: string;
   agentId: string;
   conversationId: string;
+  /** True only after the route verifies the signed relay identity and workspace binding. */
+  verifiedRelay?: boolean;
 }): Promise<PublicSpendReservation | null> {
   if (!(await publicPilotConfigReady())) return null;
-  const envelope = parsePublicPilotEnvelope(process.env);
-  if (!envelope) return null;
 
   const reservationId = randomUUID();
-  const amount = maximumPublicTurnReservationMicroUsd();
-  const expectedBudget = envelopeBudgetMicroUsd(envelope.budgetCents);
+  const requestCeiling = input.verifiedRelay
+    ? MAX_VERIFIED_RELAY_INPUT_BYTES_PER_REQUEST
+    : undefined;
+  const amount = maximumPublicTurnReservationMicroUsd(requestCeiling);
   try {
     return await db.transaction(async (tx) => {
       const gateResult = await tx.execute(sql`
@@ -121,28 +108,11 @@ export async function reservePublicTurnSpend(input: {
       }>(gateResult);
       if (!gate) return null;
 
-      const startsAt = dateMillis(gate.starts_at);
-      const expiresAt = dateMillis(gate.expires_at);
       if (
         !gate.enabled ||
         gate.organization_id !== input.organizationId ||
-        gate.model !== MODEL ||
-        Number(gate.budget_micro_usd) !== Number(expectedBudget) ||
-        startsAt !== envelope.startsAtMs ||
-        expiresAt !== envelope.expiresAtMs ||
-        Date.now() < envelope.startsAtMs ||
-        Date.now() >= envelope.expiresAtMs
+        gate.model !== MODEL
       ) return null;
-
-      const conversationCountResult = await tx.execute(sql`
-        SELECT COUNT(*)::int AS count
-        FROM public_turn_spend_reservations
-        WHERE conversation_id = ${input.conversationId}::uuid
-          AND gate_id = ${GATE_ID}
-          AND state IN ('reserved', 'settled', 'uncertain')
-      `);
-      const [conversationCount] = returnedRows<{ count: number | string }>(conversationCountResult);
-      if (!conversationCount || Number(conversationCount.count) >= MAX_PUBLIC_TURNS_PER_CONVERSATION) return null;
 
       const [updatedGate] = await tx
         .update(publicTurnSpendGates)
@@ -152,8 +122,7 @@ export async function reservePublicTurnSpend(input: {
         })
         .where(and(
           eq(publicTurnSpendGates.id, GATE_ID),
-          sql`${publicTurnSpendGates.enabled} = true AND ${publicTurnSpendGates.startsAt} <= now() AND ${publicTurnSpendGates.expiresAt} > now()`,
-          sql`${publicTurnSpendGates.spentMicroUsd} + ${publicTurnSpendGates.reservedMicroUsd} + ${publicTurnSpendGates.uncertainMicroUsd} + ${amount.toString()} <= ${publicTurnSpendGates.budgetMicroUsd}`,
+          sql`${publicTurnSpendGates.enabled} = true`,
         ))
         .returning({ id: publicTurnSpendGates.id });
       if (!updatedGate) tx.rollback();
@@ -187,23 +156,6 @@ export async function agentHasPilotGate(agentId: string): Promise<boolean> {
   }
 }
 
-/** Read-only: true when this conversation already used its per-conversation turn allowance. Used only to choose the customer message. */
-export async function publicConversationAtLimit(conversationId: string): Promise<boolean> {
-  try {
-    const result = await db.execute(sql`
-      SELECT COUNT(*)::int AS count
-      FROM public_turn_spend_reservations
-      WHERE conversation_id = ${conversationId}::uuid
-        AND gate_id = ${GATE_ID}
-        AND state IN ('reserved', 'settled', 'uncertain')
-    `);
-    const [row] = returnedRows<{ count: number | string }>(result);
-    return Boolean(row) && Number(row.count) >= MAX_PUBLIC_TURNS_PER_CONVERSATION;
-  } catch {
-    return false;
-  }
-}
-
 async function transitionReservation(input: {
   reservationId: string;
   state: "released" | "uncertain" | "settled";
@@ -225,6 +177,8 @@ async function transitionReservation(input: {
         .where(and(
           eq(publicTurnSpendReservations.id, input.reservationId),
           eq(publicTurnSpendReservations.state, "reserved"),
+          // The reservation is an estimate, not a ceiling: the measured cost is recorded even when it exceeds it, so a
+          // larger turn can never leave its row stuck in 'reserved' and blind the ledger.
         ))
         .returning({ gateId: publicTurnSpendReservations.gateId, reservedMicroUsd: publicTurnSpendReservations.reservedMicroUsd });
       if (!reservation) return false;
@@ -267,7 +221,7 @@ export function settlePublicTurnSpend(input: {
 }): Promise<boolean> {
   if (!input.usageComplete) return Promise.resolve(false);
   const actual = actualPublicTurnCostMicroUsd(input);
-  if (actual === null || actual > maximumPublicTurnReservationMicroUsd()) return Promise.resolve(false);
+  if (actual === null) return Promise.resolve(false);
   return transitionReservation({
     reservationId: input.reservationId,
     state: "settled",

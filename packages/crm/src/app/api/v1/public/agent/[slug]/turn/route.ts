@@ -40,7 +40,6 @@ import { executeTurn } from "@/lib/agents/runtime";
 import {
   agentHasPilotGate,
   markPublicTurnSpendUncertain,
-  publicConversationAtLimit,
   releasePublicTurnSpend,
   reservePublicTurnSpend,
   settlePublicTurnSpend,
@@ -48,7 +47,6 @@ import {
 import { decidePublicConversationStatus } from "@/lib/agents/public-turn-status";
 import { canAccessAgentTurn } from "@/lib/agents/public-agent-access";
 import {
-  PUBLIC_CHAT_CONVERSATION_LIMIT_MESSAGE,
   PUBLIC_CHAT_UNAVAILABLE_MESSAGE,
   resolvePublicPilotTarget,
 } from "@/lib/agents/public-pilot-controls";
@@ -410,13 +408,11 @@ export async function POST(
         organizationId: agentRow.orgId,
         agentId: agentRow.id,
         conversationId,
+        verifiedRelay: Boolean(trustedRelayToolContext),
       });
       if (!spendReservation) {
-        const atLimit = await publicConversationAtLimit(conversationId);
         return NextResponse.json(
-          atLimit
-            ? { error: "PUBLIC_CHAT_CONVERSATION_LIMIT", message: PUBLIC_CHAT_CONVERSATION_LIMIT_MESSAGE }
-            : { error: "PUBLIC_CHAT_UNAVAILABLE", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE },
+          { error: "PUBLIC_CHAT_UNAVAILABLE", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE },
           { status: 503, headers: CORS_HEADERS },
         );
       }
@@ -587,6 +583,16 @@ export async function POST(
   });
 
   if (!result.ok) {
+    // A WhatsApp (relay) conversation that outgrew the provider's context window: answer the machine code the relay acts on
+    // (rc10l starts a fresh Uplink conversation with the earlier messages carried over) instead of "start a new chat", which a
+    // WhatsApp customer cannot do. ONLY when this turn made no model call: if the guard fired mid tool-loop, tools have already run
+    // and a relay re-send could repeat them, so that turn gets the ordinary fallback and the NEXT message rotates cleanly.
+    if (result.reason === "request_too_large" && trustedRelayToolContext && result.providerCalls === 0) {
+      return NextResponse.json(
+        { error: "PUBLIC_CHAT_CONVERSATION_LIMIT", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE },
+        { status: 503, headers: CORS_HEADERS },
+      );
+    }
     return publicTurnFallbackResponse(conversationId, result, CORS_HEADERS, conversationCapability);
   }
 
