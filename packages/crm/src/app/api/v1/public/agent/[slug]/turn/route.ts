@@ -395,22 +395,24 @@ export async function POST(
     // configured relay scope and the stored conversation binding matched, and the proof's nonce was unused. The exemption
     // never keys on the client IP or on a caller-supplied header: an unverifiable proof was refused with 403 above, and a
     // relay turn sent without a proof is anonymous traffic and counted like any other.
-    const allowed = trustedRelayToolContext ? ({ ok: true } as const) : await checkPublicTurnAllowed({
-      ip: requestIp,
-      agentId: agentRow.id,
-      limits: resolvePublicTurnLimits(),
-      // The durable dollar gate is the primary control. The per-IP limiter is process-local unless a
-      // distributed limiter is configured AND the operator opts in to requiring it.
-      failClosed: pilotPublicRequest && process.env.PUBLIC_PILOT_REQUIRE_DISTRIBUTED_LIMITER === "1",
-    });
-    if (!allowed.ok) {
-      if (allowed.scope === "limiter_error") {
-        return NextResponse.json({ error: "temporarily_unavailable", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE }, { status: 503, headers: CORS_HEADERS });
+    if (!trustedRelayToolContext) {
+      const allowed = await checkPublicTurnAllowed({
+        ip: requestIp,
+        agentId: agentRow.id,
+        limits: resolvePublicTurnLimits(),
+        // The durable dollar gate is the primary control. The per-IP limiter is process-local unless a
+        // distributed limiter is configured AND the operator opts in to requiring it.
+        failClosed: pilotPublicRequest && process.env.PUBLIC_PILOT_REQUIRE_DISTRIBUTED_LIMITER === "1",
+      });
+      if (!allowed.ok) {
+        if (allowed.scope === "limiter_error") {
+          return NextResponse.json({ error: "temporarily_unavailable", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE }, { status: 503, headers: CORS_HEADERS });
+        }
+        return NextResponse.json(
+          { error: "rate_limited", message: PUBLIC_TURN_RATE_LIMITED_MESSAGE },
+          { status: 429, headers: { ...CORS_HEADERS, "Retry-After": "60" } },
+        );
       }
-      return NextResponse.json(
-        { error: "rate_limited", message: PUBLIC_TURN_RATE_LIMITED_MESSAGE },
-        { status: 429, headers: { ...CORS_HEADERS, "Retry-After": "60" } },
-      );
     }
 
     if (pilotPublicRequest) {

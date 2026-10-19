@@ -55,7 +55,7 @@ describe("Public turn route: anonymous abuse limits, verified-relay exemption", 
 
   const conversations = async () => {
     const r = await db.execute(sql`select count(*)::int as n from agent_conversations`);
-    return Number(((Array.isArray(r) ? r : (r as { rows: Array<{ n: number }> }).rows)[0] as { n: number }).n);
+    return Number(((Array.isArray(r) ? r : (r as unknown as { rows: Array<{ n: number }> }).rows)[0] as { n: number }).n);
   };
   type Call = { ip: string; slug?: string; sessionId?: string; message?: string; headers?: Record<string, string>; relay?: string | null };
   const turn = async (c: Call) => {
