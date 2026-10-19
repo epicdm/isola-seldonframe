@@ -161,8 +161,8 @@ export function ConnectPanel({ states = [], coexistenceAvailable = false }: { st
               <span className="font-medium">Number {s.phoneNumberId}: connected, WhatsApp Business app kept.</span> Messages arrive in your EPIC inbox and your app keeps
               working. WhatsApp calls to this number still ring only in the app: calling through EPIC needs the API-only setup.
               <span className="block text-muted-foreground">
-                Contacts from the app: {SYNC_TEXT[s.syncs?.smb_app_state_sync ?? ""] ?? "not requested yet"}. Chat history from the app:{" "}
-                {SYNC_TEXT[s.syncs?.history ?? ""] ?? "not requested yet"}.
+                Contacts from the app: {SYNC_TEXT[s.syncs?.smb_app_state_sync ?? ""] ?? "not requested yet"}. Chat history from the app (imported as
+                private notes):{" "}{SYNC_TEXT[s.syncs?.history ?? ""] ?? "not requested yet"}.
               </span>
             </li>
           ))}
@@ -176,8 +176,10 @@ export function ConnectPanel({ states = [], coexistenceAvailable = false }: { st
             <input type="radio" name="flow" checked={flow === "coexistence"} onChange={() => setFlow("coexistence")} disabled={busy || phase === "meta"} />
             <span>
               <strong>I use the WhatsApp Business app on this number and want to keep it.</strong> Your app keeps working and your chats stay on your phone. Limits while
-              you keep the app: WhatsApp calls are not available through EPIC; sending is limited to 20 messages per second; group chats are not synced; the contacts
-              and up to 6 months of chat history can be copied in once, only within 24 hours of connecting.
+              you keep the app: WhatsApp calls are not available through EPIC; sending is limited to 20 messages per second; group chats are not synced. Your
+              contacts, and up to 6 months of chat history, can be copied in once, only within 24 hours of connecting. Past chats are imported as{" "}
+              <strong>private notes</strong> that your staff see inside each conversation: they are not part of the WhatsApp conversation, they are never sent to
+              your customers, and connecting attaches no AI agent, so no AI agent uses them.
             </span>
           </label>
         ) : null}
