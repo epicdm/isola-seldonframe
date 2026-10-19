@@ -72,6 +72,28 @@ describe("inboxBotAttached (GET /inboxes/:id/agent_bot, Chatwoot v4.18 shape)", 
   });
 });
 
+describe("Chatwoot calls never follow a redirect (Codex re-review 3)", () => {
+  test("every request asks fetch not to follow redirects", async () => {
+    const inits: Array<RequestInit | undefined> = [];
+    const cw = makeChatwootClient({
+      base: "http://cw-api.test", accountId: "2", apiToken: ["fixture", "cw", "token"].join("-"), // fictional test value, not a credential
+      fetch: async (_u, init) => { inits.push(init); return new Response(JSON.stringify(REAL_NO_BOT), { status: 200 }); },
+    });
+    assert.equal(await cw.inboxBotAttached(77), false); // twin: the same harness DOES read a direct 200 {} as no bot
+    assert.equal(inits.length, 1);
+    assert.equal(inits[0]?.redirect, "manual");
+  });
+
+  test("a 3xx, or a 200 {} that arrived via a redirect, is never read as 'no bot'", async () => {
+    const redirect3xx = makeChatwootClient({ base: "http://cw-api.test", accountId: "2", apiToken: FAKE,
+      fetch: async () => new Response(null, { status: 302, headers: { location: "http://elsewhere.test/" } }) });
+    await assert.rejects(redirect3xx.inboxBotAttached(77));
+    const followed = makeChatwootClient({ base: "http://cw-api.test", accountId: "2", apiToken: FAKE,
+      fetch: async () => { const r = new Response(JSON.stringify({}), { status: 200 }); Object.defineProperty(r, "redirected", { value: true }); return r; } });
+    await assert.rejects(followed.inboxBotAttached(77));
+  });
+});
+
 describe("Connect never attaches a bot to the inbox it creates", () => {
   test("ensureWhatsappInbox (create path) sends no agent-bot request and no agent_bot field (twin: the bot read IS visible to the same spy)", async () => {
     const { cw, seen } = client((path, method) => {

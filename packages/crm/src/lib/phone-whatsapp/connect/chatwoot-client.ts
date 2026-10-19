@@ -60,8 +60,11 @@ export function makeChatwootClient(opts: { base: string; accountId: string; apiT
       headers: { api_access_token: opts.apiToken, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(timeout),
+      // Never follow a redirect: a 3xx is !ok and throws, and a response that was redirected anyway is refused, so a body served from
+      // anywhere but the configured Chatwoot endpoint (e.g. a proxy's 200 {}) can never be read as an answer, least of all as 'no bot'.
+      redirect: "manual",
     });
-    if (!res.ok) throw new ChatwootError(res.status, label);
+    if (!res.ok || res.redirected) throw new ChatwootError(res.ok ? 502 : res.status, label);
     const j = (await res.json().catch(() => null)) as Record<string, unknown> | unknown[] | null;
     if (!j || typeof j !== "object") throw new ChatwootError(502, label);
     return (Array.isArray(j) ? { payload: j } : j) as Record<string, unknown>;
