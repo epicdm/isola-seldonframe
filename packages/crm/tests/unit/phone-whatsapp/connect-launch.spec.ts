@@ -27,3 +27,20 @@ test("other finish types, cancel/error, foreign origins and junk yield nothing (
   assert.equal(hintsFromSessionMessage(FB, "{not json"), null);
   assert.equal(hintsFromSessionMessage(FB, JSON.stringify({ type: "WA_EMBEDDED_SIGNUP", event: "FINISH" })), null); // FINISH without data
 });
+
+test("coexistence launch: the documented Business-app onboarding extras; the standard options are unchanged (twin)", () => {
+  assert.deepEqual(embeddedSignupLoginOptions("cfg-1", "coexistence"), {
+    config_id: "cfg-1", response_type: "code", override_default_response_type: true,
+    extras: { setup: {}, featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3" },
+  });
+  assert.deepEqual(embeddedSignupLoginOptions("cfg-1", "standard"), embeddedSignupLoginOptions("cfg-1"));
+});
+
+test("coexistence flow accepts FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING (phone id may be empty); the standard flow still refuses it (twin)", () => {
+  const ev = JSON.stringify({ type: "WA_EMBEDDED_SIGNUP", event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", data: { waba_id: "900000000000001" } });
+  assert.deepEqual(hintsFromSessionMessage(FB, ev, "coexistence"), { wabaId: "900000000000001", phoneNumberId: "" });
+  assert.equal(hintsFromSessionMessage(FB, ev), null);
+  assert.equal(hintsFromSessionMessage("https://facebook.com.evil.test", ev, "coexistence"), null);
+  assert.equal(hintsFromSessionMessage(FB, JSON.stringify({ type: "WA_EMBEDDED_SIGNUP", event: "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", data: {} }), "coexistence"), null);
+  for (const e of ["FINISH_ONLY_WABA", "CANCEL", "ERROR"]) assert.equal(hintsFromSessionMessage(FB, msg(e), "coexistence"), null, e);
+});

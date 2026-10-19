@@ -11,6 +11,8 @@ import {
   type ConnectStore,
   type ConnectionStatus,
   type FinalizeDeps,
+  type SyncOutcome,
+  type SyncType,
 } from "../../../src/lib/phone-whatsapp/connect/finalize";
 import type { DebugToken, WabaPhone } from "../../../src/lib/phone-whatsapp/connect/verify-assets";
 
@@ -25,13 +27,15 @@ class Definite extends Error {}
 type Over = {
   debug?: Partial<DebugToken>; phones?: WabaPhone[];
   registerFails?: "none" | "definite" | "unknown"; failActivate?: boolean; exchangeFails?: boolean; failSetRegistered?: boolean;
+  subscribeFails?: boolean; coex?: boolean; overrideFails?: boolean; syncFails?: "none" | "definite" | "unknown";
 };
 
 function harness(over: Over = {}) {
   const attempts = new Map<string, { orgId: string; userId: string; expiresAt: Date; consent: Consent }>();
   const lines: Array<{ orgId: string; phoneNumberId: string; wabaId: string; label: string | null }> = [];
-  const conns = new Map<string, { orgId: string; status: ConnectionStatus; wabaId: string; hasPin: boolean; consent?: Consent; tokenEnc?: string; pinEnc?: string; reason?: string; attemptId?: string }>();
+  const conns = new Map<string, { orgId: string; status: ConnectionStatus; wabaId: string; hasPin: boolean; consent?: Consent; tokenEnc?: string; pinEnc?: string; reason?: string; attemptId?: string; syncs?: Partial<Record<SyncType, SyncOutcome>>; binding?: unknown }>();
   const calls: string[] = [];
+  const steps: string[] = []; // subscribe / coexistence steps, kept apart so the original call-order assertion is unchanged
   const registeredPins: string[] = [];
   const cfg = { ...over };
   const k = (org: string, phone: string) => `${org}/${phone}`;
@@ -71,6 +75,19 @@ function harness(over: Over = {}) {
       lines.push({ orgId: a.orgId, phoneNumberId: a.phoneNumberId, wabaId: a.wabaId, label: a.label });
       conns.get(k(a.orgId, a.phoneNumberId))!.status = "active";
     },
+    async activateCoexistence(a) {
+      const c = conns.get(k(a.orgId, a.phoneNumberId))!;
+      if (c.status !== "coex_linking") throw new Error("cas");
+      lines.push({ orgId: a.orgId, phoneNumberId: a.phoneNumberId, wabaId: a.wabaId, label: a.label });
+      c.status = "connected_coexistence"; c.binding = a.binding;
+    },
+    async getSyncs(a) { return { ...(conns.get(k(a.orgId, a.phoneNumberId))?.syncs ?? {}) }; },
+    async recordSync(a) {
+      const c = conns.get(k(a.orgId, a.phoneNumberId))!;
+      c.syncs = c.syncs ?? {};
+      if (c.syncs[a.syncType]) throw new Error("write-once");
+      c.syncs[a.syncType] = a.outcome;
+    },
   };
   let clock = new Date("2026-10-18T10:00:00Z");
   const deps: FinalizeDeps = {
@@ -85,6 +102,19 @@ function harness(over: Over = {}) {
       if (cfg.registerFails === "definite") throw new Definite("4xx");
       if (cfg.registerFails === "unknown") throw new Error("timeout");
     },
+    async subscribeApp() { steps.push("subscribe"); if (cfg.subscribeFails) throw new Definite("4xx"); },
+    ...(over.coex ? {
+      coex: {
+        async ensureInbox() { steps.push("inbox"); return { chatwootAccountId: "2", inboxId: 77, forwardUrl: "https://cw.test/webhooks/whatsapp/%2B15550100" }; },
+        async setOverride() { steps.push("override"); if (cfg.overrideFails) throw new Error("timeout"); },
+        async requestSync(_t: string, _p: string, t: string) {
+          steps.push(`sync:${t}`);
+          if (cfg.syncFails === "definite") throw new Definite("4xx");
+          if (cfg.syncFails === "unknown") throw new Error("timeout");
+          return `req-${t}`;
+        },
+      },
+    } : {}),
     isDefiniteFailure: (e) => e instanceof Definite,
     encrypt: (v) => `enc(${Buffer.from(v).toString("base64")})`,
     ourAppId: "APP1",
@@ -93,7 +123,7 @@ function harness(over: Over = {}) {
     now: () => clock,
   };
   const registers = () => calls.filter((c) => c === "register").length;
-  return { deps, lines, conns, calls, attempts, cfg, registers, registeredPins, advance: (ms: number) => { clock = new Date(clock.getTime() + ms); } };
+  return { deps, lines, conns, calls, steps, attempts, cfg, registers, registeredPins, advance: (ms: number) => { clock = new Date(clock.getTime() + ms); } };
 }
 
 async function begin(h: ReturnType<typeof harness>, orgId = A, userId = "user-1") {
@@ -180,7 +210,7 @@ describe("connect journey", () => {
     assert.deepEqual([code(await finalizeConnect(claim(await begin(h2), { wabaId: "900000000000777" }), h2.deps)), h2.lines.length], ["epic_owned_waba", 0]);
   });
 
-  test("coexistence number is refused here, nothing bound, nothing registered", async () => {
+  test("coexistence number is refused when this deployment has no coexistence path configured: nothing bound, nothing registered", async () => {
     const h = harness({ phones: [{ id: PHONE, displayNumber: "+1", verifiedName: "x", platformType: "CLOUD_API", isOnBizApp: true }] });
     const r = await finalizeConnect(claim(await begin(h)), h.deps);
     assert.deepEqual([code(r), h.lines.length, h.registers()], ["coexistence_not_supported_here", 0, 0]);
@@ -301,3 +331,128 @@ test("twin: one attempt alone still registers once and connects", async () => {
   assert.equal(code(await finalizeConnect(claim(await begin(h)), h.deps)), "ok");
   assert.equal(h.registers(), 1);
 });
+
+
+describe("subscribe step (standard path)", () => {
+  test("the app is subscribed to the customer's WABA after registration and before the binding (twin: positive journey above)", async () => {
+    const h = harness();
+    assert.equal((await finalizeConnect(claim(await begin(h)), h.deps)).ok, true);
+    assert.deepEqual(h.steps, ["subscribe"]);
+    assert.equal(h.registers(), 1);
+  });
+  test("subscribe refused: not connected, stays 'registered'; the retry subscribes and binds WITHOUT registering again", async () => {
+    const h = harness({ subscribeFails: true });
+    assert.equal(code(await finalizeConnect(claim(await begin(h)), h.deps)), "subscribe_failed");
+    assert.deepEqual([h.lines.length, h.registers(), h.conns.get(`${A}/${PHONE}`)?.status], [0, 1, "registered"]);
+    h.cfg.subscribeFails = false;
+    const r = await finalizeConnect(claim(await begin(h)), h.deps);
+    assert.equal(r.ok, true);
+    assert.deepEqual([h.lines.length, h.registers(), h.steps.filter((x) => x === "subscribe").length], [1, 1, 2]);
+  });
+});
+
+describe("coexistence (WhatsApp Business app kept)", () => {
+  const BIZ: WabaPhone = { id: PHONE, displayNumber: "+1 555 0100", verifiedName: "Test Co", platformType: "CLOUD_API", isOnBizApp: true };
+  const coexClaim = (n: string, o: Record<string, unknown> = {}) => claim(n, { flow: "coexistence", ...o });
+
+  test("positive: Meta reports the Business app -> no registration, no PIN; subscribe, inbox, override, then the two one-time syncs in order", async () => {
+    const h = harness({ coex: true, phones: [BIZ] });
+    const r = await finalizeConnect(coexClaim(await begin(h)), h.deps);
+    assert.deepEqual(r, { ok: true, displayNumber: "+1 555 0100", phoneNumberId: PHONE, mode: "coexistence", resumed: false });
+    assert.deepEqual(h.calls, ["exchange", "debug", "list"]); // no "register"
+    assert.deepEqual(h.steps, ["subscribe", "inbox", "override", "sync:smb_app_state_sync", "sync:history"]);
+    const c = h.conns.get(`${A}/${PHONE}`)!;
+    assert.deepEqual([c.status, c.pinEnc, h.lines.length], ["connected_coexistence", undefined, 1]);
+    assert.deepEqual(Object.keys(c.syncs ?? {}), ["smb_app_state_sync", "history"]);
+    assert.equal(c.syncs!.history!.status, "requested");
+  });
+
+  test("twin: the SAME harness with a Cloud API number registers it (the harness can register, so 'no register' above is real)", async () => {
+    const h = harness({ coex: true });
+    assert.equal((await finalizeConnect(claim(await begin(h)), h.deps)).ok, true);
+    assert.equal(h.registers(), 1);
+    assert.equal(h.steps.includes("inbox"), false);
+  });
+
+  test("negative twin: the browser claims the Business-app flow but Meta says the number is NOT on the app -> refused, nothing done", async () => {
+    const h = harness({ coex: true });
+    const r = await finalizeConnect(coexClaim(await begin(h)), h.deps);
+    assert.equal(code(r), "coexistence_not_confirmed");
+    assert.deepEqual([h.lines.length, h.registers(), h.steps.length, h.conns.size], [0, 0, 0, 0]);
+  });
+
+  test("the Business-app completion without a phone id: resolved from Meta when exactly one app number exists (twin: two -> refused)", async () => {
+    const h = harness({ coex: true, phones: [BIZ, { ...goodPhoneOf("900000000000003"), isOnBizApp: false }] });
+    assert.equal((await finalizeConnect(coexClaim(await begin(h), { phoneNumberId: "" }), h.deps)).ok, true);
+    assert.equal(h.lines[0].phoneNumberId, PHONE);
+    const h2 = harness({ coex: true, phones: [BIZ, { ...BIZ, id: "900000000000004" }] });
+    assert.equal(code(await finalizeConnect(coexClaim(await begin(h2), { phoneNumberId: "" }), h2.deps)), "phone_not_on_waba");
+    assert.equal(h2.lines.length, 0);
+    const h3 = harness({ coex: true });
+    assert.equal(code(await finalizeConnect(claim(await begin(h3), { phoneNumberId: "" }), h3.deps)), "bad_input"); // standard flow never resolves
+  });
+
+  test("a protected EPIC line found only by resolution is still refused", async () => {
+    const h = harness({ coex: true, phones: [{ ...BIZ, id: "900000000000888" }] });
+    assert.equal(code(await finalizeConnect(coexClaim(await begin(h), { phoneNumberId: "" }), h.deps)), "protected_asset");
+    assert.equal(h.steps.length, 0);
+  });
+
+  test("setup step fails (override timeout): 'failed', nothing bound, no sync requested; a fresh attempt completes and requests each sync once", async () => {
+    const h = harness({ coex: true, phones: [BIZ], overrideFails: true });
+    assert.equal(code(await finalizeConnect(coexClaim(await begin(h)), h.deps)), "coexistence_setup_failed");
+    assert.deepEqual([h.conns.get(`${A}/${PHONE}`)?.status, h.lines.length, h.steps.filter((x) => x.startsWith("sync")).length], ["failed", 0, 0]);
+    h.cfg.overrideFails = false;
+    assert.equal((await finalizeConnect(coexClaim(await begin(h)), h.deps)).ok, true);
+    assert.equal(h.steps.filter((x) => x.startsWith("sync")).length, 2);
+    assert.equal(h.registers(), 0);
+  });
+
+  test("one-time syncs are never repeated: a resumed connect requests nothing new (twin: the first connect requested both)", async () => {
+    const h = harness({ coex: true, phones: [BIZ] });
+    await finalizeConnect(coexClaim(await begin(h)), h.deps);
+    assert.equal(h.steps.filter((x) => x.startsWith("sync")).length, 2);
+    const r = await finalizeConnect(coexClaim(await begin(h)), h.deps);
+    assert.deepEqual([r.ok, (r as { resumed?: boolean }).resumed], [true, true]);
+    assert.equal(h.steps.filter((x) => x.startsWith("sync")).length, 2);
+  });
+
+  test("an unknown sync outcome (timeout) is recorded and NOT retried on resume; a definite refusal is recorded as rejected", async () => {
+    const h = harness({ coex: true, phones: [BIZ], syncFails: "unknown" });
+    assert.equal((await finalizeConnect(coexClaim(await begin(h)), h.deps)).ok, true); // the number IS connected
+    assert.deepEqual(Object.values(h.conns.get(`${A}/${PHONE}`)!.syncs!).map((x) => x!.status), ["unknown", "unknown"]);
+    h.cfg.syncFails = "none";
+    await finalizeConnect(coexClaim(await begin(h)), h.deps);
+    assert.equal(h.steps.filter((x) => x.startsWith("sync")).length, 2, "not re-sent");
+    const g = harness({ coex: true, phones: [BIZ], syncFails: "definite" });
+    await finalizeConnect(coexClaim(await begin(g)), g.deps);
+    assert.equal(g.conns.get(`${A}/${PHONE}`)!.syncs!.history!.status, "rejected");
+  });
+
+  test("a number already on the standard path is never switched to coexistence (needs_review, nothing done)", async () => {
+    const h = harness({ coex: true, failActivate: true });
+    await finalizeConnect(claim(await begin(h)), h.deps); // standard: registered, not bound
+    h.cfg.failActivate = false;
+    const before = h.steps.length;
+    const h2deps = { ...h.deps, graph: { ...h.deps.graph, async listWabaPhones() { return [BIZ]; } } };
+    assert.equal(code(await finalizeConnect(coexClaim(await begin(h)), h2deps)), "needs_review");
+    assert.equal(h.steps.length, before);
+  });
+
+  test("audit: every coexistence transition is recorded, with no token in it", async () => {
+    const h = harness({ coex: true, phones: [BIZ] });
+    const events: Array<[string, Record<string, unknown>]> = [];
+    h.deps.audit = (_o, step, props) => { events.push([step, props]); };
+    await finalizeConnect(coexClaim(await begin(h)), h.deps);
+    assert.deepEqual(events.map((e) => e[0]), ["coex_linking", "connected_coexistence", "sync", "sync"]);
+    assert.equal(JSON.stringify(events).includes(TOKEN), false);
+    const g = harness({ coex: true });
+    const ev2: string[] = []; g.deps.audit = (_o, step) => { ev2.push(step); };
+    await finalizeConnect(coexClaim(await begin(g)), g.deps);
+    assert.deepEqual(ev2, ["refused"]);
+  });
+});
+
+function goodPhoneOf(id: string): WabaPhone {
+  return { id, displayNumber: "+1 555 0199", verifiedName: "Other", platformType: "CLOUD_API", isOnBizApp: false };
+}

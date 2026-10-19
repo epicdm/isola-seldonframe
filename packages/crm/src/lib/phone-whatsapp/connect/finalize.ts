@@ -12,22 +12,55 @@
 //   registering -> outcome unknown (timeout / crash): needs_review. Never inferred, never repeated automatically; EPIC checks at Meta.
 //   failed      -> Meta explicitly rejected the registration (4xx), so nothing was registered; a fresh attempt may register again
 // Nothing here ever deregisters a number.
+//
+// SUBSCRIBE (2026-10-19). After registration and before activation the app is subscribed to the customer's WABA (POST /{waba}/subscribed_apps).
+// It was missing: without it no webhook for the number reaches EPIC. Idempotent at Meta; a failure leaves the connection 'registered', and the
+// retry subscribes and binds without registering again.
+//
+// COEXISTENCE (2026-10-19, owner: the first option). When Meta reports the number as also in use in the WhatsApp Business app, there is NO
+// registration and NO PIN (the number is already registered). Instead:
+//   save token as PENDING -> COEX_LINKING -> subscribe app -> ensure the Chatwoot inbox -> phone override to OUR receiver
+//   -> CONNECTED_COEXISTENCE (adds the link row) -> request the one-time contacts sync, then the history sync.
+// Every step before the binding is idempotent, so any failure marks the connection 'failed' (nothing irreversible happened) and a fresh attempt
+// repeats them. The two sync requests are ONE-TIME at Meta: each is requested at most once per connection, and its outcome (requested /
+// rejected / unknown) is recorded and never retried automatically, also not with a changed request (Law 10).
 import { createHash, randomBytes, randomInt } from "node:crypto";
 
-import { verifyClaimedAssets, type GraphClient, type RefusalCode, type Verified } from "./verify-assets";
+import { verifyClaimedAssets, type ConnectMode, type GraphClient, type RefusalCode, type Verified } from "./verify-assets";
 
 export const TERMS_VERSION = "whatsapp-connect-v2";
 export const ATTEMPT_TTL_MS = 15 * 60 * 1000;
 export const MAX_LIVE_ATTEMPTS = 5;
 
 export type Consent = { termsVersion: string; at: string; userId: string };
-export type ConnectionStatus = "pending" | "registering" | "registered" | "active" | "failed";
+export type ConnectionStatus =
+  | "pending"
+  | "registering"
+  | "registered"
+  | "active"
+  | "failed"
+  | "coex_linking"
+  | "connected_coexistence"
+  | "disconnected";
 export type ConnectionRecord = { status: ConnectionStatus; wabaId: string; hasPin: boolean };
 
-export type FinalizeCode = RefusalCode | "attempt_invalid" | "attempt_superseded" | "register_failed" | "persist_failed" | "forbidden" | "needs_review";
+export type SyncType = "smb_app_state_sync" | "history";
+export type SyncOutcome = { status: "requested" | "rejected" | "unknown"; at: string; requestId?: string | null };
+export type CoexBinding = { chatwootAccountId: string; inboxId: number; forwardUrl: string };
+
+export type FinalizeCode =
+  | RefusalCode
+  | "attempt_invalid"
+  | "attempt_superseded"
+  | "register_failed"
+  | "subscribe_failed"
+  | "coexistence_setup_failed"
+  | "persist_failed"
+  | "forbidden"
+  | "needs_review";
 export type StartResult = { ok: true; nonce: string; expiresAt: string } | { ok: false; code: "forbidden" | "persist_failed" };
 export type FinalizeResult =
-  | { ok: true; displayNumber: string | null; phoneNumberId: string; resumed: boolean }
+  | { ok: true; displayNumber: string | null; phoneNumberId: string; resumed: boolean; mode?: ConnectMode }
   | { ok: false; code: FinalizeCode; message: string };
 
 export interface ConnectStore {
@@ -45,13 +78,29 @@ export interface ConnectStore {
   setStatus(a: { orgId: string; phoneNumberId: string; status: ConnectionStatus; reason?: string }): Promise<void>;
   /** Adds the link row (source "connect") and marks the connection active. */
   activate(a: { orgId: string; wabaId: string; phoneNumberId: string; label: string | null; connectedAt: string }): Promise<void>;
+  /** Coexistence: adds the link row (source "connect", mode "coexistence"), stores the Chatwoot binding, marks connected_coexistence. */
+  activateCoexistence(a: { orgId: string; wabaId: string; phoneNumberId: string; label: string | null; connectedAt: string; binding: CoexBinding }): Promise<void>;
+  /** One-time sync outcomes recorded on the connection (absent key = never requested). */
+  getSyncs(a: { orgId: string; phoneNumberId: string }): Promise<Partial<Record<SyncType, SyncOutcome>>>;
+  recordSync(a: { orgId: string; phoneNumberId: string; syncType: SyncType; outcome: SyncOutcome }): Promise<void>;
 }
+
+/** The coexistence ports. Absent = coexistence unavailable for this workspace (verify refuses such a number, exactly as before). */
+export type CoexPorts = {
+  /** Find or create the Chatwoot WhatsApp inbox for the number; returns the binding the receiver forwards to. */
+  ensureInbox(a: { token: string; wabaId: string; phoneNumberId: string; displayNumber: string | null; label: string | null }): Promise<CoexBinding>;
+  /** Points the number's phone-level override at our receiver. */
+  setOverride(token: string, phoneNumberId: string): Promise<void>;
+  requestSync(token: string, phoneNumberId: string, syncType: SyncType): Promise<string | null>;
+};
 
 export type FinalizeDeps = {
   store: ConnectStore;
   graph: GraphClient;
   exchangeCode(code: string): Promise<string>;
   register(token: string, phoneNumberId: string, pin: string): Promise<void>;
+  /** POST /{waba}/subscribed_apps with the customer's token. */
+  subscribeApp(token: string, wabaId: string): Promise<void>;
   /** True when Meta explicitly rejected the call (so nothing was registered). Timeouts / 5xx / crashes are NOT definite. */
   isDefiniteFailure(e: unknown): boolean;
   encrypt(v: string): string;
@@ -59,6 +108,9 @@ export type FinalizeDeps = {
   epicWabaIds: ReadonlySet<string>;
   protectedPhoneIds: ReadonlySet<string>;
   now(): Date;
+  coex?: CoexPorts;
+  /** Audit record of a connect transition (no secrets, no message content). Must never throw into the journey. */
+  audit?(orgId: string, step: string, props: Record<string, unknown>): void;
 };
 
 export const hashNonce = (n: string) => createHash("sha256").update(n).digest("hex");
@@ -71,6 +123,9 @@ const MESSAGES: Record<FinalizeCode, string> = {
   waba_not_authorised: "You did not authorise that WhatsApp account.",
   phone_not_on_waba: "That number is not on the WhatsApp account you authorised.",
   coexistence_not_supported_here: "This number is also used in the WhatsApp Business app. Using the app and this connection on the same number (Coexistence) is not part of this connection.",
+  coexistence_not_confirmed: "Meta does not report this number as in use in the WhatsApp Business app, so it was not connected. Nothing was registered. Choose the new-number option instead.",
+  subscribe_failed: "Your number is registered with Meta, but EPIC could not subscribe to its WhatsApp account, so the connection was not finished. Connect again to finish; the number will not be registered a second time.",
+  coexistence_setup_failed: "The WhatsApp Business app connection could not be completed. Your app keeps working as before and nothing was registered. You can try again.",
   not_cloud_api: "This number is not on the WhatsApp Cloud API.",
   protected_asset: "That number is a protected EPIC line and cannot be connected here.",
   epic_owned_waba: "That WhatsApp account belongs to EPIC and cannot be connected here.",
@@ -110,8 +165,12 @@ export async function startConnect(
   return { ok: true, nonce, expiresAt: expiresAt.toISOString() };
 }
 
+const audit = (deps: FinalizeDeps, orgId: string, step: string, props: Record<string, unknown>) => {
+  try { deps.audit?.(orgId, step, props); } catch { /* audit must never break the journey */ }
+};
+
 export async function finalizeConnect(
-  p: { orgId: string; userId: string; nonce: unknown; code: unknown; wabaId: unknown; phoneNumberId: unknown },
+  p: { orgId: string; userId: string; nonce: unknown; code: unknown; wabaId: unknown; phoneNumberId: unknown; flow?: unknown },
   deps: FinalizeDeps,
 ): Promise<FinalizeResult> {
   if (typeof p.nonce !== "string" || typeof p.code !== "string" || !p.nonce || !p.code) return fail("bad_input");
@@ -129,18 +188,24 @@ export async function finalizeConnect(
   }
 
   // 3. Meta must agree with every claim the browser made.
+  const flow = p.flow === "coexistence" ? "coexistence" : "standard";
   const v = await verifyClaimedAssets(
-    { token, wabaId: p.wabaId, phoneNumberId: p.phoneNumberId, orgId: p.orgId },
+    { token, wabaId: p.wabaId, phoneNumberId: p.phoneNumberId, orgId: p.orgId, flow },
     {
       graph: deps.graph,
       ourAppId: deps.ourAppId,
       epicWabaIds: deps.epicWabaIds,
       protectedPhoneIds: deps.protectedPhoneIds,
       claimants: (id) => deps.store.claimants(id),
+      coexistenceAvailable: deps.coex !== undefined,
     },
   );
-  if (!v.ok) return fail(v.code);
+  if (!v.ok) {
+    audit(deps, p.orgId, "refused", { code: v.code, flow });
+    return fail(v.code);
+  }
 
+  if (v.mode === "coexistence") return completeCoexistence({ orgId: p.orgId, token, v, consent }, deps);
   return completeConnection({ orgId: p.orgId, token, v, consent }, deps);
 }
 
@@ -156,6 +221,8 @@ async function completeConnection(p: { orgId: string; token: string; v: Verified
 
   // Already finished: success, nothing repeated.
   if (existing?.status === "active") return { ok: true, displayNumber: v.displayNumber, phoneNumberId: v.phoneNumberId, resumed: true };
+  // A number recorded under the other mode (or disconnected by the customer) is never silently switched by this path.
+  if (existing && (existing.status === "coex_linking" || existing.status === "connected_coexistence" || existing.status === "disconnected")) return fail("needs_review");
 
   const resumed = existing !== null && existing.status !== "failed" && existing.status !== "pending";
   const registered = existing?.status === "registered";
@@ -207,6 +274,15 @@ async function completeConnection(p: { orgId: string; token: string; v: Verified
     } catch {
       return fail("persist_failed"); // registered at Meta, state not recorded: stays 'registering'; the Meta status check resolves it on retry
     }
+    audit(deps, orgId, "registered", { mode: "standard", phoneNumberId: v.phoneNumberId });
+  }
+
+  // Subscribe our app to the customer's WABA (idempotent at Meta). Failure: stays 'registered'; a retry subscribes and binds, never re-registers.
+  try {
+    await deps.subscribeApp(p.token, v.wabaId);
+  } catch {
+    audit(deps, orgId, "subscribe_failed", { mode: "standard", phoneNumberId: v.phoneNumberId });
+    return fail("subscribe_failed");
   }
 
   try {
@@ -220,5 +296,87 @@ async function completeConnection(p: { orgId: string; token: string; v: Verified
   } catch {
     return fail("persist_failed"); // stays 'registered': a retry finishes the binding without registering again
   }
+  audit(deps, orgId, "active", { mode: "standard", phoneNumberId: v.phoneNumberId, resumed });
   return { ok: true, displayNumber: v.displayNumber, phoneNumberId: v.phoneNumberId, resumed };
+}
+
+/** Requests each one-time sync that has never been requested for this connection, in Meta's documented order (contacts, then history). */
+async function requestSyncsOnce(orgId: string, token: string, phoneNumberId: string, deps: FinalizeDeps): Promise<void> {
+  const coex = deps.coex!;
+  let done: Partial<Record<SyncType, SyncOutcome>>;
+  try {
+    done = await deps.store.getSyncs({ orgId, phoneNumberId });
+  } catch {
+    return; // unknown state: request nothing (a sync is one-time at Meta); the page shows it as not requested yet
+  }
+  for (const syncType of ["smb_app_state_sync", "history"] as const) {
+    if (done[syncType]) continue; // requested, rejected or unknown before: never again, also not with a changed request
+    let outcome: SyncOutcome;
+    try {
+      const requestId = await coex.requestSync(token, phoneNumberId, syncType);
+      outcome = { status: "requested", at: deps.now().toISOString(), requestId };
+    } catch (e) {
+      outcome = { status: deps.isDefiniteFailure(e) ? "rejected" : "unknown", at: deps.now().toISOString() };
+    }
+    try {
+      await deps.store.recordSync({ orgId, phoneNumberId, syncType, outcome });
+    } catch {
+      audit(deps, orgId, "sync_record_failed", { phoneNumberId, syncType, status: outcome.status });
+      return; // stop: without a record the next one must not be sent either
+    }
+    audit(deps, orgId, "sync", { phoneNumberId, syncType, status: outcome.status });
+  }
+}
+
+async function completeCoexistence(p: { orgId: string; token: string; v: Verified; consent: Consent }, deps: FinalizeDeps): Promise<FinalizeResult> {
+  const { orgId, v, token } = p;
+  const coex = deps.coex;
+  if (!coex) return fail("coexistence_not_supported_here"); // defensive: verify already refuses this
+  const key = { orgId, phoneNumberId: v.phoneNumberId };
+  let existing: ConnectionRecord | null;
+  try {
+    existing = await deps.store.getConnection(key);
+  } catch {
+    return fail("persist_failed");
+  }
+  const done = { ok: true as const, displayNumber: v.displayNumber, phoneNumberId: v.phoneNumberId, mode: "coexistence" as const };
+
+  // Already connected: only the one-time syncs that were never requested are requested (nothing else repeated).
+  if (existing?.status === "connected_coexistence") {
+    await requestSyncsOnce(orgId, token, v.phoneNumberId, deps);
+    return { ...done, resumed: true };
+  }
+  // A number on the standard path (registering/registered/active) or disconnected by the customer is never switched by this path.
+  if (existing && !["pending", "failed", "coex_linking"].includes(existing.status)) return fail("needs_review");
+
+  try {
+    await deps.store.savePending({ orgId, wabaId: v.wabaId, phoneNumberId: v.phoneNumberId, tokenEnc: deps.encrypt(token), pinEnc: null, consent: p.consent, attemptId: randomBytes(12).toString("hex") });
+    await deps.store.setStatus({ ...key, status: "coex_linking" });
+  } catch {
+    return fail("persist_failed");
+  }
+  audit(deps, orgId, "coex_linking", { phoneNumberId: v.phoneNumberId });
+
+  // Idempotent steps. Any failure: 'failed' (nothing irreversible happened; the app keeps working), a fresh attempt repeats them.
+  let binding: CoexBinding;
+  try {
+    await deps.subscribeApp(token, v.wabaId);
+    binding = await coex.ensureInbox({ token, wabaId: v.wabaId, phoneNumberId: v.phoneNumberId, displayNumber: v.displayNumber, label: v.verifiedName });
+    await coex.setOverride(token, v.phoneNumberId);
+  } catch (e) {
+    const reason = e instanceof Error ? e.name : "error";
+    await deps.store.setStatus({ ...key, status: "failed", reason: `coex_setup_${reason}`.slice(0, 60) }).catch(() => undefined);
+    audit(deps, orgId, "coex_setup_failed", { phoneNumberId: v.phoneNumberId, reason });
+    return fail("coexistence_setup_failed");
+  }
+
+  try {
+    await deps.store.activateCoexistence({ orgId, wabaId: v.wabaId, phoneNumberId: v.phoneNumberId, label: v.verifiedName, connectedAt: deps.now().toISOString(), binding });
+  } catch {
+    return fail("persist_failed"); // stays coex_linking: a retry repeats the idempotent steps and binds
+  }
+  audit(deps, orgId, "connected_coexistence", { phoneNumberId: v.phoneNumberId, chatwootInboxId: binding.inboxId });
+
+  await requestSyncsOnce(orgId, token, v.phoneNumberId, deps);
+  return { ...done, resumed: existing !== null };
 }

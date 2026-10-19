@@ -2,6 +2,7 @@
 // Returns what the browser launcher needs (app id, login configuration id, nonce). Never returns a secret.
 import { connectJson, guardConnect } from "@/lib/phone-whatsapp/connect/route-guard";
 import { startConnect } from "@/lib/phone-whatsapp/connect/finalize";
+import { loadCoexConfig } from "@/lib/phone-whatsapp/connect/coexistence-config";
 import { makeFinalizeDeps } from "@/lib/phone-whatsapp/connect/server-wiring";
 
 export const dynamic = "force-dynamic";
@@ -25,5 +26,7 @@ export async function POST(req: Request) {
     appId: g.cfg.appId,
     configId: g.cfg.configId,
     testMode: g.cfg.testMode,
+    // Whether the WhatsApp Business app (Coexistence) option can complete here. The server still decides the mode from Meta's read.
+    coexistenceAvailable: loadCoexConfig(g.orgId, process.env, g.cfg.testMode) !== null,
   });
 }

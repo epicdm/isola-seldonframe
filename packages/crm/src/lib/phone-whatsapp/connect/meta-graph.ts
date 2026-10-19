@@ -79,5 +79,44 @@ export function makeGraphClient(opts: { base: string; appId: string; appSecret: 
     if (j.success !== true) throw new GraphError(502, "register");
   }
 
-  return { client, exchangeCode, register };
+  /**
+   * Subscribes our app to the customer's WABA (POST /{waba}/subscribed_apps, no body). Meta requires it before any webhook reaches us and
+   * before a callback override; it was missing from the standard path. Idempotent at Meta. The webhook FIELDS are the app-level subscription
+   * (app dashboard), not set here.
+   */
+  async function subscribeApp(token: string, wabaId: string): Promise<void> {
+    const res = await f(`${opts.base}/${encodeURIComponent(wabaId)}/subscribed_apps`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: sig(),
+    });
+    const j = await json("subscribe app", res);
+    if (j.success !== true) throw new GraphError(502, "subscribe app");
+  }
+
+  /** Phone-level webhook override (POST /{phone} webhook_configuration). Coexistence only: points the number's override-eligible fields at our receiver. */
+  async function setPhoneOverride(token: string, phoneNumberId: string, callbackUri: string, verifyToken: string): Promise<void> {
+    const res = await f(`${opts.base}/${encodeURIComponent(phoneNumberId)}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ webhook_configuration: { override_callback_uri: callbackUri, verify_token: verifyToken } }),
+      signal: sig(),
+    });
+    const j = await json("phone override", res);
+    if (j.success !== true) throw new GraphError(502, "phone override");
+  }
+
+  /** Coexistence one-time sync request (POST /{phone}/smb_app_data). Meta answers with a request id; the data arrives later as webhooks. */
+  async function requestSmbSync(token: string, phoneNumberId: string, syncType: "smb_app_state_sync" | "history"): Promise<string | null> {
+    const res = await f(`${opts.base}/${encodeURIComponent(phoneNumberId)}/smb_app_data`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ messaging_product: "whatsapp", sync_type: syncType }),
+      signal: sig(),
+    });
+    const j = await json(`smb sync ${syncType}`, res);
+    return typeof j.request_id === "string" ? j.request_id : null;
+  }
+
+  return { client, exchangeCode, register, subscribeApp, setPhoneOverride, requestSmbSync };
 }

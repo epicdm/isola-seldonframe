@@ -5,12 +5,17 @@
 // working: the text below says what is still to do. Nothing here ever shows a code, token or PIN.
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { embeddedSignupLoginOptions, hintsFromSessionMessage } from "@/lib/phone-whatsapp/connect/launch";
+import { embeddedSignupLoginOptions, hintsFromSessionMessage, type LaunchFlow } from "@/lib/phone-whatsapp/connect/launch";
 
 type Phase = "idle" | "starting" | "meta" | "finishing" | "done" | "error";
 type StartOk = { ok: true; nonce: string; appId: string; configId: string; testMode: boolean };
 type Hints = { wabaId?: string; phoneNumberId?: string };
-export type ConnectionState = { phoneNumberId: string; status: "pending" | "registering" | "registered" | "active" | "failed"; reason: string | null };
+export type ConnectionState = {
+  phoneNumberId: string;
+  status: "pending" | "registering" | "registered" | "active" | "failed" | "coex_linking" | "connected_coexistence" | "disconnected";
+  reason: string | null;
+  syncs?: Partial<Record<"smb_app_state_sync" | "history", "requested" | "rejected" | "unknown">>;
+};
 
 declare global {
   interface Window {
@@ -36,7 +41,15 @@ const PARTIAL_TEXT: Record<string, string> = {
   pending: "A connection was started for this number but registration had not begun. Connect again to continue.",
   registering: "Registration of this number was started but Meta did not confirm the outcome. Nothing has been repeated and nothing has been undone. EPIC will check this number before anything else happens.",
   registered: "This number is registered with Meta, but the connection to this workspace was not finished. Connect again to finish; the number will not be registered a second time.",
-  failed: "Meta did not accept the registration of this number, so nothing was registered. You can connect again.",
+  failed: "The last connection attempt for this number did not finish, so nothing was registered. You can connect again.",
+  coex_linking: "A WhatsApp Business app connection was started for this number but did not finish. Your app keeps working. Connect again to finish.",
+  disconnected: "This number was disconnected from EPIC in the WhatsApp Business app (or by Meta). Nothing is received or sent through EPIC for it now. EPIC will check before anything else happens.",
+};
+
+const SYNC_TEXT: Record<string, string> = {
+  requested: "requested from Meta (it arrives over the next hours)",
+  rejected: "refused by Meta (Meta allows it only once, within 24 hours of connecting)",
+  unknown: "requested, but Meta did not confirm (it is not repeated automatically; EPIC will check)",
 };
 
 async function post(url: string, body: unknown) {
@@ -45,7 +58,7 @@ async function post(url: string, body: unknown) {
   return { status: res.status, body: j };
 }
 
-export function ConnectPanel({ states = [] }: { states?: ConnectionState[] }) {
+export function ConnectPanel({ states = [], coexistenceAvailable = false }: { states?: ConnectionState[]; coexistenceAvailable?: boolean }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [consent, setConsent] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -54,12 +67,17 @@ export function ConnectPanel({ states = [] }: { states?: ConnectionState[] }) {
   const hints = useRef<Hints>({});
   const nonce = useRef<string>("");
   const code = useRef<string>("");
-  const partial = states.filter((s) => s.status !== "active");
+  // Owner decision 2026-10-19: keeping the WhatsApp Business app (Coexistence) is the first option when it is available here.
+  const [flow, setFlow] = useState<LaunchFlow>(coexistenceAvailable ? "coexistence" : "standard");
+  const flowRef = useRef<LaunchFlow>(flow);
+  flowRef.current = flow;
+  const partial = states.filter((s) => s.status !== "active" && s.status !== "connected_coexistence");
+  const coexConnected = states.filter((s) => s.status === "connected_coexistence");
 
   // Collect Meta's session-info message (hints only). The origin check is Meta's documented requirement.
   useEffect(() => {
     function onMessage(ev: MessageEvent) {
-      const h = hintsFromSessionMessage(ev.origin, ev.data);
+      const h = hintsFromSessionMessage(ev.origin, ev.data, flowRef.current);
       if (h) { hints.current = h; void maybeFinish(); }
     }
     window.addEventListener("message", onMessage);
@@ -68,9 +86,10 @@ export function ConnectPanel({ states = [] }: { states?: ConnectionState[] }) {
   }, []);
 
   const maybeFinish = useCallback(async () => {
-    if (!code.current || !hints.current.wabaId || !hints.current.phoneNumberId) return;
+    // The Business-app completion may omit the phone id (the server resolves it from Meta); the standard flow always needs it.
+    if (!code.current || !hints.current.wabaId || (!hints.current.phoneNumberId && flowRef.current !== "coexistence")) return;
     setPhase("finishing");
-    const r = await post("/api/phone-whatsapp/connect/finalize", { nonce: nonce.current, code: code.current, ...hints.current });
+    const r = await post("/api/phone-whatsapp/connect/finalize", { nonce: nonce.current, code: code.current, flow: flowRef.current, ...hints.current });
     code.current = ""; // the one-time code is dropped as soon as it has been sent
     if (r.body.ok === true) {
       setPhase("done");
@@ -115,7 +134,7 @@ export function ConnectPanel({ states = [] }: { states?: ConnectionState[] }) {
         code.current = c;
         void maybeFinish();
       },
-      embeddedSignupLoginOptions(start.configId),
+      embeddedSignupLoginOptions(start.configId, flowRef.current),
     );
   }
 
@@ -131,10 +150,45 @@ export function ConnectPanel({ states = [] }: { states?: ConnectionState[] }) {
     <section aria-labelledby="connect-h" className="rounded-xl border bg-card p-5" data-testid="connect-panel">
       <h2 id="connect-h" className="text-base font-semibold">Connect your WhatsApp number</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        A workspace owner or admin signs in to Meta here and chooses one WhatsApp Business number on the standard WhatsApp Cloud API. The number is checked with Meta
-        before it is attached to this workspace. This connects the number to your workspace only: <strong>it does not turn on calling, messaging or AI replies.</strong>{" "}
-        Using the WhatsApp Business app and this connection on the same number (Coexistence) is not part of this step.
+        A workspace owner or admin signs in to Meta here and chooses one WhatsApp Business number. The number is checked with Meta before it is attached to this
+        workspace. Connecting does not turn on AI replies.
       </p>
+
+      {coexConnected.length > 0 ? (
+        <ul className="mt-3 space-y-2" data-testid="connect-coexistence">
+          {coexConnected.map((s) => (
+            <li key={s.phoneNumberId} className="rounded-md border p-3 text-sm">
+              <span className="font-medium">Number {s.phoneNumberId}: connected, WhatsApp Business app kept.</span> Messages arrive in your EPIC inbox and your app keeps
+              working. WhatsApp calls to this number still ring only in the app: calling through EPIC needs the API-only setup.
+              <span className="block text-muted-foreground">
+                Contacts from the app: {SYNC_TEXT[s.syncs?.smb_app_state_sync ?? ""] ?? "not requested yet"}. Chat history from the app:{" "}
+                {SYNC_TEXT[s.syncs?.history ?? ""] ?? "not requested yet"}.
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <fieldset className="mt-3 space-y-2 text-sm" data-testid="connect-flow">
+        <legend className="font-medium">How is this number used today?</legend>
+        {coexistenceAvailable ? (
+          <label className="flex items-start gap-2">
+            <input type="radio" name="flow" checked={flow === "coexistence"} onChange={() => setFlow("coexistence")} disabled={busy || phase === "meta"} />
+            <span>
+              <strong>I use the WhatsApp Business app on this number and want to keep it.</strong> Your app keeps working and your chats stay on your phone. Limits while
+              you keep the app: WhatsApp calls are not available through EPIC; sending is limited to 20 messages per second; group chats are not synced; the contacts
+              and up to 6 months of chat history can be copied in once, only within 24 hours of connecting.
+            </span>
+          </label>
+        ) : null}
+        <label className="flex items-start gap-2">
+          <input type="radio" name="flow" checked={flow === "standard"} onChange={() => setFlow("standard")} disabled={busy || phase === "meta"} />
+          <span>
+            <strong>A new number, or one not in the WhatsApp Business app (API only).</strong> The number is registered on the WhatsApp Cloud API and then works only through
+            EPIC, not in a WhatsApp app on a phone.
+          </span>
+        </label>
+      </fieldset>
 
       {partial.length > 0 ? (
         <ul className="mt-3 space-y-2" data-testid="connect-partial">
@@ -149,8 +203,12 @@ export function ConnectPanel({ states = [] }: { states?: ConnectionState[] }) {
       <div className="mt-3 rounded-md border p-3 text-sm" data-testid="connect-consent-text">
         <p className="font-medium">Before you connect, please confirm:</p>
         <ul className="mt-1 list-disc space-y-1 pl-5 text-muted-foreground">
-          <li>Connecting <strong>registers this number</strong> with WhatsApp&apos;s Cloud API under EPIC&apos;s Meta application, using a PIN EPIC generates and keeps encrypted.</li>
-          <li>If the number is in use in the WhatsApp Business app, or with another provider, it can stop working there. Do not connect a number you still need elsewhere. Numbers in the Business app are refused.</li>
+          {flow === "coexistence" ? (
+            <li>Keeping the app: the number is <strong>not registered again</strong>. Meta shares it with EPIC&apos;s application; you can disconnect it later in the app (Settings, Account, Business Platform).</li>
+          ) : (
+            <li>Connecting <strong>registers this number</strong> with WhatsApp&apos;s Cloud API under EPIC&apos;s Meta application, using a PIN EPIC generates and keeps encrypted.</li>
+          )}
+          <li>If the number is in use with another provider, it can stop working there. Do not connect a number you still need elsewhere. A number in the WhatsApp Business app is never registered by this step.</li>
           <li>EPIC keeps an encrypted Meta authorisation for this number so it can configure calling later. Nothing is sent to your customers by connecting.</li>
           <li>Still to do after connecting: EPIC sets where calls are delivered, Meta calling is checked for the number, and an acceptance call is made. Until then calling does not work.</li>
           <li>Disconnecting is not available here yet; EPIC staff can help.</li>

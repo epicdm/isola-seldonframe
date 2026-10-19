@@ -8,6 +8,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { getCurrentWorkspaceRole, getOrgId } from "@/lib/auth/helpers";
 import { isConnectEnabled } from "@/lib/phone-whatsapp/connect/config";
+import { loadCoexConfig } from "@/lib/phone-whatsapp/connect/coexistence-config";
 import { isPhoneWhatsappEnabled } from "@/lib/phone-whatsapp/exposure";
 import { loadPhoneWhatsappView } from "@/lib/phone-whatsapp/service";
 import { getServiceDeps, getStaffSetupWhatsapp } from "@/lib/phone-whatsapp/server";
@@ -31,7 +32,12 @@ export default async function PhoneWhatsappPage() {
   const canConnect = isConnectEnabled(orgId, process.env) && (role === "owner" || role === "admin");
   return (
     <>
-      {canConnect ? <ConnectPanel states={await listConnectionStates(orgId)} /> : null}
+      {canConnect ? (
+        <ConnectPanel
+          states={await listConnectionStates(orgId)}
+          coexistenceAvailable={loadCoexConfig(orgId, process.env, (process.env.PHONE_CONNECT_TEST_MODE ?? "").trim() === "1") !== null}
+        />
+      ) : null}
       {/* The calling-service panel is a third, narrower exposure (PHONE_SERVICE_ENABLED_ORGS). It only lists numbers already shown as this workspace's own lines. */}
       {isServiceEnabled(orgId) && view.kind === "lines" ? <ServicePanel phoneNumberIds={view.lines.map((l) => l.phoneNumberId)} canWrite={role === "owner" || role === "admin"} /> : null}
       <PhoneWhatsappView view={view} waNumber={getStaffSetupWhatsapp()} canConnect={canConnect} />

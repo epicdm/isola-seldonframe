@@ -54,6 +54,7 @@ describe("Phone connect: database-backed journey", { skip: !enabled && "set PHON
       },
       async exchangeCode() { return FAKE_TOKEN; },
       async register(_t, phone) { registered.push(phone); },
+      async subscribeApp() {}, // 2026-10-19: the WABA subscribe step (Meta faked here like register)
       isDefiniteFailure: () => false,
       encrypt: (await import("@/lib/encryption")).encryptValue,
       ourAppId: "APP1",
@@ -169,6 +170,7 @@ describe("Phone connect: partial completion and retention against the real store
       },
       async exchangeCode() { return FAKE_TOKEN; },
       async register(_t, phone) { registered.push(phone); },
+      async subscribeApp() {}, // 2026-10-19: the WABA subscribe step (Meta faked here like register)
       isDefiniteFailure: () => false,
       encrypt: (await import("@/lib/encryption")).encryptValue,
       ourAppId: "APP1",

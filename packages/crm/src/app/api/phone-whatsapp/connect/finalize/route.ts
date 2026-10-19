@@ -9,7 +9,8 @@ export const dynamic = "force-dynamic";
 const STATUS: Record<string, number> = {
   bad_input: 400, attempt_invalid: 409, attempt_superseded: 409, already_bound: 409, platform_unverified: 422,
   token_invalid: 422, wrong_app: 422, missing_scope: 422, waba_not_authorised: 422, phone_not_on_waba: 422,
-  coexistence_not_supported_here: 422, not_cloud_api: 422, protected_asset: 422, epic_owned_waba: 422,
+  coexistence_not_supported_here: 422, coexistence_not_confirmed: 422, not_cloud_api: 422, protected_asset: 422, epic_owned_waba: 422,
+  subscribe_failed: 502, coexistence_setup_failed: 502,
   meta_unavailable: 502, register_failed: 502, persist_failed: 500, forbidden: 403, needs_review: 409,
 };
 
@@ -20,8 +21,8 @@ export async function POST(req: Request) {
   let r;
   try {
     r = await finalizeConnect(
-      { orgId: g.orgId, userId: g.userId, nonce: body?.nonce, code: body?.code, wabaId: body?.wabaId, phoneNumberId: body?.phoneNumberId },
-      makeFinalizeDeps(g.cfg),
+      { orgId: g.orgId, userId: g.userId, nonce: body?.nonce, code: body?.code, wabaId: body?.wabaId, phoneNumberId: body?.phoneNumberId, flow: body?.flow },
+      makeFinalizeDeps(g.cfg, g.orgId),
     );
   } catch (e) {
     // Log the failure CLASS only: database errors carry the failed statement and its parameters, which can include the one-time code's derivatives.
@@ -29,5 +30,5 @@ export async function POST(req: Request) {
     return connectJson(500, { ok: false, code: "persist_failed", message: "The connection could not be completed. Nothing was reported as connected; try again." });
   }
   if (!r.ok) return connectJson(STATUS[r.code] ?? 500, { ok: false, code: r.code, message: r.message });
-  return connectJson(200, { ok: true, phoneNumberId: r.phoneNumberId, displayNumber: r.displayNumber, resumed: r.resumed });
+  return connectJson(200, { ok: true, phoneNumberId: r.phoneNumberId, displayNumber: r.displayNumber, resumed: r.resumed, mode: r.mode ?? "standard" });
 }

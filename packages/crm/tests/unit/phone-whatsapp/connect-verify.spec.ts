@@ -113,3 +113,53 @@ test("accepts NOT_APPLICABLE (on the WABA, not yet registered: this check runs b
     assert.equal(r.ok, true, platformType);
   }
 });
+
+describe("coexistence (2026-10-19)", () => {
+  const biz: WabaPhone = { ...goodPhone, isOnBizApp: true };
+  const withCoex = (o: Parameters<typeof deps>[0] = {}) => ({ ...deps(o), coexistenceAvailable: true });
+
+  test("accepted as mode coexistence when configured; derived from Meta (is_on_biz_app or platform_type), twin: standard number stays standard", async () => {
+    const r1 = await verifyClaimedAssets(input(), withCoex({ phones: [biz] }));
+    assert.deepEqual(r1.ok && r1.mode, "coexistence");
+    const r2 = await verifyClaimedAssets(input(), withCoex({ phones: [{ ...goodPhone, platformType: "NOT_APPLICABLE_BUSINESS_APP", isOnBizApp: null }] }));
+    assert.deepEqual(r2.ok && r2.mode, "coexistence");
+    const r3 = await verifyClaimedAssets(input(), withCoex());
+    assert.deepEqual(r3.ok && r3.mode, "standard");
+  });
+
+  test("not configured: refused exactly as before (twin: configured accepts the same fixture)", async () => {
+    const r = await verifyClaimedAssets(input(), deps({ phones: [biz] }));
+    assert.equal(!r.ok && r.code, "coexistence_not_supported_here");
+    assert.equal((await verifyClaimedAssets(input(), withCoex({ phones: [biz] }))).ok, true);
+  });
+
+  test("the browser's flow claim never decides: coexistence flow on a Cloud API number is refused (twin: on the app it is accepted)", async () => {
+    const r = await verifyClaimedAssets({ ...input(), flow: "coexistence" }, withCoex());
+    assert.equal(!r.ok && r.code, "coexistence_not_confirmed");
+    assert.equal((await verifyClaimedAssets({ ...input(), flow: "coexistence" }, withCoex({ phones: [biz] }))).ok, true);
+  });
+
+  test("every deny-list and authorisation check still applies to a coexistence number", async () => {
+    const cases: Array<[Parameters<typeof deps>[0], Parameters<typeof input>[0], string]> = [
+      [{ phones: [biz] }, { wabaId: "900000000000777" }, "epic_owned_waba"],
+      [{ phones: [{ ...biz, id: "900000000000888" }] }, { phoneNumberId: "900000000000888" }, "protected_asset"],
+      [{ phones: [biz], token: { appId: "OTHER" } }, {}, "wrong_app"],
+      [{ phones: [biz], token: { wabaTargets: [] } }, {}, "waba_not_authorised"],
+      [{ phones: [biz], owners: [OTHER] }, {}, "already_bound"],
+      [{ phones: [{ ...biz, id: "900000000000099" }] }, {}, "phone_not_on_waba"],
+    ];
+    for (const [d, i, want] of cases) {
+      const r = await verifyClaimedAssets(input(i), withCoex(d));
+      assert.equal(!r.ok && r.code, want, want);
+    }
+  });
+
+  test("empty phone id is only resolved in the coexistence flow, and only for exactly one app number", async () => {
+    const one = await verifyClaimedAssets({ ...input({ phoneNumberId: "" }), flow: "coexistence" }, withCoex({ phones: [biz, { ...goodPhone, id: "900000000000003" }] }));
+    assert.equal(one.ok && one.phoneNumberId, PHONE);
+    const two = await verifyClaimedAssets({ ...input({ phoneNumberId: "" }), flow: "coexistence" }, withCoex({ phones: [biz, { ...biz, id: "900000000000004" }] }));
+    assert.equal(!two.ok && two.code, "phone_not_on_waba");
+    const std = await verifyClaimedAssets(input({ phoneNumberId: "" }), withCoex({ phones: [biz] }));
+    assert.equal(!std.ok && std.code, "bad_input");
+  });
+});

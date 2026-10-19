@@ -8,6 +8,7 @@
 import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
+import { HOLDING_STATUSES } from "../connect/holding-statuses";
 import type { AgentDirectory, DestinationOption } from "./destinations";
 import type { AttachLedger, AttachLedgerRecord } from "./attach";
 import type { Attestation, MetaCallEvent } from "./acceptance";
@@ -89,12 +90,15 @@ async function append(workspaceId: string, key: string, phone: string, item: unk
 export const appendCallEvent = (w: string, phone: string, ev: MetaCallEvent) => append(w, "callEvents", phone, ev, 20, ev.callId);
 export const appendAcceptance = (w: string, phone: string, a: unknown) => append(w, "acceptance", phone, a, 50);
 
+// Same list as connect/server-wiring.ts claimants() (Law 21), from the one shared constant.
+const holding = sql.raw(HOLDING_STATUSES.map((s) => `'${s}'`).join(","));
+
 /** Who holds this number (linked line or unfinished connection): used to derive the workspace for service-to-service events. */
 export async function claimantsOf(phone: string): Promise<string[]> {
   return rowsOf(await db.execute(sql`
     select id from organizations
     where settings -> 'phoneWhatsapp' -> 'lines' @> ${JSON.stringify([{ phoneNumberId: phone }])}::jsonb
-       or settings #>> ARRAY['phoneWhatsapp','connections',${phone},'status'] in ('pending','registering','registered','active') limit 5`)).map((r) => String(r.id));
+       or settings #>> ARRAY['phoneWhatsapp','connections',${phone},'status'] in (${holding}) limit 5`)).map((r) => String(r.id));
 }
 
 export async function connectionStatusOf(workspaceId: string, phone: string): Promise<"pending" | "registering" | "registered" | "active" | "failed" | null> {
