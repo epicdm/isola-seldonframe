@@ -136,10 +136,37 @@ export function restSource(cfg, fetchImpl = fetch) {
   };
 }
 
-export async function readMagnusFrom(source, did) {
-  if (!isId(did)) return { ok: false, error: "no display number to look up (Meta read failed)" };
+// A WhatsApp number that is not itself a Magnus DID (e.g. a mobile) is routed on the voice platform through a DID row
+// keyed "wa<number>", because Magnus treats any dialed number equal to a DID row as a call to that DID. Only that exact
+// form is accepted, so an alias can never point one number at another number's records.
+export const ingressKeyOk = (did, key) => key === did || key === `wa${did}`;
+
+// Read port for the verify-only provisioner: the DID row and its destinations for one number, through the same read-only source and the
+// same exact ingress alias. accountRef is null when the source cannot see the owner (the SELECT-only account has no id_user grant).
+export async function readVoiceDidFrom(source, number, key = number) {
+  if (!isId(number)) return { ok: false, error: "bad number" };
+  if (!ingressKeyOk(number, key)) return { ok: false, error: "voice-platform key does not belong to this number" };
   try {
-    const didRows = await source.did(did);
+    const rows = await source.did(key);
+    if (rows.length > 1) return { ok: false, error: `ambiguous: ${rows.length} DID rows match` };
+    const row = rows[0] ?? null;
+    if (!row) return { ok: true, number, ...(key !== number ? { ingressKey: key } : {}), did: null, destinations: [] };
+    const dest = await source.destinations(row.id);
+    return {
+      ok: true, number, ...(key !== number ? { ingressKey: key } : {}),
+      did: { ref: String(row.id), accountRef: row.id_user != null ? String(row.id_user) : null, activated: String(row.activated) === "1", reserved: String(row.reserved) === "1" },
+      destinations: dest.map((d, i) => ({ ref: `${row.id}.${i + 1}`, destination: String(d.destination ?? "").slice(0, 120), activated: String(d.activated) === "1" })),
+    };
+  } catch (e) {
+    return { ok: false, error: errText(e) };
+  }
+}
+
+export async function readMagnusFrom(source, did, key = did) {
+  if (!isId(did)) return { ok: false, error: "no display number to look up (Meta read failed)" };
+  if (!ingressKeyOk(did, key)) return { ok: false, error: "voice-platform key does not belong to this number" };
+  try {
+    const didRows = await source.did(key);
     if (didRows.length > 1) throw new Error(`ambiguous: ${didRows.length} DID rows match`);
     const row = didRows[0] ?? null;
     let destination = null;
@@ -153,9 +180,10 @@ export async function readMagnusFrom(source, did) {
         count: destRows.length,
       } : null;
     }
-    const callRows = await source.calls(did);
+    const callRows = await source.calls(key);
     return {
       ok: true,
+      ...(key !== did ? { ingressKey: key } : {}),
       did: row ? { activated: String(row.activated) === "1", reserved: String(row.reserved) === "1" } : null,
       destination,
       lastCalls: callRows.map((c) => ({
@@ -177,6 +205,7 @@ export async function collectLineEvidence(cfg, { wabaId, phoneNumberId }, fetchI
   if (!isId(wabaId) || !isId(phoneNumberId)) throw Object.assign(new Error("invalid ids"), { code: "bad_request" });
   const { meta, calling } = await readMeta(cfg, wabaId, phoneNumberId, fetchImpl);
   const did = meta?.ok ? String(meta.displayNumber ?? "").replace(/\D/g, "") : "";
-  const magnus = cfg.magnusSource ? await readMagnusFrom(cfg.magnusSource, did) : await readMagnus(cfg, did, fetchImpl);
+  const key = cfg.magnusDidAliases?.[did] ?? did;
+  const magnus = cfg.magnusSource ? await readMagnusFrom(cfg.magnusSource, did, key) : await readMagnusFrom(restSource(cfg, fetchImpl), did, key);
   return { schema: SCHEMA, wabaId, phoneNumberId, observedAt: now().toISOString(), meta, calling, magnus };
 }

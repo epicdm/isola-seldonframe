@@ -12,7 +12,9 @@ import { isPhoneWhatsappEnabled } from "@/lib/phone-whatsapp/exposure";
 import { loadPhoneWhatsappView } from "@/lib/phone-whatsapp/service";
 import { getServiceDeps, getStaffSetupWhatsapp } from "@/lib/phone-whatsapp/server";
 import { listConnectionStates } from "@/lib/phone-whatsapp/connect/server-wiring";
+import { isServiceEnabled } from "@/lib/phone-whatsapp/service/server-wiring";
 import { ConnectPanel } from "./connect-panel";
+import { ServicePanel } from "./service-panel";
 import { PhoneWhatsappView } from "./view";
 
 export const dynamic = "force-dynamic";
@@ -25,11 +27,13 @@ export default async function PhoneWhatsappPage() {
 
   const view = await loadPhoneWhatsappView(orgId, getServiceDeps());
   // Connecting a number is a separate, narrower exposure (PHONE_CONNECT_ENABLED_ORGS) and an owner/admin action. The API re-checks all of it.
-  const role = isConnectEnabled(orgId, process.env) ? await getCurrentWorkspaceRole() : null;
-  const canConnect = role === "owner" || role === "admin";
+  const role = isConnectEnabled(orgId, process.env) || isServiceEnabled(orgId) ? await getCurrentWorkspaceRole() : null;
+  const canConnect = isConnectEnabled(orgId, process.env) && (role === "owner" || role === "admin");
   return (
     <>
       {canConnect ? <ConnectPanel states={await listConnectionStates(orgId)} /> : null}
+      {/* The calling-service panel is a third, narrower exposure (PHONE_SERVICE_ENABLED_ORGS). It only lists numbers already shown as this workspace's own lines. */}
+      {isServiceEnabled(orgId) && view.kind === "lines" ? <ServicePanel phoneNumberIds={view.lines.map((l) => l.phoneNumberId)} canWrite={role === "owner" || role === "admin"} /> : null}
       <PhoneWhatsappView view={view} waNumber={getStaffSetupWhatsapp()} canConnect={canConnect} />
     </>
   );

@@ -115,6 +115,30 @@ test("Magnus failure is reported, Meta facts survive; no DID row = did:null (not
   assert.equal(none.ok, true); assert.equal(none.did, null); assert.equal(none.destination, null);
 });
 
+test("ingress alias: the Magnus DID and call lookups use wa<number>; the Meta identity stays the number (unaliased twin unchanged)", async () => {
+  const aliased = world();
+  const ev = await collectLineEvidence({ ...cfg, magnusDidAliases: { [DID]: `wa${DID}` } }, { wabaId: WABA, phoneNumberId: PNID }, aliased.f);
+  const looked = aliased.calls.filter((c) => /\/(did|call)\/read$/.test(c.url)).map((c) => decodeURIComponent(c.body));
+  assert.ok(looked.length >= 2 && looked.every((b) => b.includes(`"value":"wa${DID}"`)), "both DID and CDR lookups used the alias");
+  assert.equal(ev.magnus.ingressKey, `wa${DID}`); assert.equal(ev.meta.displayNumber, "+1 555-010-0001");
+  const plain = world();
+  const ev2 = await collectLineEvidence(cfg, { wabaId: WABA, phoneNumberId: PNID }, plain.f);
+  const looked2 = plain.calls.filter((c) => /\/(did|call)\/read$/.test(c.url)).map((c) => decodeURIComponent(c.body));
+  assert.ok(looked2.length >= 2 && looked2.every((b) => b.includes(`"value":"${DID}"`)), "control: no alias = the number itself");
+  assert.equal(ev2.magnus.ingressKey, undefined);
+});
+
+test("ingress alias can never point a number at ANOTHER number's records", async () => {
+  const w = world();
+  const ev = await collectLineEvidence({ ...cfg, magnusDidAliases: { [DID]: "wa15550109999" } }, { wabaId: WABA, phoneNumberId: PNID }, w.f);
+  assert.equal(ev.magnus.ok, false); assert.match(ev.magnus.error, /does not belong to this number/);
+  assert.equal(w.calls.filter((c) => c.url.startsWith(cfg.magnusUrl)).length, 0, "nothing read under a foreign key");
+  assert.throws(() => configFromEnv({ ...env, MAGNUS_DID_ALIASES_JSON: JSON.stringify({ [DID]: "wa15550109999" }) }), /the same digits/);
+  assert.throws(() => configFromEnv({ ...env, MAGNUS_DID_ALIASES_JSON: JSON.stringify({ [DID]: "15550109999" }) }), /the same digits/);
+  assert.throws(() => configFromEnv({ ...env, MAGNUS_DID_ALIASES_JSON: "{not json" }), /not JSON/);
+  assert.deepEqual(configFromEnv({ ...env, MAGNUS_DID_ALIASES_JSON: JSON.stringify({ [DID]: `wa${DID}` }) }).magnusDidAliases, { [DID]: `wa${DID}` }); // positive twin
+});
+
 test("invalid ids are rejected before any upstream call", async () => {
   const w = world();
   await assert.rejects(collectLineEvidence(cfg, { wabaId: "x; drop", phoneNumberId: PNID }, w.f), /invalid ids/);
@@ -153,4 +177,31 @@ test("server: auth, method, validation, healthz (positive twin), cache and rate 
   assert.equal(w.calls.length, n, "second identical request served from cache");
   assert.equal((await call(h, { url: `/v1/lines/222333444555666?waba=${WABA}`, headers: auth })).code, 200);
   assert.equal((await call(h, { url: `/v1/lines/333444555666777?waba=${WABA}`, headers: auth })).code, 429);
+});
+
+// Read port route (verify-only provisioner): same source, same exact alias, no Meta call.
+import { readVoiceDidFrom } from "./evidence.mjs";
+const voiceSrc = (rows, dests) => { const seen = []; return { seen, did: async (k) => (seen.push(k), rows), destinations: async () => dests, calls: async () => [] }; };
+test("read port: the aliased key is used, destinations mapped, owner null when the source cannot see it (twin: unaliased reads the plain key)", async () => {
+  const s = voiceSrc([{ id: 900, did: "wa15550100001", activated: 1, reserved: 1 }], [{ id_did: 900, destination: "PJSIP/15550100001@trunk-x", activated: 1 }]);
+  const r = await readVoiceDidFrom(s, DID, `wa${DID}`);
+  assert.deepEqual(s.seen, [`wa${DID}`]);
+  assert.deepEqual(r, { ok: true, number: DID, ingressKey: `wa${DID}`, did: { ref: "900", accountRef: null, activated: true, reserved: true }, destinations: [{ ref: "900.1", destination: "PJSIP/15550100001@trunk-x", activated: true }] });
+  const p = voiceSrc([], []); assert.deepEqual(await readVoiceDidFrom(p, DID), { ok: true, number: DID, did: null, destinations: [] }); assert.deepEqual(p.seen, [DID]);
+});
+test("read port: a foreign key is refused with nothing read; two matching rows are ambiguous, never the first", async () => {
+  const s = voiceSrc([], []);
+  assert.equal((await readVoiceDidFrom(s, DID, "wa15550100002")).ok, false); assert.deepEqual(s.seen, []);
+  const two = voiceSrc([{ id: 1, activated: 1 }, { id: 2, activated: 1 }], []);
+  assert.match((await readVoiceDidFrom(two, DID)).error, /ambiguous/);
+});
+test("read port route: bearer required, bad number 400, alias applied, uncached (twin: authorised read 200)", async () => {
+  const s = voiceSrc([{ id: 900, activated: 1, reserved: 1 }], []);
+  const h = makeHandler({ ...cfg, adapterToken: "t".repeat(32), cacheSeconds: 60, rpm: 30, magnusSource: s, magnusDidAliases: { [DID]: `wa${DID}` } });
+  const call = async (url, auth) => { let code, body; const res = { writeHead: (c) => (code = c), end: (b) => (body = JSON.parse(b)) }; await h({ method: "GET", url, headers: auth ? { authorization: `Bearer ${auth}` } : {} }, res); return { code, body }; };
+  assert.equal((await call(`/v1/voice/did/${DID}`)).code, 401);
+  assert.equal((await call("/v1/voice/did/12ab", "t".repeat(32))).code, 400);
+  assert.equal((await call("/v1/voice/did/%E0%A4%A", "t".repeat(32))).code, 400); // Codex review: malformed escape is a bad request, not a 502
+  const ok = await call(`/v1/voice/did/${DID}`, "t".repeat(32)); await call(`/v1/voice/did/${DID}`, "t".repeat(32));
+  assert.equal(ok.code, 200); assert.equal(ok.body.did.ref, "900"); assert.deepEqual(s.seen, [`wa${DID}`, `wa${DID}`]);
 });
