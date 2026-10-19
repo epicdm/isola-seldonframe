@@ -115,9 +115,20 @@ describe("<PhoneWhatsappView>", () => {
     assert.match(html, /Change call destination \(staff only\)/);
   });
 
-  test("the journey strip names all five steps and marks the staff-assisted ones", () => {
+  test("the journey strip names all five steps; connecting is self-service, call setup and acceptance are staff-assisted", () => {
     const html = render({ kind: "no_link" });
-    for (const t of ["Connect WhatsApp account", "Select number", "Configure destination", "Verify routing", "Acceptance call"]) assert.match(html, new RegExp(t));
-    assert.match(html, /Staff-assisted today/);
+    for (const t of ["Connect WhatsApp number", "Select number", "Configure destination", "Verify routing", "Acceptance call"]) assert.match(html, new RegExp(t));
+    assert.match(html, /Self-service for a workspace owner or admin/);
+    assert.match(html, /Staff-assisted today/); // configure destination + acceptance stay staff-assisted
+    assert.doesNotMatch(html, /Meta sign-in happens with EPIC staff/);
+  });
+
+  test("no linked number, connecting available: points at the Connect panel and no longer says linking is staff-only", () => {
+    const html = renderToString(<PhoneWhatsappView view={{ kind: "no_link" }} waNumber={null} canConnect />);
+    assert.match(html, /Connect your WhatsApp number/);
+    assert.doesNotMatch(html, /Linking a number is a staff-assisted step/);
+    const without = renderToString(<PhoneWhatsappView view={{ kind: "no_link" }} waNumber={null} canConnect={false} />);
+    assert.match(without, /owner or admin can connect a number/); // control: the non-admin text differs
+    assert.doesNotMatch(without, /Use .Connect your WhatsApp number. above/);
   });
 });
