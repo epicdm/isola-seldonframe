@@ -163,8 +163,12 @@ export function consumeRelayNonce(nonce: string, nowMs: number = Date.now()): bo
     seenRelayNonces.delete(seen);
   }
   if (seenRelayNonces.has(nonce)) return false;
-  // More live proofs than any real relay could send in the window: refuse rather than forget (fail closed).
-  if (seenRelayNonces.size >= RELAY_NONCE_MAX) return false;
+  if (seenRelayNonces.size >= RELAY_NONCE_MAX) {
+    // The cheap prune above assumes expiry follows insertion order, which a clock step can break: sweep everything first.
+    for (const [seen, expiresAt] of seenRelayNonces) if (expiresAt <= nowMs) seenRelayNonces.delete(seen);
+    // Still more live proofs than any real relay could send in the window: refuse rather than forget (fail closed).
+    if (seenRelayNonces.size >= RELAY_NONCE_MAX) return false;
+  }
   seenRelayNonces.set(nonce, nowMs + RELAY_NONCE_TTL_MS);
   return true;
 }

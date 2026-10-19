@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -126,4 +126,25 @@ test("protected context-key file is read without exposing its value; missing/sho
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+describe("consumeRelayNonce (single-use relay proofs in the public turn route)", () => {
+  test("a nonce is accepted once, refused while live, and accepted again only after it expires", async () => {
+    const { consumeRelayNonce } = await import("../../../src/lib/agents/mcp/relay-context");
+    const t = 1_000_000_000_000;
+    assert.equal(consumeRelayNonce("nonce-once-aaaaaaaaaaaa", t), true);
+    assert.equal(consumeRelayNonce("nonce-once-aaaaaaaaaaaa", t + 1_000), false);
+    assert.equal(consumeRelayNonce("nonce-once-bbbbbbbbbbbb", t + 1_000), true, "control: a different nonce is accepted");
+    assert.equal(consumeRelayNonce("nonce-once-aaaaaaaaaaaa", t + 126_000), true);
+  });
+  test("at the cap, expired entries are swept even when a clock step left them out of order; live entries still fail closed", async () => {
+    const { consumeRelayNonce } = await import("../../../src/lib/agents/mcp/relay-context");
+    const t = 2_000_000_000_000;
+    // one entry stamped far in the future (clock stepped back afterwards), then 9 999 at the current time
+    assert.equal(consumeRelayNonce("nonce-future-000000000", t + 10_000_000), true);
+    for (let i = 0; i < 9_999; i++) consumeRelayNonce(`nonce-fill-${i}`, t);
+    assert.equal(consumeRelayNonce("nonce-full-live-000000", t + 1_000), false, "cap reached with every entry live: refused");
+    // later: the 9 999 have expired but sit behind the future-stamped entry; the sweep must still free them
+    assert.equal(consumeRelayNonce("nonce-after-expiry-000", t + 200_000), true);
+  });
 });
