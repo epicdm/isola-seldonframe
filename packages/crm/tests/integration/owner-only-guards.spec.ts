@@ -1,7 +1,7 @@
-// Owner-only workspace deletion and billing portal (Port def-uplink-admin-member-can-delete-workspace-and-open-billing-portal-2026-10-19).
+// Owner-only workspace deletion, billing portal and subscription checkout (Port def-uplink-admin-member-can-delete-workspace-and-open-billing-portal-2026-10-19).
 //
 // Route/action level against a REAL Postgres through the production driver: the real DELETE /api/v1/workspaces/[id] handler, the real
-// createBillingPortalSessionAction server action and the real POST /api/stripe/portal handler, with the real identity, org-resolution and
+// createBillingPortalSessionAction server action and the real POST /api/stripe/portal and POST /api/stripe/checkout handlers, with the real identity, org-resolution and
 // membership SQL. Only the request context is faked: the NextAuth session (@/auth), the next/headers cookie store, Stripe (SDK + fetch)
 // and next/navigation's redirect (which throws). Scratch database only.
 //
@@ -29,12 +29,16 @@ const ORG_CUSTOMER = "cus_fixture_org_0001";
 const ctx: { userId: string | null; userOrgId: string | null; activeOrg: string | null } = { userId: null, userOrgId: null, activeOrg: null };
 const stripeSdkCalls: Array<{ customer: string }> = [];
 const stripeFetchCalls: string[] = [];
+const stripeCheckoutCalls: Array<{ orgId: string; workspaceId: string }> = [];
+const externalFetchCalls: string[] = [];
 
 describe("Owner-only workspace deletion and billing portal", { skip: !enabled && "set OWNER_GUARD_DB_TEST=scratch with a scratch database" }, () => {
   let db: typeof import("@/db").db;
   let DELETE: (req: Request, c: { params: Promise<{ id: string }> }) => Promise<Response>;
   let portalPOST: () => Promise<Response>;
   let createBillingPortalSessionAction: () => Promise<void>;
+  let checkoutPOST: (req: import("next/server").NextRequest) => Promise<Response>;
+  let NextRequestCtor: typeof import("next/server").NextRequest;
 
   const exec = async (q: ReturnType<typeof sql>) => db.execute(q);
   const exists = async (orgId: string) => {
@@ -56,6 +60,8 @@ describe("Owner-only workspace deletion and billing portal", { skip: !enabled &&
   before(async () => {
     process.env.SELDON_BUILDER_API_KEYS = [`k-owner:${OWNER}`, `k-admin:${ADMIN}`, `k-member:${MEMBER}`, `k-outsider:${OUTSIDER}`, `k-agency:${AGENCY_OWNER}`].join(",");
     process.env.STRIPE_SECRET_KEY = ["sk", "test", "fixture", "0001"].join("_");
+    // A real-looking (non-placeholder) price for one sellable tier, so the checkout reaches the guard and, for the owner, the (fake) Stripe call.
+    process.env.STRIPE_MANAGED_PRICE_ID = "price_fixture_managed_0001";
 
     const crm = path.resolve(".");
     mock.module(pathToFileURL(path.join(crm, "src/auth.ts")).href, {
@@ -72,11 +78,15 @@ describe("Owner-only workspace deletion and billing portal", { skip: !enabled &&
     });
     class FakeStripe {
       billingPortal = { sessions: { create: async (a: { customer: string }) => { stripeSdkCalls.push({ customer: a.customer }); return { url: "https://billing.fixture.test/session" }; } } };
+      checkout = { sessions: { create: async (a: { metadata?: Record<string, string> }) => { stripeCheckoutCalls.push({ orgId: a.metadata?.orgId ?? "", workspaceId: a.metadata?.workspaceId ?? "" }); return { url: "https://checkout.fixture.test/session" }; } } };
     }
     // tsx may load the route through either module system, so mock both resolutions of "stripe" (never reach the network).
     const require = createRequire(path.join(crm, "src/app/api/stripe/portal/route.ts"));
     mock.module("stripe", { defaultExport: FakeStripe });
     mock.module(pathToFileURL(require.resolve("stripe")).href, { defaultExport: FakeStripe });
+    // The checkout route gets its client from @seldonframe/payments, which resolves "stripe" from its own package.
+    const paymentsStripe = pathToFileURL(createRequire(path.resolve(crm, "../payments/src/stripe-client.ts")).resolve("stripe")).href;
+    if (paymentsStripe !== pathToFileURL(require.resolve("stripe")).href) mock.module(paymentsStripe, { defaultExport: FakeStripe });
     const realFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -84,13 +94,19 @@ describe("Owner-only workspace deletion and billing portal", { skip: !enabled &&
         stripeFetchCalls.push(String(init?.body ?? ""));
         return new Response(JSON.stringify({ url: "https://billing.fixture.test/portal" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      return realFetch(input as RequestInfo, init);
+      // Only the local database proxy may be reached; any other external call is recorded and refused (never the network).
+      const host = new URL(url).hostname;
+      if (host === process.env.NEON_LOCAL_HOST || host === "localhost" || host === "127.0.0.1") return realFetch(input as RequestInfo, init);
+      externalFetchCalls.push(host);
+      return new Response("blocked by test", { status: 503 });
     }) as typeof fetch;
 
     ({ db } = await import("@/db"));
     ({ DELETE } = await import("@/app/api/v1/workspaces/[id]/route"));
     ({ POST: portalPOST } = await import("@/app/api/stripe/portal/route"));
     ({ createBillingPortalSessionAction } = await import("@/lib/billing/actions"));
+    ({ POST: checkoutPOST } = await import("@/app/api/stripe/checkout/route"));
+    ({ NextRequest: NextRequestCtor } = await import("next/server"));
 
     // Fixture rows (scratch database built from the drizzle schema export).
     for (const [u, p] of [[OWNER, P_OWNER], [ADMIN, P_ADMIN], [MEMBER, P_MEMBER], [OUTSIDER, P_OUTSIDER], [AGENCY_OWNER, P_AGENCY]]) {
@@ -188,6 +204,50 @@ describe("Owner-only workspace deletion and billing portal", { skip: !enabled &&
     const r = await portalPOST();
     assert.notEqual(r.status, 200);
     assert.equal(stripeSdkCalls.filter((c) => c.customer === ORG_CUSTOMER).length, 0);
+  });
+  // ── POST /api/stripe/checkout (subscribe the workspace) ─────────────────────
+  const checkout = (body: Record<string, unknown>) =>
+    checkoutPOST(new NextRequestCtor("http://local/api/stripe/checkout", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+
+  test("checkout route: the OWNER gets a checkout session stamped with the workspace (positive control)", async () => {
+    stripeCheckoutCalls.length = 0;
+    as(OWNER, P_OWNER, T_BILL);
+    const r = await checkout({ tier: "managed" });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).url, "https://checkout.fixture.test/session");
+    assert.deepEqual(stripeCheckoutCalls, [{ orgId: T_BILL, workspaceId: T_BILL }]);
+  });
+
+  for (const [label, u, p] of [["ADMIN", ADMIN, P_ADMIN], ["MEMBER", MEMBER, P_MEMBER]] as const) {
+    test(`checkout route: an invited ${label} is refused (403) and Stripe is never called`, async () => {
+      stripeCheckoutCalls.length = 0;
+      as(u, p, T_BILL);
+      const r = await checkout({ tier: "managed" });
+      assert.equal(r.status, 403);
+      assert.match(String((await r.json()).error), /owner/i);
+      assert.equal(stripeCheckoutCalls.length, 0);
+    });
+  }
+
+  test("checkout route: naming another workspace in the body is refused (403) even from the caller's own workspace", async () => {
+    stripeCheckoutCalls.length = 0;
+    as(ADMIN, P_ADMIN, P_ADMIN);
+    const r = await checkout({ tier: "managed", workspaceId: T_BILL });
+    assert.equal(r.status, 403);
+    assert.equal(stripeCheckoutCalls.length, 0);
+  });
+
+  test("checkout route: the same user is allowed for a workspace they own (control: the refusal is keyed to the billed workspace)", async () => {
+    stripeCheckoutCalls.length = 0;
+    as(ADMIN, P_ADMIN, P_ADMIN);
+    const r = await checkout({ tier: "managed" });
+    assert.equal(r.status, 200);
+    assert.deepEqual(stripeCheckoutCalls, [{ orgId: P_ADMIN, workspaceId: P_ADMIN }]);
+  });
+
+  test("no call reached api.stripe.com or any other external host", () => {
+    assert.equal(stripeFetchCalls.filter((b) => b.includes("checkout")).length, 0);
+    assert.deepEqual(externalFetchCalls, []);
   });
 });
 

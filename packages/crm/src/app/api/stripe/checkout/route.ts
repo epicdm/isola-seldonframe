@@ -30,6 +30,7 @@ import { captureServerEvent } from "@/lib/analytics/capture";
 import { sendGa4Event } from "@/lib/analytics/ga4";
 import { parseInternalIds } from "@/lib/super-admin/internal-exclusion";
 import { buildCheckoutStartedEvent, captureFunnelEvent } from "@/lib/analytics/funnel";
+import { isWorkspaceOwnerLike } from "@/lib/workspace/workspace-owner";
 
 const CHECKOUT_SOURCES = new Set(["pricing", "signup_resume", "upgrade_modal"]);
 
@@ -253,6 +254,16 @@ export async function POST(req: NextRequest) {
   const orgId = apiKeyUserId ? dbUser.orgId : (await getOrgId()) ?? dbUser.orgId;
   const requestedWorkspaceId = typeof body.workspaceId === "string" ? body.workspaceId.trim() : "";
   const targetWorkspaceId = requestedWorkspaceId || orgId || "";
+
+  // 2026-10-19 — subscribing a workspace is owner-level, like its billing
+  // portal: an invited admin/member is refused. Every workspace id this
+  // checkout stamps (metadata orgId and workspaceId, which the Stripe
+  // webhooks bill) must be one the caller owns (lib/workspace/workspace-owner.ts).
+  for (const billedOrgId of new Set([orgId, targetWorkspaceId].filter((id): id is string => Boolean(id)))) {
+    if (!(await isWorkspaceOwnerLike(billedOrgId, userId))) {
+      return NextResponse.json({ error: "Only the workspace owner can manage billing." }, { status: 403 });
+    }
+  }
 
   const origin = getRequestOrigin(req);
 
