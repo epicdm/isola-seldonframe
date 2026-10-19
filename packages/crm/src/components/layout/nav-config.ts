@@ -86,6 +86,9 @@ export type BuildNavInput = {
    *  layout) resolves it and threads it through. Surfaces the Approvals
    *  nav entry when true; absent/false → today's nav, unchanged. */
   draftApprovalsOn?: boolean;
+  /** Phone & WhatsApp exposure (2026-10-17) — resolved server-side by the dashboard layout via isPhoneWhatsappEnabled()
+   *  (PHONE_WHATSAPP_ENABLED_ORGS) and passed in, like draftApprovalsOn. absent/false → today's nav, unchanged. */
+  phoneWhatsappOn?: boolean;
 };
 
 // Block-slug → href map for visibility filtering. Lifted verbatim from
@@ -187,6 +190,7 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
     enabledModules,
     smsLive,
     draftApprovalsOn = false,
+    phoneWhatsappOn = false,
   } = input;
 
   const hiddenHrefs = new Set(hiddenBlocks.map((slug) => hiddenSlugToHref[slug]).filter(Boolean));
@@ -273,6 +277,7 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
       {
         title: "SYSTEM",
         items: filterHidden([
+          ...(phoneWhatsappOn ? [{ href: "/phone-whatsapp", label: "Phone & WhatsApp", icon: "Phone" }] : []),
           { href: "/integrations", label: "Integrations", icon: "Puzzle" },
           { href: "/settings", label: "Settings", icon: "Settings" },
           ...superAdminItems,
@@ -359,6 +364,7 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
         // Integrations — the in-product managed-OAuth Connect surface
         // (Composio: connect Gmail / Calendar / Slack / HubSpot / … so
         // agents can act in the operator's real apps).
+        ...(phoneWhatsappOn ? [{ href: "/phone-whatsapp", label: "Phone & WhatsApp", icon: "Phone" }] : []),
         { href: "/integrations", label: "Integrations", icon: "Puzzle" },
         { href: "/docs", label: "Docs", icon: "BookOpen" },
         { href: "https://discord.gg/sbVUu976NW", label: "Discord", icon: "MessageCircle", external: true },
