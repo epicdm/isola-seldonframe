@@ -41,8 +41,10 @@ echo "gate1 symlinks image=$(wc -l < "$W/img.links") commit=$(wc -l < "$W/git.li
 check "gate1 symlinks differing lines" "$(ndiff "$W/img.links" "$W/git.links")" 0
 if [ -n "$BIMG" ] && [ -n "$BC" ]; then
   BC=$(git rev-parse "$BC^{commit}")
-  imgsrc "$BIMG" > "$W/base.sha"
-  { diff <(LC_ALL=C sort -k2 "$W/base.sha") <(LC_ALL=C sort -k2 "$W/img.sha") || true; } | sed -n 's/^[<>] [0-9a-f]*  //p' | LC_ALL=C sort -u > "$W/img-delta.txt"
+  imgsrc "$BIMG" > "$W/base.sha"; imglinks "$BIMG" > "$W/base.links"
+  # Regular files and symlinks both count towards the delta (a symlink line is "<target>  <path>").
+  { { diff <(LC_ALL=C sort -k2 "$W/base.sha") <(LC_ALL=C sort -k2 "$W/img.sha") || true; } | sed -n 's/^[<>] [0-9a-f]*  //p'
+    { diff "$W/base.links" "$W/img.links" || true; } | sed -n 's/^[<>] .*  //p'; } | LC_ALL=C sort -u > "$W/img-delta.txt"
   git diff --name-only --no-renames "$BC" "$C" -- packages/crm | LC_ALL=C sort -u > "$W/git-delta.txt"
   echo "gate2 image_delta_files=$(wc -l < "$W/img-delta.txt") git_delta_files=$(wc -l < "$W/git-delta.txt")"
   check "gate2 delta == git diff" "$({ diff "$W/img-delta.txt" "$W/git-delta.txt" || true; } | grep -c '^[<>]' || true)" 0
