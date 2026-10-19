@@ -14,7 +14,7 @@ export type ConnectionState = {
   phoneNumberId: string;
   status: "pending" | "registering" | "registered" | "active" | "failed" | "coex_linking" | "connected_coexistence" | "disconnected";
   reason: string | null;
-  syncs?: Partial<Record<"smb_app_state_sync" | "history", "requested" | "rejected" | "unknown">>;
+  syncs?: Partial<Record<"smb_app_state_sync" | "history", "requested" | "rejected" | "unknown" | "skipped_bot_attached" | "skipped_check_failed">>;
 };
 
 declare global {
@@ -50,6 +50,8 @@ const SYNC_TEXT: Record<string, string> = {
   requested: "requested from Meta (it arrives over the next hours)",
   rejected: "refused by Meta (Meta allows it only once, within 24 hours of connecting)",
   unknown: "requested, but Meta did not confirm (it is not repeated automatically; EPIC will check)",
+  skipped_bot_attached: "History not imported: an AI bot is attached to this inbox (it would receive every imported note). Meta allows the copy only once, so it is not repeated",
+  skipped_check_failed: "not imported: EPIC could not confirm that no AI bot is attached to this inbox, so nothing was copied (Meta allows the copy only once; it is not repeated automatically)",
 };
 
 async function post(url: string, body: unknown) {
@@ -179,7 +181,8 @@ export function ConnectPanel({ states = [], coexistenceAvailable = false }: { st
               you keep the app: WhatsApp calls are not available through EPIC; sending is limited to 20 messages per second; group chats are not synced. Your
               contacts, and up to 6 months of chat history, can be copied in once, only within 24 hours of connecting. Past chats are imported as{" "}
               <strong>private notes</strong> that your staff see inside each conversation: they are not part of the WhatsApp conversation, they are never sent to
-              your customers, and connecting attaches no AI agent, so no AI agent uses them.
+              your customers, and connecting attaches no AI agent. If an AI bot is attached to the inbox, the history is not imported at all (an AI bot would receive every
+              imported note).
             </span>
           </label>
         ) : null}

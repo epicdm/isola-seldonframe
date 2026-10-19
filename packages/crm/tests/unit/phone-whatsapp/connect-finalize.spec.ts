@@ -28,6 +28,7 @@ type Over = {
   debug?: Partial<DebugToken>; phones?: WabaPhone[];
   registerFails?: "none" | "definite" | "unknown"; failActivate?: boolean; exchangeFails?: boolean; failSetRegistered?: boolean;
   subscribeFails?: boolean; coex?: boolean; overrideFails?: boolean; syncFails?: "none" | "definite" | "unknown";
+  botCheck?: "none" | "attached" | "fails";
 };
 
 function harness(over: Over = {}) {
@@ -37,6 +38,7 @@ function harness(over: Over = {}) {
   const calls: string[] = [];
   const steps: string[] = []; // subscribe / coexistence steps, kept apart so the original call-order assertion is unchanged
   const registeredPins: string[] = [];
+  const botChecks: Array<number | null> = []; // bot-guard checks, kept apart from steps so the existing step assertions are unchanged
   const cfg = { ...over };
   const k = (org: string, phone: string) => `${org}/${phone}`;
   const store: ConnectStore = {
@@ -113,6 +115,11 @@ function harness(over: Over = {}) {
           if (cfg.syncFails === "unknown") throw new Error("timeout");
           return `req-${t}`;
         },
+        async inboxBotAttached(a: { inboxId: number | null }) {
+          botChecks.push(a.inboxId);
+          if (cfg.botCheck === "fails") throw new Error("chatwoot down");
+          return cfg.botCheck === "attached";
+        },
       },
     } : {}),
     isDefiniteFailure: (e) => e instanceof Definite,
@@ -123,7 +130,7 @@ function harness(over: Over = {}) {
     now: () => clock,
   };
   const registers = () => calls.filter((c) => c === "register").length;
-  return { deps, lines, conns, calls, steps, attempts, cfg, registers, registeredPins, advance: (ms: number) => { clock = new Date(clock.getTime() + ms); } };
+  return { deps, lines, conns, calls, steps, attempts, cfg, registers, registeredPins, botChecks, advance: (ms: number) => { clock = new Date(clock.getTime() + ms); } };
 }
 
 async function begin(h: ReturnType<typeof harness>, orgId = A, userId = "user-1") {
@@ -456,3 +463,44 @@ describe("coexistence (WhatsApp Business app kept)", () => {
 function goodPhoneOf(id: string): WabaPhone {
   return { id, displayNumber: "+1 555 0199", verifiedName: "Other", platformType: "CLOUD_API", isOnBizApp: false };
 }
+
+describe("bot guard: the one-time syncs are never requested into an inbox with an AI bot attached", () => {
+  const BIZ_APP: WabaPhone = { id: PHONE, displayNumber: "+1 555 0100", verifiedName: "Test Co", platformType: "CLOUD_API", isOnBizApp: true };
+  const coexClaim = (n: string) => claim(n, { flow: "coexistence" });
+  const syncs = (h: ReturnType<typeof harness>) => h.steps.filter((s) => s.startsWith("sync:"));
+
+  test("positive control: no bot -> the check runs against the new inbox and both syncs are requested", async () => {
+    const h = harness({ coex: true, phones: [BIZ_APP] });
+    assert.equal((await finalizeConnect(coexClaim(await begin(h)), h.deps)).ok, true);
+    assert.deepEqual(h.botChecks, [77]);
+    assert.deepEqual(syncs(h), ["sync:smb_app_state_sync", "sync:history"]);
+  });
+
+  test("bot attached -> still connected, NO sync sent to Meta, both recorded skipped_bot_attached; a resumed connect sends nothing either", async () => {
+    const h = harness({ coex: true, phones: [BIZ_APP], botCheck: "attached" });
+    const r = await finalizeConnect(coexClaim(await begin(h)), h.deps);
+    assert.equal(r.ok, true);
+    assert.deepEqual(syncs(h), []);
+    const c = h.conns.get(`${A}/${PHONE}`)!;
+    assert.equal(c.status, "connected_coexistence");
+    assert.deepEqual([c.syncs?.smb_app_state_sync?.status, c.syncs?.history?.status], ["skipped_bot_attached", "skipped_bot_attached"]);
+    h.cfg.botCheck = "none"; // even with the bot removed later, a skipped one-time sync is never requested (no changed retry)
+    assert.equal((await finalizeConnect(coexClaim(await begin(h)), h.deps)).ok, true);
+    assert.deepEqual(syncs(h), []);
+    assert.deepEqual(h.botChecks, [77]); // nothing left to request, so no second check
+  });
+
+  test("bot check fails -> fail closed: NO sync sent to Meta, both recorded skipped_check_failed", async () => {
+    const h = harness({ coex: true, phones: [BIZ_APP], botCheck: "fails" });
+    assert.equal((await finalizeConnect(coexClaim(await begin(h)), h.deps)).ok, true);
+    assert.deepEqual(syncs(h), []);
+    const c = h.conns.get(`${A}/${PHONE}`)!;
+    assert.deepEqual([c.syncs?.smb_app_state_sync?.status, c.syncs?.history?.status], ["skipped_check_failed", "skipped_check_failed"]);
+  });
+
+  test("the standard (API-only) path never runs the bot check (it imports nothing)", async () => {
+    const h = harness({ coex: true });
+    assert.equal((await finalizeConnect(claim(await begin(h)), h.deps)).ok, true);
+    assert.deepEqual(h.botChecks, []);
+  });
+});

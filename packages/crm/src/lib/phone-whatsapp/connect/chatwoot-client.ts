@@ -30,6 +30,8 @@ export interface ChatwootPort {
   ensureConversation(a: { inboxId: number; contactId: number; phoneDigits: string }): Promise<number>;
   /** A private note (never sent to WhatsApp). */
   createNote(a: { conversationId: number; content: string; sourceId: string }): Promise<void>;
+  /** True when an agent bot is attached to the inbox (active or not). Throws on any failure or unexpected shape: callers fail closed. */
+  inboxBotAttached(inboxId: number): Promise<boolean>;
 }
 
 export function makeChatwootClient(opts: { base: string; accountId: string; apiToken: string; fetch?: Fetch; timeoutMs?: number }): ChatwootPort {
@@ -114,6 +116,21 @@ export function makeChatwootClient(opts: { base: string; accountId: string; apiT
         private: true,
         source_id: a.sourceId,
       });
+    },
+
+    async inboxBotAttached(inboxId) {
+      // GET inboxes/:id/agent_bot (Chatwoot v4.18 InboxesController#agent_bot = @inbox.agent_bot, through agent_bot_inbox, active OR inactive;
+      // view: { agent_bot: {...} } or { agent_bot: {} }). For an administrator token the bot object carries its access_token and secret: only
+      // the id is read here, nothing else is kept, returned or logged. Anything that is not clearly 'none' or clearly 'a bot' throws.
+      if (!idOf(inboxId)) throw new ChatwootError(400, "inbox agent bot");
+      const j = await call("inbox agent bot", "GET", `/inboxes/${inboxId}/agent_bot`);
+      if (!Object.prototype.hasOwnProperty.call(j, "agent_bot")) throw new ChatwootError(502, "inbox agent bot");
+      const bot = j.agent_bot;
+      if (bot === null) return false;
+      if (typeof bot !== "object" || Array.isArray(bot)) throw new ChatwootError(502, "inbox agent bot");
+      if (Object.keys(bot as object).length === 0) return false;
+      if (idOf((bot as { id?: unknown }).id)) return true;
+      throw new ChatwootError(502, "inbox agent bot"); // non-empty without an id: ambiguous, never read as 'no bot'
     },
   };
 }

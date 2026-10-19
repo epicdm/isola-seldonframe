@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 
 import { makeChatwootClient } from "@/lib/phone-whatsapp/connect/chatwoot-client";
 import { handleReceiverPost, handleReceiverVerify } from "@/lib/phone-whatsapp/connect/receiver";
-import { findCoexBindings, historyChunkSeen, markHistoryChunk } from "@/lib/phone-whatsapp/connect/server-wiring";
+import { auditConnect, findCoexBindings, historyChunkSeen, markHistoryChunk, recordImportSkip, skippedImports } from "@/lib/phone-whatsapp/connect/server-wiring";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +29,9 @@ export async function POST(req: Request) {
     chatwootFor: (b) => makeChatwootClient({ base: apiBase, accountId: b.chatwootAccountId, apiToken }),
     seen: historyChunkSeen,
     async mark(orgId, phone, key) { await markHistoryChunk(orgId, phone, key); },
+    skipped: skippedImports,
+    recordSkip: recordImportSkip,
+    audit: auditConnect,
     log: (l) => console.log(l),
   }).catch((e) => {
     console.error("[coex-recv] failed:", e instanceof Error ? e.name : "unknown");

@@ -149,6 +149,12 @@ export type ReceiverDeps = {
   chatwootFor(binding: NonNullable<ReceiverBinding["binding"]>): ChatwootPort;
   seen(orgId: string, phoneNumberId: string, chunkKey: string): Promise<boolean>;
   mark(orgId: string, phoneNumberId: string, chunkKey: string): Promise<void>;
+  /** Sync types whose import was skipped for this connection (sticky: recorded once, never cleared automatically). */
+  skipped(orgId: string, phoneNumberId: string): Promise<Set<string>>;
+  /** Records, once per sync type, that its import was skipped because an agent bot is attached to the inbox. */
+  recordSkip(orgId: string, phoneNumberId: string, syncType: string, status: "skipped_bot_attached"): Promise<void>;
+  /** Audit record (no secrets, no message content). Must never throw. */
+  audit?(orgId: string, step: string, props: Record<string, unknown>): void;
   log(line: string): void;
 };
 
@@ -186,16 +192,47 @@ export async function handleReceiverPost(raw: string, signature: string | null, 
   }
 
   if (plan.digest.length) {
+    const chatwoot = deps.chatwootFor(b);
+    const fields = [...new Set(plan.digest.map((d) => d.field))];
+    // BOT GUARD (2026-10-19). An agent bot attached to the inbox receives every imported note as a message_created event (Chatwoot v4.18
+    // AgentBotListener does not exclude private notes), so history and contacts are imported ONLY into an inbox with no bot attached.
+    // Fail closed: a failed or ambiguous check imports nothing and answers 503 (nothing is marked; Meta redelivers the SAME delivery, so no
+    // request is ever changed, Law 10). A skip is recorded once per sync type and is sticky: later chunks of that type are never imported,
+    // even if the bot is removed later (no partial history).
+    let skipped: Set<string>;
+    let attached: boolean;
+    try {
+      skipped = await deps.skipped(h.orgId, plan.phoneNumberId);
+      attached = fields.every((f) => skipped.has(f)) ? false : await chatwoot.inboxBotAttached(b.inboxId);
+    } catch (e) {
+      deps.log(`[coex-recv] bot check failed (${e instanceof Error ? e.name : "error"}) phone_number_id=${plan.phoneNumberId} fields=${fields.join(",")}: nothing imported`);
+      deps.audit?.(h.orgId, "import_bot_check_failed", { phoneNumberId: plan.phoneNumberId, fields });
+      return { status: 503, body: { ok: false, code: "bot_check_failed" } };
+    }
+    if (attached) {
+      for (const f of fields) {
+        if (skipped.has(f)) continue;
+        await deps.recordSkip(h.orgId, plan.phoneNumberId, f, "skipped_bot_attached").catch(() => deps.log(`[coex-recv] skip record failed field=${f}`));
+      }
+      deps.audit?.(h.orgId, "import_skipped_bot_attached", { phoneNumberId: plan.phoneNumberId, fields, chatwootInboxId: b.inboxId });
+      deps.log(`[coex-recv] NOT imported: an agent bot is attached to inbox ${b.inboxId} phone_number_id=${plan.phoneNumberId} fields=${fields.join(",")}`);
+      return { status: 200, body: { ok: true, imported: false, code: "skipped_bot_attached" } };
+    }
+    const digest = plan.digest.filter((d) => !skipped.has(d.field));
+    if (!digest.length) {
+      deps.log(`[coex-recv] NOT imported: import skipped earlier for this connection phone_number_id=${plan.phoneNumberId} fields=${fields.join(",")}`);
+      return { status: 200, body: { ok: true, imported: false, code: "import_skipped_earlier" } };
+    }
     const counts = emptyCounts();
     const ctx: DigestCtx = {
-      chatwoot: deps.chatwootFor(b),
+      chatwoot,
       inboxId: b.inboxId,
       seen: (k) => deps.seen(h.orgId, plan.phoneNumberId, k),
       mark: (k) => deps.mark(h.orgId, plan.phoneNumberId, k),
       log: deps.log,
     };
     try {
-      for (const d of plan.digest) {
+      for (const d of digest) {
         if (d.field === "history") await digestHistory(d.value, ctx, counts);
         else if (d.field === "smb_app_state_sync") await digestStateSync(d.value, ctx, counts);
       }

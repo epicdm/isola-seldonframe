@@ -13,7 +13,9 @@
 // Coexistence additions (2026-10-19), same connection record:
 //   status coex_linking | connected_coexistence | disconnected (with disconnectedFrom, the status to restore on ACCOUNT_RECONNECTED)
 //   mode "coexistence", chatwoot { accountId, inboxId, forwardUrl }   the receiver's binding (no secrets)
-//   syncs { smb_app_state_sync?, history? : { status requested|rejected|unknown, at, requestId? } }   one-time, never retried
+//   syncs { smb_app_state_sync?, history? : { status requested|rejected|unknown|skipped_bot_attached|skipped_check_failed, at, requestId? } }
+//                                                                                     one-time, never retried
+//   imports { smb_app_state_sync?, history? : { status skipped_bot_attached, at } }   receiver bot guard, write-once, sticky
 //   historyChunks [ "<phase>:<chunk_order>" ]                          history chunks already imported (idempotency, capped)
 // EVERY place that decides "this workspace holds this number" lists the same statuses (Law 21): claimants() here and claimantsOf() in
 // ../service/stores.ts. Keep them identical.
@@ -227,6 +229,34 @@ export async function historyChunkSeen(orgId: string, phoneNumberId: string, chu
   return rowsOf(res)[0]?.seen === true;
 }
 
+/** Receiver bot guard: sync types whose import is skipped for this connection (a receiver skip, or a sync skipped at connect). */
+export async function skippedImports(orgId: string, phoneNumberId: string): Promise<Set<string>> {
+  const res = await db.execute(sql`
+    select settings #> ARRAY['phoneWhatsapp','connections',${phoneNumberId},'imports'] as i,
+           settings #> ARRAY['phoneWhatsapp','connections',${phoneNumberId},'syncs'] as s
+    from organizations where id = ${orgId}::uuid`);
+  const row = rowsOf(res)[0];
+  const out = new Set<string>();
+  for (const part of [json(row?.i), json(row?.s)]) {
+    if (!part || typeof part !== "object") continue;
+    for (const [k, v] of Object.entries(part as Record<string, { status?: unknown }>)) if (typeof v?.status === "string" && v.status.startsWith("skipped_")) out.add(k);
+  }
+  return out;
+}
+
+/** Receiver bot guard: records once per sync type that its import was skipped (write-once; never cleared automatically). */
+export async function recordImportSkip(orgId: string, phoneNumberId: string, syncType: string, status: "skipped_bot_attached"): Promise<void> {
+  const outcome = JSON.stringify({ status, at: new Date().toISOString() });
+  const res = await db.execute(sql`
+    update organizations set settings = jsonb_set(settings, ARRAY['phoneWhatsapp','connections',${phoneNumberId},'imports']::text[],
+      coalesce(settings #> ARRAY['phoneWhatsapp','connections',${phoneNumberId},'imports'], '{}'::jsonb) || jsonb_build_object(${syncType}::text, ${outcome}::jsonb), true)
+    where id = ${orgId}::uuid
+      and settings #> ARRAY['phoneWhatsapp','connections',${phoneNumberId}] is not null
+      and settings #> ARRAY['phoneWhatsapp','connections',${phoneNumberId},'imports',${syncType}] is null
+    returning id`);
+  if (rowsOf(res).length !== 1) throw new Error("recordImportSkip: no row updated");
+}
+
 /** Lifecycle lookup: every connection (any workspace) on this WABA. */
 export async function findConnectionsByWaba(wabaId: string): Promise<Array<{ orgId: string; phoneNumberId: string; status: string; disconnectedFrom: string | null }>> {
   const res = await db.execute(sql`
@@ -259,11 +289,11 @@ export async function listConnectionStates(
   orgId: string,
 ): Promise<Array<{ phoneNumberId: string; status: ConnectionStatus; reason: string | null; syncs: Partial<Record<SyncType, SyncOutcome["status"]>> }>> {
   const res = await db.execute(sql`select settings #> '{phoneWhatsapp,connections}' as c from organizations where id = ${orgId}::uuid`);
-  const c = json(rowsOf(res)[0]?.c) as Record<string, { status?: string; reason?: string; lifecycleReason?: string; syncs?: Partial<Record<SyncType, SyncOutcome>> }> | null;
+  const c = json(rowsOf(res)[0]?.c) as Record<string, { status?: string; reason?: string; lifecycleReason?: string; syncs?: Partial<Record<SyncType, SyncOutcome>>; imports?: Partial<Record<SyncType, { status?: SyncOutcome["status"] }>> }> | null;
   if (!c || typeof c !== "object") return [];
   return Object.entries(c).map(([phoneNumberId, v]) => {
     const syncs: Partial<Record<SyncType, SyncOutcome["status"]>> = {};
-    for (const t of ["smb_app_state_sync", "history"] as const) { const s = v?.syncs?.[t]?.status; if (s) syncs[t] = s; }
+    for (const t of ["smb_app_state_sync", "history"] as const) { const s = v?.imports?.[t]?.status ?? v?.syncs?.[t]?.status; if (s) syncs[t] = s; }
     return { phoneNumberId, status: (v?.status ?? "pending") as ConnectionStatus, reason: v?.reason ?? v?.lifecycleReason ?? null, syncs };
   });
 }
@@ -302,6 +332,18 @@ export function makeFinalizeDeps(cfg: Extract<ConnectConfig, { ok: true }>, orgI
             },
             setOverride: (token, phone) => g.setPhoneOverride(token, phone, coexCfg.receiverUrl, coexCfg.verifyToken),
             requestSync: (token, phone, t) => g.requestSmbSync(token, phone, t),
+            async inboxBotAttached(a) {
+              let accountId = coexCfg.chatwootAccountId;
+              let inboxId = a.inboxId;
+              if (inboxId === null) {
+                const mine = (await findCoexBindings(a.phoneNumberId)).filter((h) => h.orgId === a.orgId && h.binding);
+                if (mine.length !== 1) throw new Error("coexistence binding not found");
+                accountId = mine[0].binding!.chatwootAccountId;
+                inboxId = mine[0].binding!.inboxId;
+              }
+              const cw = makeChatwootClient({ base: coexCfg.chatwootApiBase, accountId, apiToken: coexCfg.chatwootApiToken });
+              return cw.inboxBotAttached(inboxId);
+            },
           },
         }
       : {}),

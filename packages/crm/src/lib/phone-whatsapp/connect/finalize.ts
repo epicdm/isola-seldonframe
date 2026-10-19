@@ -45,7 +45,7 @@ export type ConnectionStatus =
 export type ConnectionRecord = { status: ConnectionStatus; wabaId: string; hasPin: boolean };
 
 export type SyncType = "smb_app_state_sync" | "history";
-export type SyncOutcome = { status: "requested" | "rejected" | "unknown"; at: string; requestId?: string | null };
+export type SyncOutcome = { status: "requested" | "rejected" | "unknown" | "skipped_bot_attached" | "skipped_check_failed"; at: string; requestId?: string | null };
 export type CoexBinding = { chatwootAccountId: string; inboxId: number; forwardUrl: string };
 
 export type FinalizeCode =
@@ -92,6 +92,8 @@ export type CoexPorts = {
   /** Points the number's phone-level override at our receiver. */
   setOverride(token: string, phoneNumberId: string): Promise<void>;
   requestSync(token: string, phoneNumberId: string, syncType: SyncType): Promise<string | null>;
+  /** True when an agent bot is attached to the number's Chatwoot inbox. inboxId null = resolve it from the stored binding. Throws when unknown. */
+  inboxBotAttached(a: { orgId: string; phoneNumberId: string; inboxId: number | null }): Promise<boolean>;
 };
 
 export type FinalizeDeps = {
@@ -301,18 +303,33 @@ async function completeConnection(p: { orgId: string; token: string; v: Verified
 }
 
 /** Requests each one-time sync that has never been requested for this connection, in Meta's documented order (contacts, then history). */
-async function requestSyncsOnce(orgId: string, token: string, phoneNumberId: string, deps: FinalizeDeps): Promise<void> {
+async function requestSyncsOnce(orgId: string, token: string, phoneNumberId: string, deps: FinalizeDeps, inboxId: number | null): Promise<void> {
   const coex = deps.coex!;
   let done: Partial<Record<SyncType, SyncOutcome>>;
+  let syncGate: "clear" | "skipped_bot_attached" | "skipped_check_failed" = "clear";
   try {
     done = await deps.store.getSyncs({ orgId, phoneNumberId });
   } catch {
     return; // unknown state: request nothing (a sync is one-time at Meta); the page shows it as not requested yet
   }
+  if (!(done.smb_app_state_sync && done.history)) {
+    // BOT GUARD (2026-10-19): an agent bot attached to the inbox would receive every imported note, so the one-time sync is NOT requested
+    // when a bot is attached, or when that cannot be confirmed (fail closed). The skip is recorded as the sync's one-time outcome.
+    let gate: "clear" | "skipped_bot_attached" | "skipped_check_failed";
+    try {
+      gate = (await coex.inboxBotAttached({ orgId, phoneNumberId, inboxId })) ? "skipped_bot_attached" : "clear";
+    } catch {
+      gate = "skipped_check_failed";
+    }
+    if (gate !== "clear") audit(deps, orgId, "sync_gate", { phoneNumberId, gate });
+    syncGate = gate;
+  }
   for (const syncType of ["smb_app_state_sync", "history"] as const) {
     if (done[syncType]) continue; // requested, rejected or unknown before: never again, also not with a changed request
     let outcome: SyncOutcome;
-    try {
+    if (syncGate !== "clear") {
+      outcome = { status: syncGate, at: deps.now().toISOString() }; // nothing sent to Meta
+    } else try {
       const requestId = await coex.requestSync(token, phoneNumberId, syncType);
       outcome = { status: "requested", at: deps.now().toISOString(), requestId };
     } catch (e) {
@@ -343,7 +360,7 @@ async function completeCoexistence(p: { orgId: string; token: string; v: Verifie
 
   // Already connected: only the one-time syncs that were never requested are requested (nothing else repeated).
   if (existing?.status === "connected_coexistence") {
-    await requestSyncsOnce(orgId, token, v.phoneNumberId, deps);
+    await requestSyncsOnce(orgId, token, v.phoneNumberId, deps, null);
     return { ...done, resumed: true };
   }
   // A number on the standard path (registering/registered/active) or disconnected by the customer is never switched by this path.
@@ -377,6 +394,6 @@ async function completeCoexistence(p: { orgId: string; token: string; v: Verifie
   }
   audit(deps, orgId, "connected_coexistence", { phoneNumberId: v.phoneNumberId, chatwootInboxId: binding.inboxId });
 
-  await requestSyncsOnce(orgId, token, v.phoneNumberId, deps);
+  await requestSyncsOnce(orgId, token, v.phoneNumberId, deps, binding.inboxId);
   return { ...done, resumed: existing !== null };
 }

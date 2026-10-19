@@ -40,7 +40,7 @@ describe("coexistence receiver route: signature is checked before any forward or
       if (u.startsWith(API)) {
         imports.push(`${init?.method ?? "GET"} ${new URL(u).pathname}`);
         const p = new URL(u).pathname;
-        const json = p.endsWith("/contacts/search") ? { payload: [] } : p.endsWith("/contacts") ? { payload: { contact: { id: 5 } } } : p.endsWith("/conversations") && init?.method === "GET" ? { payload: [] } : p.endsWith("/conversations") ? { id: 9 } : p.includes("/contacts/5/conversations") ? { payload: [] } : { id: 1 };
+        const json = p.endsWith("/agent_bot") ? { agent_bot: {} } : p.endsWith("/contacts/search") ? { payload: [] } : p.endsWith("/contacts") ? { payload: { contact: { id: 5 } } } : p.endsWith("/conversations") && init?.method === "GET" ? { payload: [] } : p.endsWith("/conversations") ? { id: 9 } : p.includes("/contacts/5/conversations") ? { payload: [] } : { id: 1 };
         return new Response(JSON.stringify(json), { status: 200 });
       }
       return real(input as RequestInfo, init);

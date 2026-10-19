@@ -43,7 +43,11 @@ const stateBody = () => body("smb_app_state_sync", { state_sync: [
   { type: "contact", action: "add", contact: { first_name: "Bo", phone_number: "+1 555 0005" } },
 ] });
 
-function harness(o: { holders?: ReceiverBinding[]; forwardStatus?: number | "throw"; chatwootFails?: boolean } = {}) {
+function harness(o: { holders?: ReceiverBinding[]; forwardStatus?: number | "throw"; chatwootFails?: boolean; bot?: "none" | "attached" | "fails" | "ambiguous"; skippedPre?: string[] } = {}) {
+  const skips: Array<{ syncType: string; status: string }> = [];
+  const audits: string[] = [];
+  const botChecks: number[] = [];
+  const skippedSet = new Set<string>(o.skippedPre ?? []);
   const forwards: Array<{ url: string; raw: string; headers: Record<string, string> }> = [];
   const notes: Array<{ conversationId: number; content: string; sourceId: string }> = [];
   const contacts: Array<{ phone: string; name?: string }> = [];
@@ -54,6 +58,11 @@ function harness(o: { holders?: ReceiverBinding[]; forwardStatus?: number | "thr
     async ensureContact(a) { if (o.chatwootFails) throw new Error("cw down"); contacts.push({ phone: a.phoneDigits, name: a.name }); return { contactId: Number(a.phoneDigits.slice(-3)), created: true }; },
     async ensureConversation(a) { return 1000 + a.contactId; },
     async createNote(a) { notes.push(a); },
+    async inboxBotAttached(inboxId) {
+      botChecks.push(inboxId);
+      if (o.bot === "fails" || o.bot === "ambiguous") throw new Error("bot check");
+      return o.bot === "attached";
+    },
   };
   const deps: ReceiverDeps = {
     appSecret: SECRET,
@@ -68,10 +77,13 @@ function harness(o: { holders?: ReceiverBinding[]; forwardStatus?: number | "thr
     chatwootFor: () => cw,
     async seen(_o, _p, k) { return marked.has(k); },
     async mark(_o, _p, k) { marked.add(k); },
+    async skipped() { return new Set(skippedSet); },
+    async recordSkip(_o, _p, syncType, status) { skips.push({ syncType, status }); skippedSet.add(syncType); },
+    audit: (_o, step) => audits.push(step),
     log: (l) => logs.push(l),
   };
   const post = (raw: string, sig: string | null = sign(raw)) => handleReceiverPost(raw, sig, deps);
-  return { post, forwards, notes, contacts, marked, logs };
+  return { post, forwards, notes, contacts, marked, logs, skips, audits, botChecks };
 }
 
 describe("signature", () => {
@@ -169,4 +181,57 @@ test("GET verification: echoes the challenge only for subscribe + our token (twi
   assert.equal(handleReceiverVerify(q({ "hub.mode": "subscribe", "hub.verify_token": "wrong-token-0123456789", "hub.challenge": "42" }), token).status, 403);
   assert.equal(handleReceiverVerify(q({ "hub.mode": "unsubscribe", "hub.verify_token": token, "hub.challenge": "42" }), token).status, 403);
   assert.equal(handleReceiverVerify(q({ "hub.mode": "subscribe", "hub.verify_token": "", "hub.challenge": "42" }), "").status, 403);
+});
+
+describe("bot guard: history and contacts are imported only into an inbox with NO AI bot attached", () => {
+  test("positive control: no bot -> the check runs on the bound inbox and history and contacts are imported", async () => {
+    const h = harness({ bot: "none" });
+    assert.equal((await h.post(historyBody())).status, 200);
+    const fromHistory = h.contacts.length; // history threads create their contacts too
+    assert.equal((await h.post(stateBody())).status, 200);
+    assert.deepEqual(h.botChecks, [77, 77]);
+    assert.equal(h.notes.length, 3);
+    assert.equal(h.contacts.length - fromHistory, 2);
+    assert.deepEqual(h.skips, []);
+  });
+
+  test("bot attached -> 200 (Meta must not redeliver), ZERO notes and ZERO contacts, skip recorded once per type, audited", async () => {
+    const h = harness({ bot: "attached" });
+    const r = await h.post(historyBody());
+    assert.equal(r.status, 200);
+    assert.equal(r.body.code, "skipped_bot_attached");
+    assert.equal((await h.post(stateBody())).status, 200);
+    assert.deepEqual([h.notes.length, h.contacts.length, h.marked.size], [0, 0, 0]);
+    assert.deepEqual(h.skips, [{ syncType: "history", status: "skipped_bot_attached" }, { syncType: "smb_app_state_sync", status: "skipped_bot_attached" }]);
+    assert.ok(h.audits.includes("import_skipped_bot_attached"));
+  });
+
+  test("check fails or is ambiguous -> fail closed: 503, ZERO imports, nothing marked or recorded (Meta redelivers the same delivery)", async () => {
+    for (const bot of ["fails", "ambiguous"] as const) {
+      const h = harness({ bot });
+      const r = await h.post(historyBody());
+      assert.equal(r.status, 503, bot);
+      assert.equal(r.body.code, "bot_check_failed");
+      assert.deepEqual([h.notes.length, h.contacts.length, h.marked.size, h.skips.length], [0, 0, 0, 0]);
+      assert.ok(h.audits.includes("import_bot_check_failed"));
+    }
+  });
+
+  test("sticky: a type skipped earlier is never imported later, even with the bot gone (twin: the other type still imports)", async () => {
+    const h = harness({ bot: "none", skippedPre: ["history"] });
+    const r = await h.post(historyBody());
+    assert.equal(r.status, 200);
+    assert.equal(r.body.code, "import_skipped_earlier");
+    assert.equal(h.notes.length, 0);
+    assert.deepEqual(h.botChecks, []); // nothing to import, so no check needed
+    assert.equal((await h.post(stateBody())).status, 200);
+    assert.equal(h.contacts.length, 2);
+  });
+
+  test("messages are still forwarded when a bot is attached (the guard covers imports only; Chatwoot stays the single processor)", async () => {
+    const h = harness({ bot: "attached" });
+    assert.equal((await h.post(msgBody())).status, 200);
+    assert.equal(h.forwards.length, 1);
+    assert.deepEqual(h.botChecks, []);
+  });
 });
