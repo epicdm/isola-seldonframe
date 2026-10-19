@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""pl-watch v3 (2026-10-13, public-signup monitors added on top of v2.1; backup pl-watch.py.v2.1): intended country_not_open refusals no longer page; added hourly-ceiling, failed-provisioning, duplicate-account and false-charge checks, each with a fired control (PLW_CTRL).
+"""pl-watch v3.6 (2026-10-19: check 6 is now a rolling-24h spend WARNING + kill switch + monitoring-failure class; the removed $10 stop is no longer measured). pl-watch v3 (2026-10-13, public-signup monitors added on top of v2.1; backup pl-watch.py.v2.1): intended country_not_open refusals no longer page; added hourly-ceiling, failed-provisioning, duplicate-account and false-charge checks, each with a fired control (PLW_CTRL).
 pl-watch v2: the MINIMUM operational monitor for the Personal Line stack on host04. INSTALLED as systemd pl-watch.timer (every 2 minutes) with a staff-private Chatwoot note; v1 is backed up as /usr/local/lib/pl-watch/pl-watch.py.v1.
 v2 adds two per-row checks: an account not registered 20 minutes after creation, and an undrained admission queue row; each alerts ONCE per row (staff note only) with a recovery note; known test identities are excluded.
 One root-owned script, run by the timer every 2 minutes. It detects a DEAD PATH (a service down, replies not flowing, queues stuck, errors rising, spend about to cut service) and mails the recipients.
@@ -46,11 +46,6 @@ q = sh("docker exec %s sh -c 'for k in queue:default queue:high queue:critical q
 nums = [int(x) for x in re.findall(r"\d+", q)]
 dead = nums[-1] if len(nums) == 7 else None; retry = nums[-2] if len(nums) == 7 else None; backlog = sum(nums[:5]) if len(nums) == 7 else None
 chk("sidekiq backlog < 200 and retry < 20", backlog is not None and backlog < 200 and retry < 20, "backlog=%s retry=%s" % (backlog, retry))
-# 6 spend gate headroom (>= 20% left and the window has > 48 h)
-g = sh("docker exec %s psql -U uplink -d uplink -X -At -F ' ' -c \"select spent_micro_usd::float/budget_micro_usd, extract(epoch from expires_at-now())/3600, enabled from public_turn_spend_gates limit 1\"" % DB) if DB else ""
-try: frac, hrs, en = g.split(); ok = float(frac) < 0.8 and float(hrs) > 48 and en == "t"
-except Exception: frac = hrs = None; ok = False
-chk("Uplink spend gate: spent < 80% of ceiling, window > 48 h, enabled", ok, "spent_fraction=%s window_hours=%s" % (frac, hrs))
 # 7 relay error rate over the last 15 minutes (agent_unavailable / handoff / bad_signature / pl_tool_readback_unavailable)
 ev = sh("docker logs --since 15m %s 2>&1 | grep -c -E '\"event\":\"(agent_unavailable|handoff|pl_tool_readback_unavailable|owner_assignment_failed)\"|\"reason\":\"bad_signature\"'" % R) if R else "999"
 chk("relay error events in 15 min < 5", ev.isdigit() and int(ev) < 5, "events=%s" % ev)
@@ -105,6 +100,38 @@ def per_row_checks():
     if not qb: chk("no undrained admission queue row (72 h window)", True, "known-test excluded=%d" % (len(qr) - len(qb)))
 per_row_checks()
 CTRL = set((os.environ.get("PLW_CTRL") or "").split(","))   # self-test only: forces a check to evaluate against a condition that exists, to prove the instrument can fire
+# 6 (v3.6, 2026-10-19, Lane A) Uplink model spend. The $10 budget and its 14-day window were removed by the owner on 2026-10-14
+# (dec-owner-pl-remove-temporary-pilot-limits-prepare-live-2026-10-14) and no longer stop service, so they are no longer measured.
+# Three separate results: (a) kill switch (public_turn_spend_gates.enabled) readable and ON; (b) WARNING when settled model spend over the
+# rolling last 24 h reaches SPEND_WARN_USD - alert-only, this script never stops or changes service; (c) MONITORING FAILURE when the
+# instrument cannot answer (no DB container, query error, not exactly one gate row, ledger not current). A failed read is never "spend OK".
+SPEND_WARN_USD = float(os.environ.get("PLW_SPEND_WARN_USD", "5"))   # proposed initial threshold (PM 2026-10-19); owner-approved value goes here
+SPEND_DB = os.environ.get("PLW_SPEND_DB", "uplink")                   # failure control: PLW_SPEND_DB=<bad name> must give MONITORING FAILURE
+SQL_SPEND = ("select (select count(*) from public_turn_spend_gates), "
+             "(select bool_and(enabled) from public_turn_spend_gates), "
+             "(select coalesce(sum(actual_micro_usd),0) from public_turn_spend_reservations where state='settled' and settled_at > now()-interval '24 hours'), "
+             "(select count(*) from public_turn_spend_reservations where state='settled' and settled_at > now()-interval '24 hours'), "
+             "(select coalesce(sum(reserved_micro_usd),0) from public_turn_spend_reservations where state='uncertain' and created_at > now()-interval '24 hours'), "
+             "(select count(*) from public_turn_spend_reservations where state='reserved' and created_at < now()-interval '15 minutes')")
+def spend_checks():
+    warn = 0.0 if "spend" in CTRL else SPEND_WARN_USD   # PLW_CTRL=spend: positive control, threshold forced to 0 so the warning must fire
+    if not DB: chk("MONITORING FAILURE: spend instrument cannot find the Uplink DB container", False, "spend and kill switch NOT measured"); return
+    try:
+        r = subprocess.run(["docker", "exec", "-i", DB, "psql", "-U", "uplink", "-d", SPEND_DB, "-X", "-At", "-F", "|", "-v", "ON_ERROR_STOP=1"], input=SQL_SPEND, capture_output=True, text=True, timeout=25)
+        out = r.stdout.strip() if r.returncode == 0 else None; err = (r.stderr or "").strip().splitlines()[-1:] if r.returncode else []
+    except Exception as e: out, err = None, [type(e).__name__]
+    f = out.split("|") if out else []
+    if len(f) != 6: chk("MONITORING FAILURE: spend ledger query failed", False, "spend and kill switch NOT measured (%s)" % ("; ".join(err)[:90] or "unparseable answer")); return
+    ngate, en, spent, nset, unc, stuck = f
+    if "kill" in CTRL: en = "f"        # control: the kill-switch check must report an operator stop
+    if "stale" in CTRL: stuck = "1"    # control: the ledger-not-current failure must be reported
+    if ngate != "1": chk("MONITORING FAILURE: expected exactly one spend gate row", False, "gate_rows=%s; kill switch state ambiguous" % ngate); return
+    chk("Uplink kill switch readable and ON (public turns allowed)", en == "t", "enabled=%s (off = operator stop in effect)" % en)
+    if stuck != "0": chk("MONITORING FAILURE: spend ledger not current (reservations unsettled > 15 min)", False, "stuck_reservations=%s; the 24 h figure below may be low" % stuck)
+    usd = int(spent) / 1e6
+    chk("Uplink model spend last 24 h < US$%.2f (WARNING only, service unaffected)" % warn if warn else "spend warning control (threshold forced to 0)", usd < warn,
+        "settled_24h=US$%.4f turns=%s uncertain_24h_max=US$%.4f (alert-only; no budget stop exists)" % (usd, nset, int(unc) / 1e6))
+spend_checks()
 def public_checks():
     hmin = 0 if "hourly" in CTRL else int(os.environ.get("PLW_HOURLY_MIN", "8"))
     n = pgq("select count(*) from lite_admission_log where decision='admit' and created_at > now()-interval '1 hour'")
