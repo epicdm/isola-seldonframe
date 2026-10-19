@@ -61,6 +61,11 @@ import { bindingToCtxBooking } from "@/lib/agents/booking/binding-ctx";
 import { captureLlmGeneration } from "@/lib/analytics/llm-capture";
 import { VOICE_PROFILE_NOTE_PATH } from "@/lib/agents/voice-profile/ingest-sent-mail";
 import { buildTurnMessages, type TurnMessage } from "@/lib/agents/turn-messages";
+import {
+  conversationMatchesOwner,
+  CONVERSATION_NOT_FOUND_RESULT,
+  type ExpectedConversationOwner,
+} from "@/lib/agents/conversation-ownership";
 
 const MODEL = process.env.ANTHROPIC_AGENT_MODEL?.trim() || "claude-sonnet-4-5-20250929";
 const MAX_TURN_ITERATIONS = 6; // tool-call cap per single turn (catches loops)
@@ -141,6 +146,12 @@ export async function executeTurn(input: {
    *  Net effect: a persist:false turn writes ZERO agentTurns rows, but its
    *  real token/cost spend is still counted. */
   persist?: boolean;
+  /** Callers that resolve the agent independently of a CALLER-SUPPLIED
+   *  conversation id (the public turn route) pass that agent here. A
+   *  conversation owned by a different agent or workspace is then treated
+   *  exactly like an unknown id (see ./conversation-ownership). Omitted by
+   *  internal callers that created or derived the conversation themselves. */
+  expectedAgent?: ExpectedConversationOwner;
 }): Promise<ExecuteTurnResult> {
   const t0 = Date.now();
   const persist = input.persist !== false;
@@ -151,12 +162,8 @@ export async function executeTurn(input: {
     .from(agentConversations)
     .where(eq(agentConversations.id, input.conversationId))
     .limit(1);
-  if (!conv) {
-    return {
-      ok: false,
-      reason: "conversation_not_found",
-      fallbackMessage: "I'm sorry, this chat session has expired. Please refresh the page.",
-    };
+  if (!conv || !conversationMatchesOwner(conv, input.expectedAgent)) {
+    return { ...CONVERSATION_NOT_FOUND_RESULT };
   }
 
   const [agent] = await db
