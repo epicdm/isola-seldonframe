@@ -9,6 +9,7 @@ import { getOrgId } from "@/lib/auth/helpers";
 import { getOrgSubscription } from "@/lib/billing/subscription";
 import { assertWritable } from "@/lib/demo/server";
 import { getPlan } from "@/lib/billing/plans";
+import { isWorkspaceOwnerLike } from "@/lib/workspace/workspace-owner";
 
 function getAppBaseUrl() {
   return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
@@ -236,7 +237,15 @@ export async function createBillingPortalSessionAction() {
     .where(eq(users.id, userId))
     .limit(1);
 
-  const customerId = orgSubscription.stripeCustomerId ?? user?.stripeCustomerId ?? null;
+  // 2026-10-19 — the workspace's own Stripe customer (its subscription) is
+  // owner-level: an invited admin/member falls through to their personal
+  // customer, never the workspace's (lib/workspace/workspace-owner.ts).
+  let orgCustomerId = orgSubscription.stripeCustomerId ?? null;
+  const subscriptionOrgId = orgId ?? session?.user?.orgId ?? null;
+  if (orgCustomerId && (!subscriptionOrgId || !(await isWorkspaceOwnerLike(subscriptionOrgId, userId)))) {
+    orgCustomerId = null;
+  }
+  const customerId = orgCustomerId ?? user?.stripeCustomerId ?? null;
 
   if (!customerId) {
     // v1.8.1 — graceful redirect instead of throwing. Users on free

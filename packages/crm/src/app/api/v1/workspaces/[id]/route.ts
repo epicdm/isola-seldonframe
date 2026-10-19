@@ -9,6 +9,7 @@ import {
   syncAgencyWorkspaceQuantity,
 } from "@/lib/billing/workspace-billing";
 import { demoApiBlockedResponse, isDemoReadonly } from "@/lib/demo/server";
+import { isWorkspaceOwnerLike } from "@/lib/workspace/workspace-owner";
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   if (isDemoReadonly()) {
@@ -55,6 +56,13 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
 
   if (!targetOrg) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
+  }
+
+  // 2026-10-19 — listManagedOrganizations includes ANY org_members row, so an
+  // invited admin/member could otherwise hard-delete the workspace. Deletion is
+  // owner-level (see lib/workspace/workspace-owner.ts).
+  if (!(await isWorkspaceOwnerLike(targetOrgId, identity.userId))) {
+    return NextResponse.json({ error: "Only the workspace owner can delete this workspace." }, { status: 403 });
   }
 
   // Phase 4 — per-active-workspace billing. Resolve the parent agency
