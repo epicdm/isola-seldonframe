@@ -149,6 +149,26 @@ export function verifyRelayContext(input: {
   return { ok: true, claims, binding };
 }
 
+// Single-use relay proofs. verifyRelayContext accepts a proof within 60 s either side of its iat, so a proof seen again
+// inside that window is a replay. The relay mints a fresh nonce for every call and never re-sends a proof, so a legitimate
+// call never repeats one. Process-local, like the public turn limiter (the app runs one replica). Used by the public turn
+// route only: tools re-verify the same proof inside the turn and must not consume it.
+const RELAY_NONCE_TTL_MS = 125_000;
+const RELAY_NONCE_MAX = 10_000;
+const seenRelayNonces = new Map<string, number>();
+
+export function consumeRelayNonce(nonce: string, nowMs: number = Date.now()): boolean {
+  for (const [seen, expiresAt] of seenRelayNonces) {
+    if (expiresAt > nowMs) break;
+    seenRelayNonces.delete(seen);
+  }
+  if (seenRelayNonces.has(nonce)) return false;
+  // More live proofs than any real relay could send in the window: refuse rather than forget (fail closed).
+  if (seenRelayNonces.size >= RELAY_NONCE_MAX) return false;
+  seenRelayNonces.set(nonce, nowMs + RELAY_NONCE_TTL_MS);
+  return true;
+}
+
 export function sameRelayBinding(value: unknown, expected: RelayContextBinding): boolean {
   if (!isObject(value)) return false;
   return value.accountId === expected.accountId

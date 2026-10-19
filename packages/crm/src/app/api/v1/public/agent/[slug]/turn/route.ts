@@ -52,6 +52,7 @@ import {
 } from "@/lib/agents/public-pilot-controls";
 import { publicTurnFallbackEvents, publicTurnFallbackResponse } from "@/lib/agents/public-turn-response";
 import {
+  consumeRelayNonce,
   readRelayContextKey,
   RELAY_CONTEXT_BINDING_KEY,
   sameRelayBinding,
@@ -367,6 +368,11 @@ export async function POST(
     if (!verified.ok || !envScopeMatches || !bindingMatches) {
       return NextResponse.json({ error: "invalid_channel_context" }, { status: 403, headers: CORS_HEADERS });
     }
+    // A proof is single-use: a replay inside its freshness window is refused like any other invalid proof, so it can
+    // never ride the verified-relay exemption from the anonymous limits below.
+    if (!consumeRelayNonce(verified.claims.nonce)) {
+      return NextResponse.json({ error: "invalid_channel_context" }, { status: 403, headers: CORS_HEADERS });
+    }
     trustedRelayToolContext = {
       kind: "chatwoot",
       proof: relayProof,
@@ -383,7 +389,13 @@ export async function POST(
     if (!requestIp) {
       return NextResponse.json({ error: "temporarily_unavailable", message: PUBLIC_CHAT_UNAVAILABLE_MESSAGE }, { status: 503, headers: CORS_HEADERS });
     }
-    const allowed = await checkPublicTurnAllowed({
+    // Every WhatsApp customer reaches this route from the relay's single client IP, so the anonymous per-IP and per-agent
+    // counters would cap all of them together. A VERIFIED relay turn is exempt from those counters: trustedRelayToolContext
+    // is set above only after the relay proof's HMAC, freshness, message hash and expected agent/session were verified, the
+    // configured relay scope and the stored conversation binding matched, and the proof's nonce was unused. The exemption
+    // never keys on the client IP or on a caller-supplied header: an unverifiable proof was refused with 403 above, and a
+    // relay turn sent without a proof is anonymous traffic and counted like any other.
+    const allowed = trustedRelayToolContext ? ({ ok: true } as const) : await checkPublicTurnAllowed({
       ip: requestIp,
       agentId: agentRow.id,
       limits: resolvePublicTurnLimits(),

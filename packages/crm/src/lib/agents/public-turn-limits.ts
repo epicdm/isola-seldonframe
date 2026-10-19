@@ -7,6 +7,7 @@
 //   - per agent, per day             (a hard ceiling that does not depend on the client IP being honest)
 // The defaults are deliberately modest and can be changed with env vars without a release.
 // A limiter failure FAILS CLOSED: the visitor is told to retry, and no model call is made.
+// The route exempts only VERIFIED relay turns (signed, fresh, single-use relay proof); see the turn route.
 import { checkRateLimit } from "@/lib/utils/rate-limit";
 import { parseTrustedProxyHops, resolveTrustedClientIp } from "./public-pilot-controls";
 
