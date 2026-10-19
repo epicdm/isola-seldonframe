@@ -94,6 +94,12 @@ describe("inboxCaptainAttached (GET captain/assistants, then captain/assistants/
     await assert.rejects(client(replyWith({ payload: [{ name: "no id" }] }, {})).cw.inboxCaptainAttached(77));
     await assert.rejects(client(replyWith({ payload: [{ id: 4 }] }, { 4: { payload: {} } })).cw.inboxCaptainAttached(77));
     await assert.rejects(client(replyWith({ payload: Array.from({ length: 51 }, (_, i) => ({ id: i + 1 })) }, {})).cw.inboxCaptainAttached(77));
+    // Codex re-review: a malformed inbox entry, or a list shorter than its total_count, is never read as 'no Captain'
+    await assert.rejects(client(replyWith({ payload: [{ id: 4 }] }, { 4: { payload: [{ id: 12 }, { name: "no id" }] } })).cw.inboxCaptainAttached(77));
+    await assert.rejects(client(replyWith({ payload: [{ id: 4 }], meta: { total_count: 2 } }, {})).cw.inboxCaptainAttached(77));
+    await assert.rejects(client(replyWith({ payload: [{ id: 4 }] }, { 4: { payload: [{ id: 12 }], meta: { total_count: 3 } } })).cw.inboxCaptainAttached(77));
+    // twin: a complete, well-formed list with matching total_count is read normally
+    assert.equal(await client(replyWith({ payload: [{ id: 4 }], meta: { total_count: 1 } }, { 4: { payload: [{ id: 12 }], meta: { total_count: 1 } } })).cw.inboxCaptainAttached(77), false);
   });
 });
 

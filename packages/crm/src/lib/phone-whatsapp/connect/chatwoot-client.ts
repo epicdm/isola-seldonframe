@@ -151,16 +151,23 @@ export function makeChatwootClient(opts: { base: string; accountId: string; apiT
     async inboxCaptainAttached(inboxId) {
       // Captain (enterprise, v4.18): captain_inboxes links ONE assistant to an inbox (unique inbox_id). There is no inbox->assistant read,
       // so: list the account's assistants (GET captain/assistants; Captain::AssistantPolicy#index? is true) and each assistant's inboxes
-      // (GET captain/assistants/:id/inboxes). Any failure, unexpected shape or an implausible number of assistants throws.
+      // (GET captain/assistants/:id/inboxes). Any failure, unexpected shape, an entry without an id, a list shorter than its
+      // meta.total_count (v4.18 does not paginate these lists; a partial page is never read as complete) or an implausible number of
+      // assistants throws.
       if (!idOf(inboxId)) throw new ChatwootError(400, "captain inboxes");
-      const assistants = (await call("captain assistants", "GET", "/captain/assistants")).payload;
-      if (!Array.isArray(assistants) || assistants.length > 50) throw new ChatwootError(502, "captain assistants");
-      for (const a of assistants as Array<{ id?: unknown }>) {
-        const id = idOf(a?.id);
-        if (!id) throw new ChatwootError(502, "captain assistants");
-        const inboxes = (await call("captain inboxes", "GET", `/captain/assistants/${id}/inboxes`)).payload;
-        if (!Array.isArray(inboxes)) throw new ChatwootError(502, "captain inboxes");
-        if ((inboxes as Array<{ id?: unknown }>).some((i) => idOf(i?.id) === inboxId)) return true;
+      const complete = (j: Record<string, unknown>, label: string): Array<{ id?: unknown }> => {
+        const list = j.payload;
+        if (!Array.isArray(list)) throw new ChatwootError(502, label);
+        const total = (j.meta as { total_count?: unknown } | undefined)?.total_count;
+        if (total !== undefined && (typeof total !== "number" || total !== list.length)) throw new ChatwootError(502, label);
+        for (const e of list as Array<{ id?: unknown }>) if (!idOf(e?.id)) throw new ChatwootError(502, label);
+        return list as Array<{ id?: unknown }>;
+      };
+      const assistants = complete(await call("captain assistants", "GET", "/captain/assistants"), "captain assistants");
+      if (assistants.length > 50) throw new ChatwootError(502, "captain assistants");
+      for (const a of assistants) {
+        const inboxes = complete(await call("captain inboxes", "GET", `/captain/assistants/${idOf(a.id)}/inboxes`), "captain inboxes");
+        if (inboxes.some((i) => idOf(i.id) === inboxId)) return true;
       }
       return false;
     },
