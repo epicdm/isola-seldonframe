@@ -7,6 +7,7 @@
 //
 // Opt-in: refuses unless NEON_LOCAL_HOST is set AND OWNER_GUARD_DB_TEST=scratch. Needs node --experimental-test-module-mocks.
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test, { before, describe, mock } from "node:test";
@@ -69,11 +70,13 @@ describe("Owner-only workspace deletion and billing portal", { skip: !enabled &&
         headers: async () => new Headers(),
       },
     });
-    mock.module("stripe", {
-      defaultExport: class FakeStripe {
-        billingPortal = { sessions: { create: async (a: { customer: string }) => { stripeSdkCalls.push({ customer: a.customer }); return { url: "https://billing.fixture.test/session" }; } } };
-      },
-    });
+    class FakeStripe {
+      billingPortal = { sessions: { create: async (a: { customer: string }) => { stripeSdkCalls.push({ customer: a.customer }); return { url: "https://billing.fixture.test/session" }; } } };
+    }
+    // tsx may load the route through either module system, so mock both resolutions of "stripe" (never reach the network).
+    const require = createRequire(path.join(crm, "src/app/api/stripe/portal/route.ts"));
+    mock.module("stripe", { defaultExport: FakeStripe });
+    mock.module(pathToFileURL(require.resolve("stripe")).href, { defaultExport: FakeStripe });
     const realFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
