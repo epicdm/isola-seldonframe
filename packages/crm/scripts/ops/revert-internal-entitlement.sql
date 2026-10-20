@@ -1,22 +1,27 @@
 -- EPIC 2026-10-20 — audited reversal of ONE internal entitlement (lib/workspace/transfer-ownership.ts setInternalWorkspaceEntitlement).
 -- Prepared and tested in advance so recovery never improvises a database edit (Port ev-laneA-epic-company-setup-package-2026-10-20).
--- Run ONLY under owner authorisation, AFTER any ownership transfer applied since the entitlement has been rolled back:
---   sed -e "s/__ORG__/<workspace uuid>/" -e "s/__ENTITLEMENT_ACTION__/<internal_entitlement actionId>/" \
---       -e "s/__ACTOR_ID__/<platform admin user uuid>/" -e "s/__ACTOR_EMAIL__/<platform admin email>/" revert-internal-entitlement.sql \
---     | psql -v ON_ERROR_STOP=1 --single-transaction -d uplink
+-- Run ONLY under owner authorisation, AFTER every applied ownership transfer of the workspace has been rolled back:
+--   psql -v ON_ERROR_STOP=1 --single-transaction -d uplink \
+--     -v org=<workspace uuid> -v entitlement_action=<internal_entitlement actionId> \
+--     -v actor_id=<platform admin user uuid> -v actor_email=<platform admin email> -f revert-internal-entitlement.sql
+-- Inputs reach SQL only as psql-quoted literals (:'var') through set_config, never by text substitution (Codex r5); the uuid casts
+-- refuse anything that is not a uuid.
 -- One block, one transaction: every check passes and both writes happen, or nothing changes. It refuses (raises) when
 --   the action is not an applied internal_entitlement of that workspace, or was already reverted;
---   an ownership transfer applied after it has not been rolled back (the entitlement must not be removed under a transferred owner);
+--   ANY applied ownership transfer of the workspace lacks an applied rollback (no timestamp ordering is relied on: audit created_at is
+--   transaction start time, Codex r5), so the entitlement is never removed under a transferred owner;
 --   the workspace no longer matches the action's recorded after-state (drift), or it is Stripe-managed;
 --   the actor is not a user with that email.
 -- It restores organizations.plan and the subscription's tier/status to the recorded before-state (other subscription keys untouched),
 -- and writes an internal_entitlement audit row with reason 'revert' and reverts_action_id = the entitlement action.
+SELECT set_config('epic_revert.org', :'org', true), set_config('epic_revert.entitlement_action', :'entitlement_action', true),
+       set_config('epic_revert.actor_id', :'actor_id', true), set_config('epic_revert.actor_email', :'actor_email', true);
 DO $revert$
 DECLARE
-  v_org uuid := '__ORG__'::uuid;
-  v_ent uuid := '__ENTITLEMENT_ACTION__'::uuid;
-  v_actor uuid := '__ACTOR_ID__'::uuid;
-  v_actor_email text := '__ACTOR_EMAIL__';
+  v_org uuid := current_setting('epic_revert.org')::uuid;
+  v_ent uuid := current_setting('epic_revert.entitlement_action')::uuid;
+  v_actor uuid := current_setting('epic_revert.actor_id')::uuid;
+  v_actor_email text := current_setting('epic_revert.actor_email');
   o record;
   a record;
   v_sub jsonb;
@@ -35,7 +40,7 @@ BEGIN
   END IF;
   IF EXISTS (
     SELECT 1 FROM workspace_admin_actions x
-    WHERE x.org_id = v_org AND x.action = 'ownership_transfer' AND x.outcome = 'applied' AND x.created_at >= a.created_at
+    WHERE x.org_id = v_org AND x.action = 'ownership_transfer' AND x.outcome = 'applied'
       AND NOT EXISTS (SELECT 1 FROM workspace_admin_actions r
                       WHERE r.reverts_action_id = x.id AND r.action = 'ownership_transfer_rollback' AND r.outcome = 'applied')
   ) THEN

@@ -33,10 +33,14 @@ describe("internal entitlement reversal (scratch Postgres, production driver)", 
   const org = async () => (await rows<{ plan: string | null; subscription: Record<string, unknown> | null; owner_id: string }>(
     sql`select plan, subscription, owner_id from organizations where id = ${WS}::uuid`))[0];
   const audits = async () => (await rows<{ n: string }>(sql`select count(*)::text as n from workspace_admin_actions where org_id = ${WS}::uuid`))[0].n;
+  // The file's psql line binds the inputs with set_config(:'var'); here the same set_config runs with bound parameters, then the block.
+  const block = revertSql.slice(revertSql.indexOf("DO $revert$"));
   const revert = async (ent: string, actorId = SUPER, actorEmail = SUPER_EMAIL) => {
-    const text = revertSql.replace("__ORG__", WS).replace("__ENTITLEMENT_ACTION__", ent).replace("__ACTOR_ID__", actorId).replace("__ACTOR_EMAIL__", actorEmail);
     try {
-      await db.transaction(async (tx) => { await tx.execute(sql.raw(text)); });
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`select set_config('epic_revert.org', ${WS}, true), set_config('epic_revert.entitlement_action', ${ent}, true), set_config('epic_revert.actor_id', ${actorId}, true), set_config('epic_revert.actor_email', ${actorEmail}, true)`);
+        await tx.execute(sql.raw(block));
+      });
       return "ok";
     } catch (error) {
       const m = /revert refused: ([a-z_]+)/.exec(String((error as { cause?: unknown }).cause ?? error) + String((error as Error).message));
@@ -86,6 +90,10 @@ describe("internal entitlement reversal (scratch Postgres, production driver)", 
     assert.equal(await revert(ent.actionId), "transfer_still_applied");
     assert.deepEqual(await org(), { ...entitled, owner_id: INFO });
     assert.equal(await audits(), n0);
+    // Codex r5: audit created_at is transaction start time, so a transfer can carry an EARLIER stamp than the entitlement it followed.
+    await db.execute(sql`update workspace_admin_actions set created_at = (select created_at from workspace_admin_actions where id = ${ent.actionId}::uuid) - interval '1 minute' where id = ${tr.actionId}::uuid`);
+    assert.equal(await revert(ent.actionId), "transfer_still_applied", "an earlier-stamped applied transfer still blocks the reversal");
+    assert.equal(await revert(ent.actionId, SUPER, "o'brien@platform.test"), "actor_not_found", "an apostrophe in an input is data, not SQL");
 
     const rb = await T.rollbackWorkspaceOwnershipTransfer({ orgId: WS, transferActionId: tr.actionId, actor: superActor });
     assert.equal(rb.ok, true, JSON.stringify(rb));
