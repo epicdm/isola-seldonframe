@@ -2,7 +2,8 @@
 // through the production driver, after the REAL entitlement, transfer and rollback modules ran. Also proves the recommended operator
 // home shape: a dedicated workspace linked to the platform admin exactly as the existing link-owner route leaves it
 // (owner_id + parent_user_id + an owner membership) is accepted as the old owner's new home.
-// Port ev-laneA-epic-company-setup-package-2026-10-20. Scratch database only; all fixtures are synthetic.
+// Port ev-laneA-epic-company-setup-package-2026-10-20. Scratch database only; all fixtures are synthetic. Its emails differ from the
+// transfer spec's (users.email is unique): the specs share one scratch database.
 //
 // Opt-in: refuses unless NEON_LOCAL_HOST is set AND TRANSFER_DB_TEST=scratch. Needs node --experimental-test-module-mocks.
 import assert from "node:assert/strict";
@@ -18,7 +19,7 @@ const enabled = process.env.TRANSFER_DB_TEST === "scratch" && !!process.env.NEON
 const SUPER = "a4000000-0000-4000-8000-000000000001", INFO = "a4000000-0000-4000-8000-000000000002";
 const WS = "b4000000-0000-4000-8000-000000000001", INFO_HOME = "b4000000-0000-4000-8000-000000000002";
 const OPS_HOME = "b4000000-0000-4000-8000-000000000003"; // dedicated operator home, linked as the link-owner route does
-const SUPER_EMAIL = "ops@platform.test", INFO_EMAIL = "info@tenant.test";
+const SUPER_EMAIL = "ops-revert@platform.test", INFO_EMAIL = "info@tenant.test";
 const superActor = { userId: SUPER, email: SUPER_EMAIL };
 
 describe("internal entitlement reversal (scratch Postgres, production driver)", { skip: !enabled && "set TRANSFER_DB_TEST=scratch with a scratch database" }, () => {
