@@ -388,6 +388,13 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     assert.deepEqual((await ownerState()).members, [`${INFO}:owner`], "no membership was created for the platform admin");
   });
 
+  test("consume re-authorises: a link for someone with no tenant authority here is refused (not a platform admin, so only the re-authorisation can refuse it)", async () => {
+    const link = signAt("magic", "outsider@fixture.test", Date.now());
+    assert.ok(S.verifyOperatorToken(link), "the link itself is valid (positive control)");
+    const r = await withOperatorCookie(null, () => OP.consumeOperatorMagicLink({ orgSlug: EPIC_SLUG, token: link }));
+    assert.equal(r.ok ? "ok" : r.reason, "not_authorized_for_workspace");
+  });
+
   test("B: an allowlisted identity that ALSO owns a workspace still gets no standing session there (request, consume, both reads)", async () => {
     const asked = await OP.requestOperatorMagicLinkAction({ orgSlug: "syn-one", email: SUPER_EMAIL });
     assert.equal(asked.ok && asked.expiresAt, "", "no link is issued although it owns syn-one");
