@@ -17,6 +17,8 @@ import React from "react";
 
 import { CreateClientCta } from "../../../src/components/dashboard/create-client-cta";
 
+// EPIC 2026-10-20 (owner ruling, plan v1.12): the agency label "Add client workspace" renders only for an authorised agency
+// (agencyMode); the cases below that assert it run as the agency context. Tenant wording is covered at the end.
 describe("CreateClientCta", () => {
   // node:test doesn't trigger @testing-library/react's auto-cleanup sniff
   // (vitest/jest globals only) — DOM leaks between tests and triggers
@@ -26,7 +28,7 @@ describe("CreateClientCta", () => {
   });
 
   test("renders an anchor link to /clients/new when under the limit", () => {
-    render(<CreateClientCta tier="growth" used={1} limit={3} />);
+    render(<CreateClientCta tier="growth" used={1} limit={3} agencyMode />);
     // 2026-05-17 fix (see create-client-cta.tsx): the under-limit CTA used
     // to be a base-ui `Button render={<Link/>} nativeButton={false}`
     // (role="button" on an <a>), but that render-prop pattern swallowed
@@ -47,7 +49,7 @@ describe("CreateClientCta", () => {
   });
 
   test("at limit renders a button (not a link) that opens UpgradeModal on click", () => {
-    render(<CreateClientCta tier="free" used={1} limit={1} />);
+    render(<CreateClientCta tier="free" used={1} limit={1} agencyMode />);
     const button = screen.getByRole("button", { name: /add client workspace/i });
     // Should NOT carry an href at limit — the click goes to the modal,
     // not navigation. If an href existed, middle-click / cmd-click
@@ -64,7 +66,7 @@ describe("CreateClientCta", () => {
   });
 
   test("unlimited tier (Scale, limit Infinity) renders without N/M and links to /clients/new", () => {
-    render(<CreateClientCta tier="scale" used={5} limit={Number.POSITIVE_INFINITY} />);
+    render(<CreateClientCta tier="scale" used={5} limit={Number.POSITIVE_INFINITY} agencyMode />);
     // Unlimited: no fraction
     assert.equal(
       screen.queryAllByText(/\d+\s*\/\s*\d+\s+workspaces/i).length,
@@ -77,5 +79,12 @@ describe("CreateClientCta", () => {
     const trigger = screen.getByRole("link", { name: /add client workspace/i });
     assert.equal(trigger.tagName.toLowerCase(), "a");
     assert.equal(trigger.getAttribute("href"), "/clients/new");
+  });
+
+  test("tenant (no authorised agency): neutral 'Add workspace' label, same link, no client wording", () => {
+    render(<CreateClientCta tier="growth" used={1} limit={3} />);
+    const trigger = screen.getByRole("link", { name: /^add workspace$/i });
+    assert.equal(trigger.getAttribute("href"), "/clients/new");
+    assert.equal(screen.queryAllByRole("link", { name: /client/i }).length, 0, "no client wording for a tenant");
   });
 });

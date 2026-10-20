@@ -152,7 +152,8 @@ describe("tenant vs reseller scope (scratch Postgres, production driver)", { ski
   });
 
   test("reversal: after the real reversal script, the granted workspace is free and the other still inherits nothing", async () => {
-    const [row] = ((r: any) => (Array.isArray(r) ? r : r.rows))(await ex(sql`select id from workspace_admin_actions where org_id = ${O(1)}::uuid and action = 'internal_entitlement' and outcome = 'applied' order by created_at desc limit 1`));
+    const res = await ex(sql`select id from workspace_admin_actions where org_id = ${O(1)}::uuid and action = 'internal_entitlement' and outcome = 'applied' order by created_at desc limit 1`);
+    const [row] = (Array.isArray(res) ? res : (res as unknown as { rows: Array<{ id: string }> }).rows) as Array<{ id: string }>;
     await db.transaction(async (tx) => {
       await tx.execute(sql`select set_config('epic_revert.org', ${O(1)}, true), set_config('epic_revert.entitlement_action', ${row.id}, true), set_config('epic_revert.actor_id', ${SUPER}, true), set_config('epic_revert.actor_email', ${SUPER_EMAIL}, true)`);
       await tx.execute(sql.raw(block));
