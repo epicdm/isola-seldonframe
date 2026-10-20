@@ -15,6 +15,18 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { aiAttached, type ChatwootPort } from "./chatwoot-client";
 
 export const DIGEST_FIELDS = new Set(["history", "smb_app_state_sync"]);
+
+// Untrusted Meta webhook JSON, read defensively: every field is optional and checked before use. Types only (no runtime trust in the shape).
+type ChangeValue = { metadata?: { phone_number_id?: unknown } };
+type MetaMessage = {
+  id?: unknown; from?: unknown; timestamp?: unknown; type?: unknown;
+  text?: { body?: string }; image?: { caption?: string }; video?: { caption?: string }; document?: { filename?: string }; reaction?: { emoji?: string };
+};
+type HistoryValue = { metadata?: { display_phone_number?: unknown }; history?: unknown };
+type HistoryChunk = { metadata?: { phase?: unknown; chunk_order?: unknown; progress?: unknown }; errors?: unknown; threads?: unknown };
+type HistoryThread = { id?: unknown; messages?: unknown };
+type StateSyncValue = { state_sync?: unknown };
+type StateSyncItem = { type?: unknown; action?: unknown; contact?: { full_name?: string; first_name?: string; phone_number?: unknown } };
 export const MAX_HISTORY_MESSAGES_PER_CHUNK = 5000;
 
 /** Meta's X-Hub-Signature-256: "sha256=" + HMAC-SHA256(app secret, raw body). Constant-time compare; any malformed input is false. */
@@ -28,17 +40,17 @@ export function verifyMetaSignature(raw: string, header: string | null, appSecre
 
 export type Plan =
   | { ok: false; status: number; code: "bad_json" | "no_phone" | "mixed_phones" }
-  | { ok: true; phoneNumberId: string; forward: boolean; digest: Array<{ field: string; value: any }>; fields: string[] };
+  | { ok: true; phoneNumberId: string; forward: boolean; digest: Array<{ field: string; value: unknown }>; fields: string[] };
 
 /** Decides what to do with one Meta POST. A payload must concern exactly one phone number id (a phone override is per number). */
 export function planDelivery(raw: string): Plan {
-  let body: any;
+  let body: { entry?: unknown } | null;
   try { body = JSON.parse(raw); } catch { return { ok: false, status: 400, code: "bad_json" }; }
-  const changes: Array<{ field: string; value: any }> = [];
+  const changes: Array<{ field: string; value: unknown }> = [];
   for (const entry of Array.isArray(body?.entry) ? body.entry : []) {
     for (const ch of Array.isArray(entry?.changes) ? entry.changes : []) changes.push({ field: String(ch?.field ?? ""), value: ch?.value });
   }
-  const phones = new Set(changes.map((c) => c.value?.metadata?.phone_number_id).filter((p): p is string => typeof p === "string" && /^\d{5,20}$/.test(p)));
+  const phones = new Set(changes.map((c) => (c.value as ChangeValue | null | undefined)?.metadata?.phone_number_id).filter((p): p is string => typeof p === "string" && /^\d{5,20}$/.test(p)));
   if (phones.size === 0) return { ok: false, status: 404, code: "no_phone" };
   if (phones.size > 1) return { ok: false, status: 400, code: "mixed_phones" };
   const digest = changes.filter((c) => DIGEST_FIELDS.has(c.field));
@@ -49,8 +61,9 @@ export function planDelivery(raw: string): Plan {
 const digitsOf = (p: unknown) => (typeof p === "string" ? p.replace(/\D/g, "") : "");
 
 /** Same mapping as the BFF's extractMessageText. */
-export function extractMessageText(msg: any): string {
-  if (!msg || typeof msg !== "object") return "";
+export function extractMessageText(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  const msg = input as MetaMessage;
   switch (msg.type) {
     case "text": return msg.text?.body ?? "";
     case "image": return msg.image?.caption ? `[image] ${msg.image.caption}` : "[image]";
@@ -101,18 +114,19 @@ const stamp = (ts: unknown) => {
 };
 
 /** history: value.history[] chunks of { metadata: { phase, chunk_order, progress }, threads: [{ id: <customer wa_id>, messages: [...] }] }. Throws on a Chatwoot failure (the route answers 5xx so Meta redelivers; the chunk is not marked). */
-export async function digestHistory(value: any, ctx: DigestCtx, counts: DigestCounts): Promise<void> {
+export async function digestHistory(input: unknown, ctx: DigestCtx, counts: DigestCounts): Promise<void> {
+  const value = input as HistoryValue | null | undefined;
   const businessPhone = digitsOf(value?.metadata?.display_phone_number);
-  for (const chunk of Array.isArray(value?.history) ? value.history : []) {
-    const meta = chunk?.metadata ?? {};
+  for (const chunk of (Array.isArray(value?.history) ? value.history : []) as Array<HistoryChunk | null | undefined>) {
+    const meta: NonNullable<HistoryChunk["metadata"]> = chunk?.metadata ?? {};
     if (Array.isArray(chunk?.errors) && chunk.errors.length) ctx.log(`[coex-recv] history chunk carries ${chunk.errors.length} error(s) (e.g. the customer declined sharing)`);
     const key = `${String(meta.phase ?? "x")}:${String(meta.chunk_order ?? "x")}`;
     if (await ctx.seen(key)) { counts.skippedChunks++; continue; }
     let inChunk = 0;
-    for (const thread of Array.isArray(chunk?.threads) ? chunk.threads : []) {
+    for (const thread of (Array.isArray(chunk?.threads) ? chunk.threads : []) as Array<HistoryThread | null | undefined>) {
       const customer = digitsOf(thread?.id);
       if (!customer) continue;
-      const messages = (Array.isArray(thread?.messages) ? thread.messages : []).filter((m: any) => extractMessageText(m));
+      const messages = ((Array.isArray(thread?.messages) ? thread.messages : []) as Array<MetaMessage | null | undefined>).filter((m) => extractMessageText(m));
       if (messages.length === 0) continue;
       counts.threads++;
       await ctx.aiCheck(); // re-checked before each conversation's entries (the entries themselves are never dispatched to a bot; see client)
@@ -140,14 +154,15 @@ export async function digestHistory(value: any, ctx: DigestCtx, counts: DigestCo
 }
 
 /** smb_app_state_sync: value.state_sync[] of { type: "contact", contact: { full_name, first_name, phone_number }, action }. Upsert by phone (idempotent); "remove" is logged, never deletes. */
-export async function digestStateSync(value: any, ctx: DigestCtx, counts: DigestCounts): Promise<void> {
+export async function digestStateSync(input: unknown, ctx: DigestCtx, counts: DigestCounts): Promise<void> {
+  const value = input as StateSyncValue | null | undefined;
   let removed = 0;
-  for (const item of Array.isArray(value?.state_sync) ? value.state_sync : []) {
+  for (const item of (Array.isArray(value?.state_sync) ? value.state_sync : []) as Array<StateSyncItem | null | undefined>) {
     if (item?.type !== "contact") continue;
     if (item?.action === "remove") { removed++; continue; }
     const phone = digitsOf(item?.contact?.phone_number);
     if (!phone) continue;
-    const name = (item.contact.full_name || item.contact.first_name || undefined) as string | undefined;
+    const name = (item.contact?.full_name || item.contact?.first_name || undefined) as string | undefined;
     await ctx.chatwoot.ensureContact({ inboxId: ctx.inboxId, phoneDigits: phone, name });
     counts.contacts++;
   }

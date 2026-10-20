@@ -217,7 +217,7 @@ describe("connect journey", () => {
     assert.deepEqual([code(await finalizeConnect(claim(await begin(h2), { wabaId: "900000000000777" }), h2.deps)), h2.lines.length], ["epic_owned_waba", 0]);
   });
 
-  test("coexistence number is refused when this deployment has no coexistence path configured: nothing bound, nothing registered", async () => {
+  test("coexistence number is refused here, nothing bound, nothing registered", async () => {
     const h = harness({ phones: [{ id: PHONE, displayNumber: "+1", verifiedName: "x", platformType: "CLOUD_API", isOnBizApp: true }] });
     const r = await finalizeConnect(claim(await begin(h)), h.deps);
     assert.deepEqual([code(r), h.lines.length, h.registers()], ["coexistence_not_supported_here", 0, 0]);
