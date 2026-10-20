@@ -19,7 +19,7 @@ const enabled = process.env.TRANSFER_DB_TEST === "scratch" && !!process.env.NEON
 const SUPER = "a4000000-0000-4000-8000-000000000001", INFO = "a4000000-0000-4000-8000-000000000002";
 const WS = "b4000000-0000-4000-8000-000000000001", INFO_HOME = "b4000000-0000-4000-8000-000000000002";
 const OPS_HOME = "b4000000-0000-4000-8000-000000000003"; // dedicated operator home, linked as the link-owner route does
-const SUPER_EMAIL = "ops-revert@platform.test", INFO_EMAIL = "info@tenant.test";
+const SUPER_EMAIL = "ops-revert@platform.test", INFO_EMAIL = "info-revert@tenant.test";
 const superActor = { userId: SUPER, email: SUPER_EMAIL };
 
 describe("internal entitlement reversal (scratch Postgres, production driver)", { skip: !enabled && "set TRANSFER_DB_TEST=scratch with a scratch database" }, () => {
