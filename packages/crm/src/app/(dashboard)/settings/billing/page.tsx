@@ -11,7 +11,8 @@ import { ClaimAndUpgradeForm } from "@/components/billing/claim-and-upgrade-form
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { billingPresentation, findActiveInternalEntitlement } from "@/lib/billing/internal-entitlement";
+import { billingPresentation, findActiveInternalEntitlement, portalCustomerExists } from "@/lib/billing/internal-entitlement";
+import { isWorkspaceOwnerLike } from "@/lib/workspace/workspace-owner";
 
 // EPIC 2026-10-20 — shown for an audited internal entitlement with payment collection off (lib/billing/internal-entitlement.ts).
 const INTERNAL_PLAN_LABEL = "Internal plan — no payment collected";
@@ -241,18 +242,26 @@ export default async function BillingSettingsPage({
 
   const tierDisplay = getTierDisplay(tier);
   const usage = await getUsageSummary(activeOrgId, tier);
-  // Display only: the audited internal entitlement and whether a Stripe customer exists for the caller (the workspace's or the
-  // user's own - the two the billing-portal action reads). Nothing here writes plans, quotas, pricing or Stripe records.
+  // Display only: the audited internal entitlement and whether the billing-portal action would find a Stripe customer for this
+  // caller (the workspace's for an owner-like caller, else the caller's own). Nothing here writes plans, quotas, pricing or Stripe.
   const internalRecord = await findActiveInternalEntitlement(activeOrgId);
   const [caller] = isGuestAdminToken
     ? []
     : await db.select({ stripeCustomerId: users.stripeCustomerId }).from(users).where(eq(users.id, session.user.id)).limit(1);
+  const callerIsOwnerLike =
+    !isGuestAdminToken && Boolean(subscription.stripeCustomerId) && Boolean(activeOrgId)
+      ? await isWorkspaceOwnerLike(activeOrgId as string, session.user.id)
+      : false;
   const presentation = billingPresentation({
     subscription,
     record: internalRecord,
     tier,
     isGuestAdminToken,
-    hasStripeCustomer: Boolean(subscription.stripeCustomerId || caller?.stripeCustomerId),
+    hasStripeCustomer: portalCustomerExists({
+      workspaceCustomerId: subscription.stripeCustomerId,
+      callerIsOwnerLike,
+      callerCustomerId: caller?.stripeCustomerId,
+    }),
   });
 
   return (

@@ -32,6 +32,21 @@ export function isInternalEntitlementInEffect(
   return live !== "inactive" && live === normalizeTierId(record.tier);
 }
 
+/**
+ * Whether the billing-portal action would find a Stripe customer for this caller. It mirrors createBillingPortalSessionAction
+ * (lib/billing/actions.ts): the workspace's own customer is used only for an owner-like caller; anyone else falls back to their
+ * personal customer. Codex r1 (2026-10-20): an invited member of a paid workspace with no personal customer must not be offered a
+ * button the action can only redirect.
+ */
+export function portalCustomerExists(input: {
+  workspaceCustomerId?: string | null;
+  callerIsOwnerLike: boolean;
+  callerCustomerId?: string | null;
+}): boolean {
+  const workspace = input.workspaceCustomerId && input.callerIsOwnerLike ? input.workspaceCustomerId : null;
+  return Boolean(workspace ?? input.callerCustomerId);
+}
+
 export type BillingPresentation = { internalPlan: boolean; showManageSubscription: boolean };
 
 /**

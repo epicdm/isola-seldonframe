@@ -9,6 +9,7 @@ import {
   billingPresentation,
   hasStripeLink,
   isInternalEntitlementInEffect,
+  portalCustomerExists,
   type InternalEntitlementRecord,
 } from "../../../src/lib/billing/internal-entitlement";
 import type { OrganizationSubscription } from "../../../src/db/schema";
@@ -78,6 +79,21 @@ describe("billing presentation", () => {
   });
 });
 
+describe("portal customer, as createBillingPortalSessionAction selects it (Codex r1)", () => {
+  test("owner-like caller: the workspace's customer counts", () => {
+    assert.equal(portalCustomerExists({ workspaceCustomerId: "cus_ws", callerIsOwnerLike: true, callerCustomerId: null }), true);
+  });
+  test("invited member, workspace has a customer, member has none: no portal customer (button hidden)", () => {
+    assert.equal(portalCustomerExists({ workspaceCustomerId: "cus_ws", callerIsOwnerLike: false, callerCustomerId: null }), false);
+  });
+  test("invited member with a personal customer: their own customer counts", () => {
+    assert.equal(portalCustomerExists({ workspaceCustomerId: "cus_ws", callerIsOwnerLike: false, callerCustomerId: "cus_me" }), true);
+  });
+  test("no customer anywhere (EPIC's internal plan): none", () => {
+    assert.equal(portalCustomerExists({ workspaceCustomerId: null, callerIsOwnerLike: true, callerCustomerId: null }), false);
+  });
+});
+
 describe("billing page wiring (source)", () => {
   const page = readFileSync(path.resolve("src/app/(dashboard)/settings/billing/page.tsx"), "utf8");
   test("Manage subscription renders only behind presentation.showManageSubscription", () => {
@@ -92,6 +108,10 @@ describe("billing page wiring (source)", () => {
     assert.match(page, /presentation\.internalPlan \? "No payment collected" : formatMoney\(usage\.estimatedTotal\)/);
     assert.match(page, /\{presentation\.internalPlan \? \(\s*INTERNAL_PLAN_LABEL/);
     assert.match(page, /<UsageCard usage=\{usage\} internalPlan=\{presentation\.internalPlan\} \/>/);
+  });
+  test("the Stripe-customer check follows the portal action's owner-aware selection", () => {
+    assert.match(page, /hasStripeCustomer: portalCustomerExists\(\{\s*workspaceCustomerId: subscription\.stripeCustomerId,\s*callerIsOwnerLike,\s*callerCustomerId: caller\?\.stripeCustomerId,/);
+    assert.match(page, /await isWorkspaceOwnerLike\(activeOrgId as string, session\.user\.id\)/);
   });
   test("Upgrade is still offered only on the inactive tier (paid display preserved)", () => {
     assert.match(page, /!isGuestAdminToken && tier === "inactive" \? \(\s*<Link\s+href="\/pricing"/);
