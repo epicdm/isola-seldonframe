@@ -307,9 +307,10 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     assert.equal(await resolveTierForWorkspace(EPIC), "workspace", "EPIC keeps its own entitlement");
     assert.equal(await resolveTierForWorkspace(SYN1), "agency_scale", "unchanged");
     assert.equal(await resolveTierForWorkspace(SYN2), "agency_scale", "unchanged");
-    // Documented effect, not hidden: a plan-less workspace inherits its owner's HOME tier (tier-resolver.ts, upstream). info@'s
-    // home is now EPIC, so its old (plan-less) workspace resolves 'workspace' instead of 'inactive'.
-    assert.equal(await resolveTierForWorkspace(INFO_HOME), "workspace");
+    // Owner ruling 2026-10-20 (plan v1.12, EPIC is a tenant): EPIC's internal grant stays with EPIC. info@'s home is now EPIC, but
+    // its old (plan-less) workspace no longer inherits that internal grant through the owner chain, so it stays 'inactive' as it
+    // was before the transfer. (A paid home would still be inherited - tests/integration/tenant-scope.spec.ts.)
+    assert.equal(await resolveTierForWorkspace(INFO_HOME), "inactive");
     assert.equal(await portalOk(EPIC), true, "growth: portal on, without any bypass");
     assert.equal(await portalOk(SYN1), true, "unchanged");
     assert.equal(await portalOk(INFO_HOME), false, "starter cloud limits: portal still off");
