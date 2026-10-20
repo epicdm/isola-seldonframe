@@ -87,11 +87,23 @@ describe("tenant vs reseller scope (scratch Postgres, production driver)", { ski
   });
 
   test("users.planId mirroring the grant does not carry it; an independently paid user plan still does (Codex r1)", async () => {
-    await ex(sql`update users set plan_id = 'growth' where id = ${TENANT}::uuid`);
-    assert.equal(await tier(O(2)), "inactive", "a plan id mirrored from the internal grant must not be inherited");
-    await ex(sql`update users set stripe_subscription_id = 'sub_tenant_own' where id = ${TENANT}::uuid`);
-    assert.equal(await tier(O(2)), "workspace", "control: a user with an independent Stripe subscription keeps the users.planId fallback");
-    await ex(sql`update users set plan_id = null, stripe_subscription_id = null where id = ${TENANT}::uuid`);
+    try {
+      await ex(sql`update users set plan_id = 'growth' where id = ${TENANT}::uuid`);
+      assert.equal(await tier(O(2)), "inactive", "a plan id mirrored from the internal grant must not be inherited");
+      await ex(sql`update users set stripe_subscription_id = 'sub_tenant_own' where id = ${TENANT}::uuid`);
+      assert.equal(await tier(O(2)), "inactive", "a stored subscription id alone (status trialing = plan picked, not paid) is not entitlement");
+      for (const status of ["canceled", "unpaid"]) {
+        await ex(sql`update users set subscription_status = ${status} where id = ${TENANT}::uuid`);
+        assert.equal(await tier(O(2)), "inactive", `a ${status} user subscription is not entitlement`);
+      }
+      for (const status of ["active", "past_due"]) {
+        await ex(sql`update users set subscription_status = ${status} where id = ${TENANT}::uuid`);
+        assert.equal(await tier(O(2)), "workspace", `control: an independently paid (${status}) user plan keeps the users.planId fallback`);
+      }
+    } finally {
+      // cleanup in finally so a failure here cannot pollute later tests (seen under the planid-mirror sabotage on 4f436733)
+      await ex(sql`update users set plan_id = null, stripe_subscription_id = null, subscription_status = 'trialing' where id = ${TENANT}::uuid`);
+    }
     assert.equal(await tier(O(2)), "inactive");
   });
 
@@ -105,6 +117,15 @@ describe("tenant vs reseller scope (scratch Postgres, production driver)", { ski
       await ex(sql`alter table workspace_admin_actions_offline rename to workspace_admin_actions`);
     }
     assert.equal(await tier(O(2)), "inactive");
+  });
+
+  test("users.planId fallback is UNCHANGED for owners whose primary is not internally granted (legacy/manual plans)", async () => {
+    // PAID's primary is Stripe-paid -> inherits before reaching the fallback; make the primary free to reach it.
+    await ex(sql`update organizations set subscription = '{}'::jsonb, plan = 'free' where id = ${O(3)}::uuid`);
+    await ex(sql`update users set plan_id = 'workspace', subscription_status = 'trialing' where id = ${PAID}::uuid`);
+    assert.equal(await tier(O(4)), "workspace", "pre-existing behaviour: users.planId fallback applies without any Stripe evidence");
+    await ex(sql`update users set plan_id = null where id = ${PAID}::uuid`);
+    await ex(sql`update organizations set plan = 'workspace', subscription = ${paidSub("workspace")} where id = ${O(3)}::uuid`);
   });
 
   test("PAID multi-workspace: a Stripe-paid primary is still inherited by the owner's other workspace", async () => {

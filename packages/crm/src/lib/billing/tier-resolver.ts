@@ -59,6 +59,12 @@ function tierFromOrgRow(row: { plan: string | null; subscription: unknown }): Bi
   return normalizeTierId(subscription?.tier ?? row.plan ?? "inactive");
 }
 
+/** EPIC 2026-10-20: a user-level plan counts as independently paid only with a stored Stripe subscription id AND an entitled
+ *  status. Used only when the owner's primary carries an internal grant (or it cannot be verified). */
+export function independentlyPaid(owner: { stripeSubscriptionId?: string | null; subscriptionStatus?: string | null }): boolean {
+  return Boolean(owner.stripeSubscriptionId) && (owner.subscriptionStatus === "active" || owner.subscriptionStatus === "past_due");
+}
+
 /**
  * Resolve the effective tier for a workspace. See file header for the
  * resolution order. Returns "free" for any missing/invalid input.
@@ -113,6 +119,7 @@ export const resolveTierForWorkspace = cache(
         planId: users.planId,
         orgId: users.orgId,
         stripeSubscriptionId: users.stripeSubscriptionId,
+        subscriptionStatus: users.subscriptionStatus,
       })
       .from(users)
       .where(eq(users.id, ownerUserId))
@@ -149,10 +156,12 @@ export const resolveTierForWorkspace = cache(
     // organizations.subscription column.
     if (owner.planId) {
       const tier = normalizeTierId(owner.planId);
-      // EPIC 2026-10-20 (Codex r1): when the primary is internally granted (or unverifiable), users.planId is honoured only with
-      // evidence of an independent paid plan (a Stripe subscription on the user), so a plan id mirrored from the grant cannot
-      // carry it to other workspaces.
-      if (tier !== "inactive" && (!primaryInternalOrUnknown || owner.stripeSubscriptionId)) return tier;
+      // EPIC 2026-10-20 (Codex r1 + owner review): when the primary is internally granted (or unverifiable), users.planId is
+      // honoured only with evidence of an independent, currently ENTITLED paid plan: a stored Stripe subscription id AND a user
+      // subscription status of active or past_due (past_due keeps access, as workspace subscriptions do). A stored id alone is
+      // not enough (the legacy column is never cleared on cancellation); trialing (a plan picked, not paid), canceled and unpaid
+      // are not entitlement. Owners whose primary is NOT internally granted keep the unchanged fallback.
+      if (tier !== "inactive" && (!primaryInternalOrUnknown || independentlyPaid(owner))) return tier;
     }
 
     return "inactive";
