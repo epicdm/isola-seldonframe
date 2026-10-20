@@ -229,12 +229,13 @@ export async function getUserDetail(userId: string): Promise<UserDetail | null> 
     const lastRows = await db
       .select({
         orgId: activities.orgId,
-        lastAt: sql<Date>`MAX(${activities.createdAt})`,
+        // The pg driver returns a raw MAX(...) aggregate as a string, not a Date (2026-10-20 crash on the super-admin pages).
+        lastAt: sql<Date | string>`MAX(${activities.createdAt})`,
       })
       .from(activities)
       .where(sql`${activities.orgId} IN (${sql.join(allOrgIds.map((id) => sql`${id}`), sql`, `)})`)
       .groupBy(activities.orgId);
-    lastActivityMap = new Map(lastRows.map((r) => [r.orgId, r.lastAt]));
+    lastActivityMap = new Map(lastRows.map((r) => [r.orgId, new Date(r.lastAt)]));
   }
 
   const workspaces: UserDetailWorkspace[] = [
