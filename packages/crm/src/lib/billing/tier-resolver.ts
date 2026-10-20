@@ -50,6 +50,7 @@ import { db } from "@/db";
 import { organizations, users } from "@/db/schema";
 import { normalizeTierId, type BillingTier } from "./features";
 import { isEmailInAllowlist, parseAdminAllowlist } from "@/lib/operator-portal/authorization";
+import { internalGrantInEffectFor } from "./internal-entitlement";
 
 /** Internal: extract a tier from an organizations row's subscription/plan
  *  columns. "inactive" = no active paid plan. */
@@ -129,7 +130,10 @@ export const resolveTierForWorkspace = cache(
         .limit(1);
       if (parentOrg) {
         const parentTier = tierFromOrgRow(parentOrg);
-        if (parentTier !== "inactive") return parentTier;
+        // EPIC 2026-10-20: an INTERNAL grant (audited internal_entitlement, payment collection off) is scoped to the workspace
+        // it was granted to. Other workspaces of the same owner do not inherit it; they fall through to the owner's own plan
+        // (users.planId) below. Paid primary-org subscriptions are still inherited exactly as before.
+        if (parentTier !== "inactive" && !(await internalGrantInEffectFor(owner.orgId, parentOrg.subscription))) return parentTier;
       }
     }
 

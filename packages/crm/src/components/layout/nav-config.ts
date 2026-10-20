@@ -91,6 +91,10 @@ export type BuildNavInput = {
   phoneWhatsappOn?: boolean;
   /** Hides upstream community/docs destinations on white-label installs. */
   platformName?: string;
+  /** EPIC 2026-10-20 - true only when the operator holds an AUTHORISED agency relationship (lib/partner-agencies/authorized-agency.ts).
+   *  Agency wording ("Clients", "Back to agency") renders only then; ordinary multi-workspace tenants get neutral "Workspaces"
+   *  wording. Routes are unchanged either way. Absent/false = neutral. */
+  agencyMode?: boolean;
 };
 
 // Block-slug → href map for visibility filtering. Lifted verbatim from
@@ -194,7 +198,9 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
     draftApprovalsOn = false,
     phoneWhatsappOn = false,
     platformName = "SeldonFrame",
+    agencyMode = false,
   } = input;
+  const backLabel = agencyMode ? "← Back to agency" : "← All workspaces";
 
   const hiddenHrefs = new Set(hiddenBlocks.map((slug) => hiddenSlugToHref[slug]).filter(Boolean));
 
@@ -240,12 +246,12 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
           // BEFORE redirecting so the operator lands on the agency
           // dashboard with the full nav restored.
           href: `/switch-workspace?to=${encodeURIComponent(primaryOrgId)}&next=${encodeURIComponent("/dashboard")}`,
-          label: "← Back to agency",
+          label: backLabel,
           icon: "ChevronLeft",
         }
       : // Fallback: no primary org id (rare — synthesised user). Send
         // them to /clients which at least lists their workspaces.
-        { href: "/clients", label: "← Back to agency", icon: "ChevronLeft" };
+        { href: "/clients", label: backLabel, icon: "ChevronLeft" };
 
     const groups: NavGroup[] = [
       {
@@ -297,7 +303,8 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
 
   // Clients (PORTFOLIO) noun: progressive disclosure — only when the
   // operator actually has more than one workspace.
-  const clientsNoun: NavItem[] = workspaceCount > 1 ? [{ href: "/clients", label: "Clients", icon: "Briefcase" }] : [];
+  const clientsNoun: NavItem[] =
+    workspaceCount > 1 ? [{ href: "/clients", label: agencyMode ? "Clients" : "Workspaces", icon: "Briefcase" }] : [];
 
   return [
     {

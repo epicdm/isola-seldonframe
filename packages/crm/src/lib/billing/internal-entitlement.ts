@@ -67,6 +67,17 @@ export function billingPresentation(input: {
   };
 }
 
+/**
+ * True when `orgId`'s current subscription comes from an audited internal grant (see isInternalEntitlementInEffect). Used by the
+ * tier resolver so an internal grant is not inherited by the owner's other workspaces. Requires the audit record; missing Stripe
+ * data alone never makes a subscription "internal". On a read failure the reader returns null, so this returns false (the
+ * pre-change inheritance behaviour) rather than blocking tier resolution.
+ */
+export async function internalGrantInEffectFor(orgId: string, subscription: unknown): Promise<boolean> {
+  const record = await findActiveInternalEntitlement(orgId);
+  return isInternalEntitlementInEffect((subscription ?? {}) as OrganizationSubscription, record);
+}
+
 /** Reads the latest applied internal_entitlement of the workspace that no applied reversal points at. Null on any failure
  *  (the page then shows the normal display; it never blocks billing). */
 export async function findActiveInternalEntitlement(orgId: string | null | undefined): Promise<InternalEntitlementRecord | null> {

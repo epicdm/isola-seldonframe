@@ -35,6 +35,9 @@ function baseInput(overrides: Partial<BuildNavInput> = {}): BuildNavInput {
     isSuperAdmin: false,
     primaryOrgId: "org-primary",
     labels: LABELS,
+    // EPIC 2026-10-20: the pre-existing cases below describe an AUTHORISED agency operator; tenant wording is covered in
+    // tests/unit/layout/nav-config-tenant-wording.spec.ts.
+    agencyMode: true,
     ...overrides,
   };
 }

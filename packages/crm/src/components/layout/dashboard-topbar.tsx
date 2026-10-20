@@ -142,6 +142,7 @@ export function DashboardTopbar({
   isOperatorSession = false,
   notifications = [],
   primaryOrgId = null,
+  agencyMode = false,
 }: {
   userName: string;
   userEmail: string;
@@ -163,6 +164,8 @@ export function DashboardTopbar({
    *  workspace flip to /dashboard (not the Ready hub, which is
    *  meaningless for the agency's own workspace). */
   primaryOrgId?: string | null;
+  /** Authorised agency relationship (EPIC 2026-10-20): agency wording only then. */
+  agencyMode?: boolean;
 }) {
   const pathname = usePathname();
   const labels = useLabels();
@@ -313,7 +316,7 @@ export function DashboardTopbar({
         >
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-foreground">{workspaceName}</p>
-            <p className="truncate text-[11px] text-muted-foreground">Switch client workspace</p>
+            <p className="truncate text-[11px] text-muted-foreground">{agencyMode ? "Switch client workspace" : "Switch workspace"}</p>
           </div>
           <ChevronsUpDown className="size-4 text-muted-foreground" />
         </button>

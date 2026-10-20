@@ -25,6 +25,7 @@ import { DealsCrmSurface } from "@/components/crm/deals-crm-surface";
 import { getCrmSurfaceConfig } from "@/lib/crm/view-config";
 import { mapDealRowToCrmRecord } from "@/lib/crm/view-models";
 import { CreateClientCta } from "@/components/dashboard/create-client-cta";
+import { hasAuthorizedAgency } from "@/lib/partner-agencies/authorized-agency";
 import { resolvePlatformBranding, resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 // SH2-F4 — reused for the simplified-Home inline "Add client workspace"
 // button (skips CreateClientCta's usage pill without touching that
@@ -334,6 +335,8 @@ export default async function DashboardPage({
   // sessions are scoped to ONE workspace by design — their
   // membershipOrgIds list is just [their orgId].
   const isOperatorSession = isOperatorPortalUserId(user?.id);
+  // EPIC 2026-10-20: agency wording only for an AUTHORISED agency relationship (active partner agency on an agency tier).
+  const agencyMode = !isOperatorSession && user?.id ? await hasAuthorizedAgency(user.id) : false;
 
   // Phase 9 — agency dashboard header CTA. Compute workspace-limit
   // decision so the header can render <CreateClientCta> with tier-aware
@@ -1423,9 +1426,11 @@ export default async function DashboardPage({
           {/* ── Page header ─────────────────────────────────────────────── */}
           <header className="flex items-end justify-between gap-4">
             <div className="space-y-1">
-              <h1 className="text-3xl font-semibold tracking-tight">Agency dashboard</h1>
+              <h1 className="text-3xl font-semibold tracking-tight">{agencyMode ? "Agency dashboard" : "Workspaces"}</h1>
               <p className="text-muted-foreground">
-                How your agency is performing across all client workspaces.
+                {agencyMode
+                  ? "How your agency is performing across all client workspaces."
+                  : "How your workspaces are performing."}
               </p>
             </div>
             <div className="flex gap-2">
@@ -1603,13 +1608,14 @@ export default async function DashboardPage({
               // single-workspace-simplified case; non-simplified keeps
               // the full tier-aware component unchanged.
               <Link href="/clients/new" className="crm-button-primary h-9 px-4 text-xs sm:text-sm">
-                Add client workspace
+                {agencyMode ? "Add client workspace" : "Add workspace"}
               </Link>
             ) : (
               <CreateClientCta
                 tier={agencyWorkspaceLimit.tier}
                 used={agencyWorkspaceLimit.used}
                 limit={agencyWorkspaceLimit.limit}
+                agencyMode={agencyMode}
               />
             )}
           </div>

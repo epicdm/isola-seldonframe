@@ -51,7 +51,9 @@ export type CreateClientCtaProps = {
   limit: number;
 };
 
-export function CreateClientCta({ tier, used, limit }: CreateClientCtaProps) {
+export function CreateClientCta({ tier, used, limit, agencyMode = false }: CreateClientCtaProps & { agencyMode?: boolean }) {
+  // EPIC 2026-10-20: agency wording only for an authorised agency relationship.
+  const ctaLabel = agencyMode ? COPY.cta : "Add workspace";
   const [open, setOpen] = useState(false);
   const finite = Number.isFinite(limit);
   const atLimit = finite && used >= limit;
@@ -103,7 +105,7 @@ export function CreateClientCta({ tier, used, limit }: CreateClientCtaProps) {
               onClick={() => setOpen(true)}
               aria-haspopup="dialog"
             >
-              {COPY.cta}
+              {ctaLabel}
             </Button>
             <UpgradeModal
               open={open}
@@ -127,7 +129,7 @@ export function CreateClientCta({ tier, used, limit }: CreateClientCtaProps) {
             href="/clients/new"
             className={buttonVariants({ variant: "default" })}
           >
-            {COPY.cta}
+            {ctaLabel}
           </Link>
         )}
       </div>

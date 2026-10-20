@@ -29,6 +29,7 @@ import { getAllBlocksForOrg } from "@/lib/blocks/registry";
 import { canSeldonIt, resolvePlanFromPlanId } from "@/lib/billing/entitlements";
 import { resolvePlatformBranding, resolveWorkspaceBaseDomain } from "@/lib/branding/platform";
 import { listManagedOrganizations, setActiveOrgAction } from "@/lib/billing/orgs";
+import { hasAuthorizedAgency } from "@/lib/partner-agencies/authorized-agency";
 import { getHiddenBlocks } from "@/lib/blocks/visibility-actions";
 import { getNotificationFeed } from "@/lib/notifications/feed";
 import { getThemeSettings } from "@/lib/theme/actions";
@@ -94,6 +95,8 @@ export default async function DashboardLayout({
   // the SF team regardless of email.
   const isSuperAdmin =
     !isOperatorSession && (await isSuperAdminUser(user?.email));
+  // EPIC 2026-10-20: agency wording only for an AUTHORISED agency relationship (active partner agency on an agency tier).
+  const agencyMode = user?.id && !skipUserLookup ? await hasAuthorizedAgency(user.id) : false;
   const [dbUserForPlan] = user?.id && !skipUserLookup
     ? await db.select({ planId: sql<string | null>`plan_id` }).from(users).where(eq(users.id, user.id)).limit(1)
     : [null];
@@ -361,6 +364,7 @@ export default async function DashboardLayout({
               smsLive={smsLive}
               draftApprovalsOn={isDraftApprovalsOn({ SF_DRAFT_APPROVALS: process.env.SF_DRAFT_APPROVALS })}
               phoneWhatsappOn={isPhoneWhatsappEnabled(orgId, process.env.PHONE_WHATSAPP_ENABLED_ORGS)}
+              agencyMode={agencyMode}
             />
             {/* overflow-x-clip (not overflow-x-hidden): overflow-y-auto here
                 also computes overflow-x to `auto` per CSS's overflow
@@ -406,6 +410,7 @@ export default async function DashboardLayout({
                   isOperatorSession={isOperatorSession}
                   notifications={notifications}
                   primaryOrgId={user?.orgId ?? null}
+                  agencyMode={agencyMode}
                 />
                 {/* Simple-home command bar (Task 7): the front door becomes page
                     chrome. Sticky, mounted only for simple-home orgs inside their
