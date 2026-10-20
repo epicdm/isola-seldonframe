@@ -86,6 +86,27 @@ describe("tenant vs reseller scope (scratch Postgres, production driver)", { ski
     assert.equal(await tier(O(2)), "inactive", "the owner's other workspace must not inherit the internal grant");
   });
 
+  test("users.planId mirroring the grant does not carry it; an independently paid user plan still does (Codex r1)", async () => {
+    await ex(sql`update users set plan_id = 'growth' where id = ${TENANT}::uuid`);
+    assert.equal(await tier(O(2)), "inactive", "a plan id mirrored from the internal grant must not be inherited");
+    await ex(sql`update users set stripe_subscription_id = 'sub_tenant_own' where id = ${TENANT}::uuid`);
+    assert.equal(await tier(O(2)), "workspace", "control: a user with an independent Stripe subscription keeps the users.planId fallback");
+    await ex(sql`update users set plan_id = null, stripe_subscription_id = null where id = ${TENANT}::uuid`);
+    assert.equal(await tier(O(2)), "inactive");
+  });
+
+  test("audit record unreadable: internal-shaped primary fails CLOSED; Stripe-paid primary unaffected (Codex r1)", async () => {
+    await ex(sql`alter table workspace_admin_actions rename to workspace_admin_actions_offline`);
+    try {
+      assert.equal(await tier(O(2)), "inactive", "grant status unknown -> no inheritance");
+      assert.equal(await tier(O(4)), "workspace", "control: a Stripe-paid primary needs no audit read and is still inherited");
+      assert.equal(await tier(O(1)), "workspace", "the granted workspace itself keeps its own tier");
+    } finally {
+      await ex(sql`alter table workspace_admin_actions_offline rename to workspace_admin_actions`);
+    }
+    assert.equal(await tier(O(2)), "inactive");
+  });
+
   test("PAID multi-workspace: a Stripe-paid primary is still inherited by the owner's other workspace", async () => {
     assert.equal(await tier(O(3)), "workspace");
     assert.equal(await tier(O(4)), "workspace");

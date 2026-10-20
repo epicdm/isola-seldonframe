@@ -67,15 +67,27 @@ export function billingPresentation(input: {
   };
 }
 
+export type InternalGrantStatus = "internal" | "not_internal" | "unknown";
+
 /**
- * True when `orgId`'s current subscription comes from an audited internal grant (see isInternalEntitlementInEffect). Used by the
- * tier resolver so an internal grant is not inherited by the owner's other workspaces. Requires the audit record; missing Stripe
- * data alone never makes a subscription "internal". On a read failure the reader returns null, so this returns false (the
- * pre-change inheritance behaviour) rather than blocking tier resolution.
+ * Whether `orgId`'s current subscription comes from an audited internal grant. Used by the tier resolver so an internal grant is
+ * not inherited by the owner's other workspaces (Codex r1, 2026-10-20: fail closed).
+ * - A Stripe-linked subscription is never an internal grant (setInternalWorkspaceEntitlement refuses Stripe-managed workspaces), so
+ *   paid customers never depend on the audit read: "not_internal" without a query.
+ * - Otherwise "internal" requires the audit record (isInternalEntitlementInEffect); missing Stripe data alone never makes it internal.
+ * - If the audit record cannot be read, "unknown": the caller must NOT inherit (fail closed).
  */
-export async function internalGrantInEffectFor(orgId: string, subscription: unknown): Promise<boolean> {
-  const record = await findActiveInternalEntitlement(orgId);
-  return isInternalEntitlementInEffect((subscription ?? {}) as OrganizationSubscription, record);
+export async function internalGrantStatusFor(orgId: string, subscription: unknown): Promise<InternalGrantStatus> {
+  const sub = (subscription ?? {}) as OrganizationSubscription;
+  if (hasStripeLink(sub)) return "not_internal";
+  let record: InternalEntitlementRecord | null;
+  try {
+    record = await readActiveInternalEntitlement(orgId);
+  } catch (error) {
+    console.error(JSON.stringify({ event: "internal_grant_status_unknown", org_id: orgId, error: String(error).slice(0, 200) }));
+    return "unknown";
+  }
+  return isInternalEntitlementInEffect(sub, record) ? "internal" : "not_internal";
 }
 
 /** Reads the latest applied internal_entitlement of the workspace that no applied reversal points at. Null on any failure
@@ -83,6 +95,16 @@ export async function internalGrantInEffectFor(orgId: string, subscription: unkn
 export async function findActiveInternalEntitlement(orgId: string | null | undefined): Promise<InternalEntitlementRecord | null> {
   if (!orgId) return null;
   try {
+    return await readActiveInternalEntitlement(orgId);
+  } catch (error) {
+    console.error(JSON.stringify({ event: "billing_internal_entitlement_read_failed", org_id: orgId, error: String(error).slice(0, 200) }));
+    return null;
+  }
+}
+
+/** The same read without error swallowing: throws when the audit record cannot be read (used where the caller must fail closed). */
+export async function readActiveInternalEntitlement(orgId: string): Promise<InternalEntitlementRecord | null> {
+  {
     const reversal = alias(workspaceAdminActions, "reversal");
     const [row] = await db
       .select({ id: workspaceAdminActions.id, after: workspaceAdminActions.after })
@@ -116,8 +138,5 @@ export async function findActiveInternalEntitlement(orgId: string | null | undef
       tier: typeof after.tier === "string" ? after.tier : null,
       paymentCollection: typeof after.paymentCollection === "string" ? after.paymentCollection : null,
     };
-  } catch (error) {
-    console.error(JSON.stringify({ event: "billing_internal_entitlement_read_failed", org_id: orgId, error: String(error).slice(0, 200) }));
-    return null;
   }
 }

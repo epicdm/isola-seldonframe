@@ -50,7 +50,7 @@ import { db } from "@/db";
 import { organizations, users } from "@/db/schema";
 import { normalizeTierId, type BillingTier } from "./features";
 import { isEmailInAllowlist, parseAdminAllowlist } from "@/lib/operator-portal/authorization";
-import { internalGrantInEffectFor } from "./internal-entitlement";
+import { internalGrantStatusFor } from "./internal-entitlement";
 
 /** Internal: extract a tier from an organizations row's subscription/plan
  *  columns. "inactive" = no active paid plan. */
@@ -112,12 +112,15 @@ export const resolveTierForWorkspace = cache(
       .select({
         planId: users.planId,
         orgId: users.orgId,
+        stripeSubscriptionId: users.stripeSubscriptionId,
       })
       .from(users)
       .where(eq(users.id, ownerUserId))
       .limit(1);
     if (!owner) return "inactive";
 
+    // EPIC 2026-10-20: true when the owner's primary org carries an internal grant, or that cannot be verified.
+    let primaryInternalOrUnknown = false;
     // Prefer the operator's primary-org subscription (Stripe-direct).
     if (owner.orgId) {
       const [parentOrg] = await db
@@ -131,9 +134,12 @@ export const resolveTierForWorkspace = cache(
       if (parentOrg) {
         const parentTier = tierFromOrgRow(parentOrg);
         // EPIC 2026-10-20: an INTERNAL grant (audited internal_entitlement, payment collection off) is scoped to the workspace
-        // it was granted to. Other workspaces of the same owner do not inherit it; they fall through to the owner's own plan
-        // (users.planId) below. Paid primary-org subscriptions are still inherited exactly as before.
-        if (parentTier !== "inactive" && !(await internalGrantInEffectFor(owner.orgId, parentOrg.subscription))) return parentTier;
+        // it was granted to; the owner's other workspaces do not inherit it. If the grant status cannot be read, do not inherit
+        // (fail closed). Stripe-paid primary subscriptions are inherited exactly as before (no audit read needed).
+        if (parentTier !== "inactive") {
+          if ((await internalGrantStatusFor(owner.orgId, parentOrg.subscription)) === "not_internal") return parentTier;
+          primaryInternalOrUnknown = true;
+        }
       }
     }
 
@@ -143,7 +149,10 @@ export const resolveTierForWorkspace = cache(
     // organizations.subscription column.
     if (owner.planId) {
       const tier = normalizeTierId(owner.planId);
-      if (tier !== "inactive") return tier;
+      // EPIC 2026-10-20 (Codex r1): when the primary is internally granted (or unverifiable), users.planId is honoured only with
+      // evidence of an independent paid plan (a Stripe subscription on the user), so a plan id mirrored from the grant cannot
+      // carry it to other workspaces.
+      if (tier !== "inactive" && (!primaryInternalOrUnknown || owner.stripeSubscriptionId)) return tier;
     }
 
     return "inactive";
