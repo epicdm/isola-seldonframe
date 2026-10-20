@@ -8,6 +8,13 @@ import { normalizeTierId } from "@/lib/billing/features";
 import { getUsageSummary, type UsageSummary } from "@/lib/billing/usage";
 import { getOrgId } from "@/lib/auth/helpers";
 import { ClaimAndUpgradeForm } from "@/components/billing/claim-and-upgrade-form";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { users } from "@/db/schema";
+import { billingPresentation, findActiveInternalEntitlement } from "@/lib/billing/internal-entitlement";
+
+// EPIC 2026-10-20 — shown for an audited internal entitlement with payment collection off (lib/billing/internal-entitlement.ts).
+const INTERNAL_PLAN_LABEL = "Internal plan — no payment collected";
 
 /*
   Square UI class reference (source of truth):
@@ -105,7 +112,7 @@ function pickTone(percent: number): "primary" | "warn" | "danger" {
   return "primary";
 }
 
-function UsageCard({ usage }: { usage: UsageSummary }) {
+function UsageCard({ usage, internalPlan = false }: { usage: UsageSummary; internalPlan?: boolean }) {
   const isFree = usage.tier === "inactive";
   const isScale = usage.tier === "agency";
 
@@ -119,18 +126,25 @@ function UsageCard({ usage }: { usage: UsageSummary }) {
           <h2 className="text-section-title">Current usage</h2>
           <p className="text-sm text-muted-foreground">This billing period</p>
         </div>
-        <div className="text-right">
-          <p className="text-xs uppercase tracking-[0.08em] text-muted-foreground">Estimated total</p>
-          <p className="text-lg font-semibold text-foreground tabular-nums">
-            {formatMoney(usage.estimatedTotal)}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            base {formatMoney(usage.plan.price)}
-            {usage.contacts.overageCost + usage.agentRuns.overageCost > 0
-              ? ` + ${formatMoney(usage.contacts.overageCost + usage.agentRuns.overageCost)} usage`
-              : ""}
-          </p>
-        </div>
+        {internalPlan ? (
+          <div className="text-right">
+            <p className="text-xs uppercase tracking-[0.08em] text-muted-foreground">Payment</p>
+            <p className="text-sm font-semibold text-foreground">{INTERNAL_PLAN_LABEL}</p>
+          </div>
+        ) : (
+          <div className="text-right">
+            <p className="text-xs uppercase tracking-[0.08em] text-muted-foreground">Estimated total</p>
+            <p className="text-lg font-semibold text-foreground tabular-nums">
+              {formatMoney(usage.estimatedTotal)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              base {formatMoney(usage.plan.price)}
+              {usage.contacts.overageCost + usage.agentRuns.overageCost > 0
+                ? ` + ${formatMoney(usage.contacts.overageCost + usage.agentRuns.overageCost)} usage`
+                : ""}
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="space-y-4">
@@ -227,6 +241,19 @@ export default async function BillingSettingsPage({
 
   const tierDisplay = getTierDisplay(tier);
   const usage = await getUsageSummary(activeOrgId, tier);
+  // Display only: the audited internal entitlement and whether a Stripe customer exists for the caller (the workspace's or the
+  // user's own - the two the billing-portal action reads). Nothing here writes plans, quotas, pricing or Stripe records.
+  const internalRecord = await findActiveInternalEntitlement(activeOrgId);
+  const [caller] = isGuestAdminToken
+    ? []
+    : await db.select({ stripeCustomerId: users.stripeCustomerId }).from(users).where(eq(users.id, session.user.id)).limit(1);
+  const presentation = billingPresentation({
+    subscription,
+    record: internalRecord,
+    tier,
+    isGuestAdminToken,
+    hasStripeCustomer: Boolean(subscription.stripeCustomerId || caller?.stripeCustomerId),
+  });
 
   return (
     // P2 — TODO: track down the underlying React #418 source. The
@@ -276,7 +303,9 @@ export default async function BillingSettingsPage({
           <div>
             <p className="text-xs uppercase tracking-[0.08em] text-muted-foreground">Current plan</p>
             <p className="text-lg font-semibold text-foreground">{tierDisplay.label}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{tierDisplay.caption}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {presentation.internalPlan ? INTERNAL_PLAN_LABEL : tierDisplay.caption}
+            </p>
           </div>
           <div>
             <p className="text-xs uppercase tracking-[0.08em] text-muted-foreground">Workspaces</p>
@@ -294,10 +323,10 @@ export default async function BillingSettingsPage({
           <div>
             <p className="text-xs uppercase tracking-[0.08em] text-muted-foreground">Estimated monthly</p>
             <p className="text-lg font-semibold text-foreground tabular-nums">
-              {formatMoney(usage.estimatedTotal)}
+              {presentation.internalPlan ? "No payment collected" : formatMoney(usage.estimatedTotal)}
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {usage.tier === "inactive" ? "No active plan" : "Flat monthly"}
+              {presentation.internalPlan ? "Internal plan" : usage.tier === "inactive" ? "No active plan" : "Flat monthly"}
             </p>
           </div>
         </div>
@@ -314,13 +343,13 @@ export default async function BillingSettingsPage({
               "Upgrade" as the primary CTA instead. This prevents the
               click-action-crash class entirely; the action's graceful
               redirect on missing customerId is defense in depth. */}
-          {!isGuestAdminToken && tier !== "inactive" ? (
+          {presentation.showManageSubscription ? (
             <form action={createBillingPortalSessionAction}>
               <button type="submit" className="crm-button-primary h-10 px-4">
                 Manage subscription
               </button>
             </form>
-          ) : !isGuestAdminToken ? (
+          ) : !isGuestAdminToken && tier === "inactive" ? (
             <Link
               href="/pricing"
               className="crm-button-primary inline-flex h-10 items-center px-4"
@@ -333,13 +362,19 @@ export default async function BillingSettingsPage({
           </Link>
         </div>
         <p className="text-xs text-muted-foreground">
-          Billed monthly · cancel anytime
-          {trialEndsAt ? ` · Trial ends ${formatDate(trialEndsAt)}` : ""}
-          {billingPeriod === "yearly" ? " · yearly cycle" : ""}
+          {presentation.internalPlan ? (
+            INTERNAL_PLAN_LABEL
+          ) : (
+            <>
+              Billed monthly · cancel anytime
+              {trialEndsAt ? ` · Trial ends ${formatDate(trialEndsAt)}` : ""}
+              {billingPeriod === "yearly" ? " · yearly cycle" : ""}
+            </>
+          )}
         </p>
       </div>
 
-      <UsageCard usage={usage} />
+      <UsageCard usage={usage} internalPlan={presentation.internalPlan} />
 
       {isGuestAdminToken ? <ClaimAndUpgradeForm /> : null}
 
