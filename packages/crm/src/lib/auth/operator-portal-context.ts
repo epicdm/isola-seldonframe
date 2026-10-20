@@ -19,6 +19,7 @@ import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
+import { isEmailInAllowlist, parseAdminAllowlist } from "@/lib/operator-portal/authorization";
 import {
   OPERATOR_SESSION_COOKIE,
   isOperatorTokenRevoked,
@@ -89,6 +90,8 @@ export async function resolveOperatorPortalContext(): Promise<OperatorPortalCont
   if (!orgRow) return null;
   // EPIC 2026-10-20: the workspace's operator-session cut-off is read fresh on every request (an ownership transfer sets it).
   if (isOperatorTokenRevoked(verified, orgRow.operatorSessionsValidAfter)) return null;
+  // Codex r1: a platform admin's tenant access is only ever the audited support session; any other session for it is refused.
+  if (!verified.supportOriginUserId && isEmailInAllowlist(verified.email, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) return null;
 
   return {
     user: {

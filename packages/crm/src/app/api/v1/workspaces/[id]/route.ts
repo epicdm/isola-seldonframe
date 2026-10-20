@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { organizations, users } from "@/db/schema";
@@ -71,14 +71,26 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   // an archived/deleted client workspace stops counting toward billing.
   const parentAgencyOrgId = await resolveParentAgencyOrgId(targetOrgId).catch(() => null);
 
-  const [deleted] = await db
-    .delete(organizations)
-    .where(and(eq(organizations.id, targetOrgId)))
-    .returning({
-      id: organizations.id,
-      name: organizations.name,
-      slug: organizations.slug,
-    });
+  // EPIC 2026-10-20 (Codex r1): users.org_id cascades on workspace delete, so deleting a workspace that is any user's HOME would delete
+  // that user. Refuse instead. The row lock serialises against an ownership transfer moving a home here (it locks the same row).
+  const outcome = await db.transaction(async (tx) => {
+    await tx.execute(sql`select id from organizations where id = ${targetOrgId}::uuid for update`);
+    const [homed] = await tx.select({ id: users.id }).from(users).where(eq(users.orgId, targetOrgId)).limit(1);
+    if (homed) return { homed: true as const };
+    const [row] = await tx
+      .delete(organizations)
+      .where(and(eq(organizations.id, targetOrgId)))
+      .returning({
+        id: organizations.id,
+        name: organizations.name,
+        slug: organizations.slug,
+      });
+    return { homed: false as const, row };
+  });
+  if (outcome.homed) {
+    return NextResponse.json({ error: "This workspace is a user's home workspace and cannot be deleted." }, { status: 409 });
+  }
+  const deleted = outcome.row;
 
   if (!deleted) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });

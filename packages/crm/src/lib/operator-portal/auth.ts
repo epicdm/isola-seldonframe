@@ -55,7 +55,6 @@ import { resolveInboxUrl } from "@/lib/utils/email-inbox";
 import { emitSeldonEvent } from "@/lib/events/bus";
 import { trackEvent } from "@/lib/analytics/track";
 import {
-  isAuthorizedOnlyAsPlatformAdmin,
   isEmailAuthorizedForWorkspace,
   isEmailInAllowlist,
   operatorPortalOrigin,
@@ -234,10 +233,10 @@ export async function requestOperatorMagicLinkAction(input: {
     );
     return { ok: true, expiresAt: "", sentTo: email, inboxUrl: resolveInboxUrl(email) };
   }
-  // EPIC 2026-10-20: platform authority is not tenant authority. An identity authorised ONLY through SF_SUPERADMIN_EMAILS never
-  // gets a standing 7-day session; it opens the audited 2-hour support session instead (createAgencySupportSession). Same generic
-  // response shape as every other refusal (anti-enumeration).
-  if (isAuthorizedOnlyAsPlatformAdmin(email, { ownerEmail, agencyOwnerEmail, adminEmails, memberEmails })) {
+  // EPIC 2026-10-20: platform authority is not tenant authority. An identity in SF_SUPERADMIN_EMAILS never gets a standing 7-day
+  // session - also when the same identity owns or administers this workspace (Codex r1); it opens the audited 2-hour support
+  // session instead (createAgencySupportSession). Same generic response shape as every other refusal (anti-enumeration).
+  if (isEmailInAllowlist(email, adminEmails)) {
     console.warn(
       `[operator-magic-link] silent_no_op: platform_admin_uses_support_session org_id=${org.id} email_domain=${emailDomain}`,
     );
@@ -423,33 +422,17 @@ export async function consumeOperatorMagicLink(input: {
     return { ok: false, reason: "invalid_or_expired_token" };
   }
 
-  const org = await getOrgBySlug(orgSlug);
-  if (!org || org.id !== verified.orgId) {
-    return { ok: false, reason: "org_mismatch" };
-  }
-  // EPIC 2026-10-20: a link issued at or before the workspace's operator-session cut-off is dead, even if unused and unexpired.
-  if (isOperatorTokenRevoked(verified, org.operatorSessionsValidAfter)) {
-    return { ok: false, reason: "invalid_or_expired_token" };
-  }
-  // Re-authorise at consumption (a link outlives changes to who may hold it): the email must hold TENANT authority here — owner,
-  // parent-agency owner or owner/admin member. Platform-admin authority alone never becomes a 7-day session.
-  const { ownerEmail, agencyOwnerEmail, memberEmails } = await resolveWorkspaceOwnerEmails(org);
-  if (!isEmailAuthorizedForWorkspace(verified.email, { ownerEmail, agencyOwnerEmail, memberEmails, adminEmails: [] })) {
-    return { ok: false, reason: "not_authorized_for_workspace" };
-  }
-
-  // Mint a session token (long TTL) and set the cookie.
-  const sessionIssuedAt = Date.now();
-  const sessionExp = sessionIssuedAt + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
-  const sessionToken = signOperatorToken({
-    orgId: org.id,
-    email: verified.email,
-    exp: sessionExp,
-    kind: "session",
-    supportOriginUserId: null,
-    iat: sessionIssuedAt,
+  // EPIC 2026-10-20 (Codex r1 BLOCKER): the decision and the new session's timestamp are serialised against an ownership transfer.
+  // The workspace row is share-locked for the whole decision (transferWorkspaceOwnership takes FOR UPDATE on it), so a transfer
+  // either committed before - and the fresh owner and cut-off read below see it - or waits until this session exists and then cuts
+  // it off with a later cut-off. Reads go through the pool and see committed state; nothing can commit a change to this row meanwhile.
+  const decided = await db.transaction(async (tx) => {
+    await tx.execute(sql`select id from organizations where id = ${verified.orgId}::uuid for share`);
+    return decideOperatorMagicLinkConsume(orgSlug, verified);
   });
-  await setOperatorSessionCookie(sessionToken);
+  if (!decided.ok) return decided;
+  await setOperatorSessionCookie(decided.sessionToken);
+  const org = decided.org;
 
   await emitSeldonEvent(
     "operator_portal.session_established",
@@ -464,6 +447,43 @@ export async function consumeOperatorMagicLink(input: {
   );
 
   return { ok: true, orgId: org.id, email: verified.email };
+}
+
+async function decideOperatorMagicLinkConsume(
+  orgSlug: string,
+  verified: OperatorTokenPayload,
+): Promise<{ ok: true; org: { id: string }; sessionToken: string } | { ok: false; reason: string }> {
+  const org = await getOrgBySlug(orgSlug);
+  if (!org || org.id !== verified.orgId) {
+    return { ok: false, reason: "org_mismatch" };
+  }
+  // EPIC 2026-10-20: a link issued at or before the workspace's operator-session cut-off is dead, even if unused and unexpired.
+  if (isOperatorTokenRevoked(verified, org.operatorSessionsValidAfter)) {
+    return { ok: false, reason: "invalid_or_expired_token" };
+  }
+  // Re-authorise at consumption (a link outlives changes to who may hold it): the email must hold TENANT authority here — owner,
+  // parent-agency owner or owner/admin member. Platform-admin authority alone never becomes a 7-day session.
+  const { ownerEmail, agencyOwnerEmail, memberEmails } = await resolveWorkspaceOwnerEmails(org);
+  if (!isEmailAuthorizedForWorkspace(verified.email, { ownerEmail, agencyOwnerEmail, memberEmails, adminEmails: [] })) {
+    return { ok: false, reason: "not_authorized_for_workspace" };
+  }
+  // Codex r1: a platform admin never turns a link into a standing session, even when it also holds tenant authority here.
+  if (isEmailInAllowlist(verified.email, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) {
+    return { ok: false, reason: "not_authorized_for_workspace" };
+  }
+
+  // Mint a session token (long TTL); the caller sets the cookie after the decision commits.
+  const sessionIssuedAt = Date.now();
+  const sessionExp = sessionIssuedAt + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
+  const sessionToken = signOperatorToken({
+    orgId: org.id,
+    email: verified.email,
+    exp: sessionExp,
+    kind: "session",
+    supportOriginUserId: null,
+    iat: sessionIssuedAt,
+  });
+  return { ok: true, org: { id: org.id }, sessionToken };
 }
 
 // ─── session reads ─────────────────────────────────────────────────────────
@@ -482,6 +502,8 @@ export async function getOperatorSessionForOrg(orgSlug: string): Promise<
     return null;
   }
   if (isOperatorTokenRevoked(verified, org.operatorSessionsValidAfter)) return null;
+  // Codex r1: a platform admin's tenant access is only ever the audited support session; any other session for it is refused.
+  if (!verified.supportOriginUserId && isEmailInAllowlist(verified.email, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) return null;
 
   return {
     orgId: org.id,

@@ -256,6 +256,14 @@ export async function setInternalWorkspaceEntitlement(input: SetInternalEntitlem
   }
 }
 
+/** The operator-session cut-off only ever moves forward (Codex r1): a slower or skewed clock must never re-open tokens a later cut-off closed. */
+function laterOf(clock: Date, existing: string | null): Date {
+  const e = existing ? new Date(existing).getTime() : Number.NaN;
+  return Number.isFinite(e) && e >= clock.getTime() ? new Date(e) : clock;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // ─── ownership transfer ───────────────────────────────────────────────────────
 
 export type TransferWorkspaceOwnershipInput = {
@@ -266,7 +274,8 @@ export type TransferWorkspaceOwnershipInput = {
   expectedTier: string;
   /**
    * Where the old owner's HOME goes when its home is this workspace. users.org_id is NOT NULL (and cascades on workspace delete), so a home
-   * cannot be cleared; it moves to a workspace the old owner ALREADY owns (owner_id or an owner membership), so no access is granted.
+   * cannot be cleared; it moves to a workspace whose owner_id is ALREADY the old owner, so no access is granted and only that account
+   * could delete it (and the delete route refuses to delete any workspace that is a user's home).
    * Required in that case; ignored otherwise.
    */
   oldOwnerHomeOrgId?: string;
@@ -309,7 +318,7 @@ export async function transferWorkspaceOwnership(input: TransferWorkspaceOwnersh
       if (before.ownTier === "inactive") throw new Refusal("entitlement_depends_on_owner");
       if (before.ownTier !== expectedTier) throw new Refusal("tier_mismatch");
 
-      const cutoff = now();
+      const cutoff = laterOf(now(), before.operatorSessionsValidAfter);
       await tx
         .update(organizations)
         .set({ ownerId: newOwner.id, operatorSessionsValidAfter: cutoff, updatedAt: cutoff })
@@ -321,23 +330,22 @@ export async function transferWorkspaceOwnership(input: TransferWorkspaceOwnersh
       // The new owner's HOME becomes this workspace: the six runtime paths that resolve "the workspace's owner" through users.orgId
       // (agent first-turn / escalate / callback activity, workflow owner, AI plan, the Team page) then find them.
       await tx.update(users).set({ orgId: input.orgId, updatedAt: cutoff }).where(eq(users.id, newOwner.id));
+      // Codex r1: owner-of-home queries (AI plan, Soul automation) also need users.role = 'owner'; rollback restores the recorded role.
+      await tx.update(users).set({ role: "owner", updatedAt: cutoff }).where(eq(users.id, newOwner.id));
       // The old owner keeps no tenant foothold here: its home moves (only if this was its home) to a workspace it already owns, and no membership.
       if (oldOwner.orgId === input.orgId) {
         const home = input.oldOwnerHomeOrgId;
         if (!home) throw new Refusal("old_owner_home_required");
         if (home === input.orgId) throw new Refusal("old_owner_home_is_this_workspace");
-        const [owned] = await tx
+        if (!UUID_RE.test(home)) throw new Refusal("old_owner_home_not_owned");
+        // Codex r1: lock the destination (a workspace delete or another transfer on it waits), then require that the old owner is its
+        // owner_id - an owner membership is not enough - so nobody else can delete the workspace this account will call home.
+        await tx.execute(sql`select id from organizations where id = ${home}::uuid for update`);
+        const [ownerMember] = await tx
           .select({ id: organizations.id })
           .from(organizations)
           .where(and(eq(organizations.id, home), eq(organizations.ownerId, oldOwner.id)))
           .limit(1);
-        const [ownerMember] = owned
-          ? [owned]
-          : await tx
-              .select({ id: orgMembers.orgId })
-              .from(orgMembers)
-              .where(and(eq(orgMembers.orgId, home), eq(orgMembers.userId, oldOwner.id), eq(orgMembers.role, "owner")))
-              .limit(1);
         if (!ownerMember) throw new Refusal("old_owner_home_not_owned");
         await tx.update(users).set({ orgId: home, updatedAt: cutoff }).where(eq(users.id, oldOwner.id));
       }
@@ -437,7 +445,7 @@ export async function rollbackWorkspaceOwnershipTransfer(input: RollbackWorkspac
       if (!current) throw new Refusal("workspace_not_found");
       if (comparable(current) !== comparable(recordedAfter)) throw new Refusal("state_drifted");
 
-      const cutoff = now();
+      const cutoff = laterOf(now(), current.operatorSessionsValidAfter);
       await tx
         .update(organizations)
         .set({ ownerId: recordedBefore.ownerId, operatorSessionsValidAfter: cutoff, updatedAt: cutoff })

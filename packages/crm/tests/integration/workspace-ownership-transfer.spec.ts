@@ -151,6 +151,7 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     for (const [u, email, home] of [[SUPER, SUPER_EMAIL, EPIC], [INFO, INFO_EMAIL, INFO_HOME], [SUPER2, SUPER2_EMAIL, OUT_HOME], [OUTSIDER, "outsider@fixture.test", OUT_HOME], [AGENCY_OWNER, "agency-owner@fixture.test", AGO_HOME]] as const) {
       await ex(sql`insert into users (id, org_id, name, email, role, plan_id) values (${u}::uuid, ${home}::uuid, ${email.split("@")[0]}, ${email}, 'owner', 'free')`);
     }
+    await ex(sql`update users set role = 'member' where id = ${INFO}::uuid`); // role promotion must be done by the transfer (Codex r1)
     await ex(sql`update organizations set owner_id = ${SUPER}::uuid where id in (${EPIC}::uuid, ${SYN1}::uuid, ${SYN2}::uuid, ${PARENTED}::uuid, ${STRIPE_WS}::uuid)`);
     await ex(sql`update organizations set parent_user_id = ${SUPER}::uuid where id in (${SYN1}::uuid, ${SYN2}::uuid, ${PARENTED}::uuid)`);
     await ex(sql`update organizations set owner_id = ${INFO}::uuid where id = ${INFO_HOME}::uuid`);
@@ -196,9 +197,11 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
 
   test("before: mint the tokens that the transfer must kill (a 7-day session, an unused magic link, a legacy no-iat session, a support session)", async () => {
     const now = Date.now();
-    preSession7d = signAt("session", SUPER_EMAIL, now - 60_000);
-    preUnusedMagic = signAt("magic", SUPER_EMAIL, now - 30_000);
-    preLegacySession = S.signOperatorToken({ orgId: EPIC, email: SUPER_EMAIL, kind: "session", exp: now - 10_000 + S.OPERATOR_SESSION_TTL_MS });
+    // Minted for info@, not the platform admin (Codex r1): read paths do not re-authorise, so they are valid now (positive control);
+    // after the transfer info@ IS authorised, so the cut-off is the only thing that can kill them.
+    preSession7d = signAt("session", INFO_EMAIL, now - 60_000);
+    preUnusedMagic = signAt("magic", INFO_EMAIL, now - 30_000);
+    preLegacySession = S.signOperatorToken({ orgId: EPIC, email: INFO_EMAIL, kind: "session", exp: now - 10_000 + S.OPERATOR_SESSION_TTL_MS });
     preSupport = signAt("session", "support+platform-x@seldonframe-agency.local", now - 5_000, { supportOriginUserId: SUPER, exp: now - 5_000 + S.OPERATOR_SUPPORT_SESSION_TTL_MS });
     for (const t of [preSession7d, preLegacySession, preSupport]) assert.equal(await portalOrgFor(t), EPIC, "valid before the transfer (positive control)");
     assert.equal(await sessionForOrg(preSession7d), EPIC);
@@ -282,6 +285,7 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     transferActionId = r.actionId;
     cutoff = new Date(r.operatorSessionsValidAfter!).getTime();
     assert.deepEqual(await ownerState(), { owner: INFO, superHome: SYN1, infoHome: EPIC, members: [`${INFO}:owner`] });
+    assert.equal((await one<{ role: string }>(sql`select role from users where id = ${INFO}::uuid`))?.role, "owner", "new owner's role promoted");
     const audit = await one<{ outcome: string; actor_email: string; before: { ownerId: string }; after: { ownerId: string } }>(sql`select outcome, actor_email, before, after from workspace_admin_actions where id = ${transferActionId}::uuid`);
     assert.deepEqual({ o: audit?.outcome, a: audit?.actor_email, b: audit?.before.ownerId, f: audit?.after.ownerId }, { o: "applied", a: SUPER_EMAIL, b: SUPER, f: INFO });
     const ev = await one<{ n: number }>(sql`select count(*)::int n from workflow_event_log where org_id = ${EPIC}::uuid and event_type = 'workspace.ownership_transferred'`);
@@ -371,6 +375,27 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     assert.deepEqual((await ownerState()).members, [`${INFO}:owner`], "no membership was created for the platform admin");
   });
 
+  test("B: an allowlisted identity that ALSO owns a workspace still gets no standing session there (request, consume, both reads)", async () => {
+    const asked = await OP.requestOperatorMagicLinkAction({ orgSlug: "syn-one", email: SUPER_EMAIL });
+    assert.equal(asked.ok && asked.expiresAt, "", "no link is issued although it owns syn-one");
+    const saved = process.env.SF_SUPERADMIN_EMAILS;
+    process.env.SF_SUPERADMIN_EMAILS = SUPER2_EMAIL; // twin: the same owner without platform authority IS issued a link on syn-one
+    try {
+      const twinAsked = await OP.requestOperatorMagicLinkAction({ orgSlug: "syn-one", email: SUPER_EMAIL });
+      assert.equal(twinAsked.ok && twinAsked.expiresAt !== "", true, "positive control: the request path issues for an owner");
+    } finally { process.env.SF_SUPERADMIN_EMAILS = saved; }
+    const now = Date.now();
+    const link = S.signOperatorToken({ orgId: SYN1, email: SUPER_EMAIL, kind: "magic", iat: now, exp: now + S.OPERATOR_MAGIC_LINK_TTL_MS });
+    const consumed = await withOperatorCookie(null, () => OP.consumeOperatorMagicLink({ orgSlug: "syn-one", token: link }));
+    assert.equal(consumed.ok ? "ok" : consumed.reason, "not_authorized_for_workspace");
+    const standing = S.signOperatorToken({ orgId: SYN1, email: SUPER_EMAIL, kind: "session", iat: now, exp: now + S.OPERATOR_SESSION_TTL_MS });
+    assert.equal(await portalOrgFor(standing), null, "operator-portal context refuses it");
+    assert.equal(await withOperatorCookie(standing, async () => (await OP.getOperatorSessionForOrg("syn-one"))?.orgId ?? null), null, "portal session read refuses it");
+    const twin = S.signOperatorToken({ orgId: INFO_HOME, email: INFO_EMAIL, kind: "session", iat: now, exp: now + S.OPERATOR_SESSION_TTL_MS });
+    assert.equal(await portalOrgFor(twin), INFO_HOME, "twin: the same token shape for a non-admin owner is accepted");
+    assert.equal(await withOperatorCookie(twin, async () => (await OP.getOperatorSessionForOrg("info-home"))?.orgId ?? null), INFO_HOME);
+  });
+
   test("B: legitimate access is preserved — the platform admin can still INVITE staff, and staff get a normal 7-day session", async () => {
     as(SUPER, SUPER_EMAIL, null);
     const r = await OP.inviteWorkspaceOperatorAction({ orgSlug: EPIC_SLUG, email: STAFF_EMAIL });
@@ -456,6 +481,41 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     assert.equal(old, INFO_HOME);
   });
 
+  test("consume serialises against a concurrent ownership change: a link that was valid is refused once the change commits", async () => {
+    const link = signAt("magic", INFO_EMAIL, Date.now());
+    assert.ok(S.verifyOperatorToken(link), "the link verifies (positive control)");
+    let settled = false;
+    let pending: Promise<Awaited<ReturnType<typeof OP.consumeOperatorMagicLink>>> | null = null;
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`select id from organizations where id = ${EPIC}::uuid for update`);
+      await tx.execute(sql`update organizations set operator_sessions_valid_after = clock_timestamp() where id = ${EPIC}::uuid`);
+      pending = withOperatorCookie(null, () => OP.consumeOperatorMagicLink({ orgSlug: EPIC_SLUG, token: link }));
+      pending.then(() => { settled = true; }, () => { settled = true; });
+      await new Promise((r) => setTimeout(r, 500));
+      assert.equal(settled, false, "consume waits for the concurrent change instead of deciding on the old state");
+    });
+    const r = await pending!;
+    assert.equal(r.ok ? "ok" : r.reason, "invalid_or_expired_token", "decided on the committed state: the cut-off is later than the link");
+  });
+
+  test("workspace delete never cascades into a user's home: refused while homed, allowed once nobody calls it home", async () => {
+    const DEL = (await import("@/app/api/v1/workspaces/[id]/route")).DELETE;
+    const call = (id: string) => DEL(new Request(`http://app.fixture.test/api/v1/workspaces/${id}`, { method: "DELETE" }), { params: Promise.resolve({ id }) });
+    const HOMED = O(11), EMPTY = O(12), RESIDENT = U(11);
+    await db.execute(sql`insert into organizations (id, name, slug, owner_id) values (${HOMED}::uuid, 'homed', 'homed-ws', ${AGENCY_OWNER}::uuid), (${EMPTY}::uuid, 'empty', 'empty-ws', ${AGENCY_OWNER}::uuid)`);
+    await db.execute(sql`insert into users (id, org_id, name, email, role, plan_id) values (${RESIDENT}::uuid, ${HOMED}::uuid, 'resident', 'resident@fixture.test', 'owner', 'free')`);
+    as(AGENCY_OWNER, "agency-owner@fixture.test", AGO_HOME);
+    const refused = await call(HOMED);
+    assert.equal(refused.status, 409);
+    assert.equal((await one<{ n: number }>(sql`select count(*)::int n from users where id = ${RESIDENT}::uuid`))?.n, 1, "the resident user still exists");
+    assert.equal((await one<{ n: number }>(sql`select count(*)::int n from organizations where id = ${HOMED}::uuid`))?.n, 1);
+    const ok = await call(EMPTY); // twin: the same owner deleting a workspace nobody calls home succeeds
+    assert.equal(ok.status, 200, await ok.text());
+    assert.equal((await one<{ n: number }>(sql`select count(*)::int n from organizations where id = ${EMPTY}::uuid`))?.n, 0);
+    await db.execute(sql`delete from users where id = ${RESIDENT}::uuid`);
+    await db.execute(sql`delete from organizations where id = ${HOMED}::uuid`);
+  });
+
   // ── Idempotency, rollback, concurrency ────────────────────────────────────────
   test("idempotent: re-running the same transfer reports it as already applied and writes nothing", async () => {
     const count = async () => (await one<{ n: number }>(sql`select count(*)::int n from workspace_admin_actions where org_id = ${EPIC}::uuid`))?.n;
@@ -477,6 +537,7 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     const r = await T.rollbackWorkspaceOwnershipTransfer({ orgId: EPIC, transferActionId, actor: superActor });
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.deepEqual(await ownerState(), { owner: SUPER, superHome: EPIC, infoHome: INFO_HOME, members: [] });
+    assert.equal((await one<{ role: string }>(sql`select role from users where id = ${INFO}::uuid`))?.role, "member", "rollback restores the recorded role");
     const validAfter = (await one<{ v: string }>(sql`select operator_sessions_valid_after v from organizations where id = ${EPIC}::uuid`))?.v;
     assert.ok(validAfter && new Date(validAfter).getTime() > cutoff, "the cut-off only moves forward");
     for (const t of [preSession7d, preLegacySession, preSupport]) assert.equal(await portalOrgFor(t), null, "pre-transfer tokens stay dead");
@@ -494,6 +555,16 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     assert.equal(oks, 1, JSON.stringify(results));
     assert.ok(["owner_changed", "already_applied"].includes(others[0]!), JSON.stringify(results));
     assert.deepEqual(await ownerState(), { owner: INFO, superHome: SYN1, infoHome: EPIC, members: [`${INFO}:owner`] });
+  });
+
+  test("the cut-off never moves backwards: a rollback on a clock one hour slow keeps the later cut-off", async () => {
+    const v0 = (await one<{ v: string }>(sql`select operator_sessions_valid_after v from organizations where id = ${EPIC}::uuid`))?.v;
+    assert.ok(v0, "a cut-off exists (positive control)");
+    const last = await one<{ id: string }>(sql`select id from workspace_admin_actions where org_id = ${EPIC}::uuid and action = 'ownership_transfer' and outcome = 'applied' order by created_at desc limit 1`);
+    const r = await T.rollbackWorkspaceOwnershipTransfer({ orgId: EPIC, transferActionId: last!.id, actor: superActor, now: () => new Date(new Date(v0!).getTime() - 3_600_000) });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const v1 = (await one<{ v: string }>(sql`select operator_sessions_valid_after v from organizations where id = ${EPIC}::uuid`))?.v;
+    assert.equal(new Date(v1!).getTime(), new Date(v0!).getTime(), "kept, not moved an hour back");
   });
 
   test("no external host was ever reached", () => {
