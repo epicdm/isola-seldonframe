@@ -122,3 +122,16 @@ export function isEmailAuthorizedForWorkspace(
 
   return false;
 }
+
+/**
+ * EPIC 2026-10-20: true iff `email` is authorised for the workspace ONLY through the platform-admin allowlist — not as the workspace
+ * owner, the parent-agency owner or an owner/admin member. Such an identity holds platform authority, not tenant authority, so it
+ * never receives a standing 7-day operator session; its tenant access goes through the audited 2-hour support session
+ * (support-session.ts). Pure so it is unit-testable.
+ */
+export function isAuthorizedOnlyAsPlatformAdmin(email: string | null | undefined, sources: WorkspaceAuthSources): boolean {
+  const candidate = normalizeEmail(email);
+  if (!candidate) return false;
+  if (!isEmailInAllowlist(candidate, sources.adminEmails ?? [])) return false;
+  return !isEmailAuthorizedForWorkspace(candidate, { ...sources, adminEmails: [] });
+}

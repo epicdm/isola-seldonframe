@@ -400,6 +400,13 @@
       "when": 1791431621650,
       "tag": "0079_public_turn_spend_gate",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1792540800000,
+      "tag": "0080_workspace_admin_actions_operator_session_cutoff",
+      "breakpoints": true
     }
   ]
 }

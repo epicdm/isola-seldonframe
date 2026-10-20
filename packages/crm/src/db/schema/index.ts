@@ -229,3 +229,8 @@ export * from "./share-cards";
 // 2026-07-11 — H2 hotfix (migration 0071): eval_run_jobs, an ephemeral poll
 // target for the out-of-request "Run evals" flow (after()). Additive.
 export * from "./eval-run-jobs";
+
+// EPIC 2026-10-20 (migration 0080): workspace_admin_actions — same-transaction audit
+// of platform-admin actions on a tenant workspace (ownership transfer, rollback,
+// internal entitlement). Additive.
+export * from "./workspace-admin-actions";

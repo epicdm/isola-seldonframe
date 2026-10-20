@@ -13,8 +13,9 @@ export const agencySupportSessions = pgTable(
     id: uuid("id")
       .default(sql`gen_random_uuid()`)
       .primaryKey(),
+    // EPIC 2026-10-20 (migration 0080): NULL = a platform-admin support session on a workspace outside any agency
+    // (support-session.ts); agency sessions always set it and keep their strict agency-owner check.
     agencyId: uuid("agency_id")
-      .notNull()
       .references(() => partnerAgencies.id, { onDelete: "cascade" }),
     workspaceId: uuid("workspace_id")
       .notNull()

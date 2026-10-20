@@ -39,9 +39,11 @@ import { emitSeldonEvent } from "@/lib/events/bus";
 import { trackEvent } from "@/lib/analytics/track";
 import {
   OPERATOR_SESSION_COOKIE,
+  isOperatorTokenRevoked,
   signOperatorToken,
   verifyOperatorToken,
 } from "./session";
+import { isEmailInAllowlist, normalizeEmail, parseAdminAllowlist } from "./authorization";
 
 const SUPPORT_SESSION_TTL_HOURS = 2;
 
@@ -87,7 +89,14 @@ export async function createAgencySupportSession(input: {
     return { ok: false, reason: "workspace_not_found" };
   }
   if (!workspace.parentAgencyId) {
-    return { ok: false, reason: "workspace_not_under_an_agency" };
+    // EPIC 2026-10-20: the ONLY tenant access a platform admin has to a workspace outside any agency (Port
+    // dec-owner-epic-tenant-transfer-revised-design-approved-2026-10-20). Same 2-hour token, same audit row (agency_id NULL) and
+    // event; the actor is identified by user id and email. Everyone else is refused exactly as before.
+    const callerEmail = normalizeEmail(session.user.email);
+    if (!callerEmail || !isEmailInAllowlist(callerEmail, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) {
+      return { ok: false, reason: "workspace_not_under_an_agency" };
+    }
+    return mintSupportSession({ workspace, agencyId: null, callerUserId, actorEmail: callerEmail });
   }
 
   const [agency] = await db
@@ -115,47 +124,67 @@ export async function createAgencySupportSession(input: {
     return { ok: false, reason: "not_agency_owner" };
   }
 
+  return mintSupportSession({ workspace, agencyId: agency.id, callerUserId, actorEmail: null });
+}
+
+async function mintSupportSession(input: {
+  workspace: { id: string; slug: string };
+  agencyId: string | null;
+  callerUserId: string;
+  /** Set for the platform-admin branch (agencyId null): the actor's email is recorded on the audit row. */
+  actorEmail: string | null;
+}): Promise<CreateSupportSessionResult> {
+  const { workspace, agencyId, callerUserId } = input;
   // Mint the support-session token.
+  const issuedAtMs = Date.now();
   const expiresAtMs =
-    Date.now() + SUPPORT_SESSION_TTL_HOURS * 60 * 60 * 1000;
+    issuedAtMs + SUPPORT_SESSION_TTL_HOURS * 60 * 60 * 1000;
   // Use a synthetic email for the support session — the operator
   // portal session needs an email field, but we don't want to leak
   // the agency operator's primary email into the workspace. Instead
   // we use a deterministic synthetic ('support+<agency>@' style)
   // that's distinguishable in audit logs.
-  const supportEmail = `support+${agency.id.slice(0, 8)}@seldonframe-agency.local`;
+  const supportEmail = agencyId
+    ? `support+${agencyId.slice(0, 8)}@seldonframe-agency.local`
+    : `support+platform-${callerUserId.slice(0, 8)}@seldonframe-agency.local`;
   const sessionToken = signOperatorToken({
     orgId: workspace.id,
     email: supportEmail,
     exp: expiresAtMs,
     kind: "session",
     supportOriginUserId: callerUserId,
+    iat: issuedAtMs,
   });
 
-  // Audit row.
+  // Audit row. The audit row is the precondition for the session: no row, no link.
   const [auditRow] = await db
     .insert(agencySupportSessions)
     .values({
-      agencyId: agency.id,
+      agencyId,
       workspaceId: workspace.id,
       originUserId: callerUserId,
+      notes: input.actorEmail ? `platform_support actor_email=${input.actorEmail}` : null,
     })
     .returning({ id: agencySupportSessions.id });
+  if (!auditRow?.id) {
+    return { ok: false, reason: "audit_write_failed" };
+  }
 
   await emitSeldonEvent(
     "agency.support_session_started",
     {
-      agencyId: agency.id,
+      agencyId: agencyId ?? "(platform)",
       workspaceId: workspace.id,
       originUserId: callerUserId,
-      sessionId: auditRow?.id ?? "(no_id)",
+      sessionId: auditRow.id,
+      ...(input.actorEmail ? { actorEmail: input.actorEmail, platformSupport: true } : {}),
     },
     { orgId: workspace.id },
   );
 
   trackEvent(
     "agency_support_session_started",
-    { agency_id: agency.id },
+    { agency_id: agencyId ?? "(platform)" },
     { orgId: workspace.id },
   );
 
@@ -170,7 +199,7 @@ export async function createAgencySupportSession(input: {
   return {
     ok: true,
     url: url.toString(),
-    sessionId: auditRow?.id ?? "",
+    sessionId: auditRow.id,
     expiresAt: new Date(expiresAtMs).toISOString(),
   };
 }
@@ -197,12 +226,15 @@ export async function consumeAgencySupportSession(input: {
 
   // Verify the workspace slug matches.
   const [workspace] = await db
-    .select({ id: organizations.id })
+    .select({ id: organizations.id, operatorSessionsValidAfter: organizations.operatorSessionsValidAfter })
     .from(organizations)
     .where(eq(organizations.slug, input.orgSlug))
     .limit(1);
   if (!workspace || workspace.id !== verified.orgId) {
     return { ok: false, reason: "workspace_slug_mismatch" };
+  }
+  if (isOperatorTokenRevoked(verified, workspace.operatorSessionsValidAfter)) {
+    return { ok: false, reason: "invalid_or_expired_token" };
   }
 
   // Set the operator session cookie. Same shape as a normal magic-

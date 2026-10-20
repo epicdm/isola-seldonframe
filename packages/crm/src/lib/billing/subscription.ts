@@ -4,12 +4,19 @@ import { organizations, type OrganizationSubscription } from "@/db/schema";
 
 export type OrgSubscriptionStatus = "active" | "trialing" | "past_due" | "canceled" | "unpaid";
 
-export async function getOrgSubscription(orgId: string | null | undefined): Promise<OrganizationSubscription> {
+/** The database handle or an open transaction (EPIC 2026-10-20: lets the audited internal-entitlement action reuse these helpers
+ *  inside its own transaction). Omitted = the shared `db`, exactly as before. */
+type SubscriptionDbClient = Pick<typeof db, "select" | "update">;
+
+export async function getOrgSubscription(
+  orgId: string | null | undefined,
+  client: SubscriptionDbClient = db,
+): Promise<OrganizationSubscription> {
   if (!orgId) {
     return {};
   }
 
-  const [row] = await db
+  const [row] = await client
     .select({ subscription: organizations.subscription })
     .from(organizations)
     .where(eq(organizations.id, orgId))
@@ -20,19 +27,20 @@ export async function getOrgSubscription(orgId: string | null | undefined): Prom
 
 export async function updateOrgSubscription(
   orgId: string | null | undefined,
-  updates: Partial<OrganizationSubscription>
+  updates: Partial<OrganizationSubscription>,
+  client: SubscriptionDbClient = db,
 ) {
   if (!orgId) {
     return;
   }
 
-  const current = await getOrgSubscription(orgId);
+  const current = await getOrgSubscription(orgId, client);
   const next: OrganizationSubscription = {
     ...current,
     ...updates,
   };
 
-  await db
+  await client
     .update(organizations)
     .set({
       subscription: next,

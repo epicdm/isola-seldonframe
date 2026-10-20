@@ -21,6 +21,7 @@ import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import {
   OPERATOR_SESSION_COOKIE,
+  isOperatorTokenRevoked,
   verifyOperatorToken,
 } from "@/lib/operator-portal/session";
 
@@ -76,11 +77,18 @@ export async function resolveOperatorPortalContext(): Promise<OperatorPortalCont
   // Verify the org still exists. This guards against a deleted
   // workspace + stale cookie.
   const [orgRow] = await db
-    .select({ id: organizations.id, slug: organizations.slug, name: organizations.name })
+    .select({
+      id: organizations.id,
+      slug: organizations.slug,
+      name: organizations.name,
+      operatorSessionsValidAfter: organizations.operatorSessionsValidAfter,
+    })
     .from(organizations)
     .where(eq(organizations.id, verified.orgId))
     .limit(1);
   if (!orgRow) return null;
+  // EPIC 2026-10-20: the workspace's operator-session cut-off is read fresh on every request (an ownership transfer sets it).
+  if (isOperatorTokenRevoked(verified, orgRow.operatorSessionsValidAfter)) return null;
 
   return {
     user: {

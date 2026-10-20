@@ -164,6 +164,10 @@ export const organizations = pgTable("organizations", {
   // owner_id/parent_user_id rows resolving to the founder's account by the
   // 0078 migration.
   isInternal: boolean("is_internal").notNull().default(false),
+  // EPIC 2026-10-20 (migration 0080) — operator-portal session cut-off. Every operator-portal token (magic link, 7-day session,
+  // 2-hour support session) issued at or before this instant is refused on every read (lib/operator-portal/session.ts
+  // isOperatorTokenRevoked). NULL = no cut-off (existing behaviour). Set by the audited ownership transfer and its rollback.
+  operatorSessionsValidAfter: timestamp("operator_sessions_valid_after", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
