@@ -341,6 +341,15 @@ test("twin: one attempt alone still registers once and connects", async () => {
 
 
 describe("subscribe step (standard path)", () => {
+  test("an EPIC-owned WABA or a protected EPIC number is refused BEFORE the WABA-wide subscribe call: no Meta write at all", async () => {
+    const h1 = harness();
+    assert.equal(code(await finalizeConnect(claim(await begin(h1), { wabaId: "900000000000777" }), h1.deps)), "epic_owned_waba");
+    assert.deepEqual([h1.steps, h1.lines.length, h1.registers()], [[], 0, 0]);
+    const h2 = harness();
+    assert.equal(code(await finalizeConnect(claim(await begin(h2), { phoneNumberId: "900000000000888" }), h2.deps)), "protected_asset");
+    assert.deepEqual([h2.steps, h2.lines.length, h2.registers()], [[], 0, 0]);
+  });
+
   test("the app is subscribed to the customer's WABA after registration and before the binding (twin: positive journey above)", async () => {
     const h = harness();
     assert.equal((await finalizeConnect(claim(await begin(h)), h.deps)).ok, true);
