@@ -19,6 +19,7 @@
 
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { dbClockMs } from "@/db/clock";
 import { orgMembers, organizations, partnerAgencies, users, workspaceAdminActions } from "@/db/schema";
 import type { OrganizationSubscription } from "@/db/schema";
 import { normalizeTierId } from "@/lib/billing/features";
@@ -65,9 +66,12 @@ export type OwnershipState = {
   members: MemberState[];
 };
 
-async function lockAndRead(client: Client, orgId: string, userIds: string[]): Promise<OwnershipState | null> {
-  // Row locks: the workspace and both users stay fixed until commit (concurrent transfers or edits wait, then see the new state).
-  await client.execute(sql`select id from organizations where id = ${orgId}::uuid for update`);
+async function lockAndRead(client: Client, orgId: string, userIds: string[], alsoLockOrgIds: string[] = []): Promise<OwnershipState | null> {
+  // Row locks: the workspaces and both users stay fixed until commit (concurrent transfers or edits wait, then see the new state).
+  // Codex r2: EVERY workspace row this operation touches is locked first, in id order, before any user row - one global order, so two
+  // concurrent transfers cannot each hold what the other needs.
+  const orgIds = [...new Set([orgId, ...alsoLockOrgIds.filter((o) => UUID_RE.test(o))])].sort();
+  for (const o of orgIds) await client.execute(sql`select id from organizations where id = ${o}::uuid for update`);
   if (userIds.length > 0) {
     await client.execute(sql`select id from users where id in (${sql.join(userIds.map((u) => sql`${u}::uuid`), sql`, `)}) for update`);
   }
@@ -298,7 +302,7 @@ export async function transferWorkspaceOwnership(input: TransferWorkspaceOwnersh
 
     const outcome = await db.transaction(async (tx) => {
       const ids = [input.expectedCurrentOwnerId, input.newOwnerUserId];
-      const before = await lockAndRead(tx, input.orgId, ids);
+      const before = await lockAndRead(tx, input.orgId, ids, input.oldOwnerHomeOrgId ? [input.oldOwnerHomeOrgId] : []);
       if (!before) throw new Refusal("workspace_not_found");
       const oldOwner = before.users.find((u) => u.id === input.expectedCurrentOwnerId);
       const newOwner = before.users.find((u) => u.id === input.newOwnerUserId);
@@ -318,7 +322,8 @@ export async function transferWorkspaceOwnership(input: TransferWorkspaceOwnersh
       if (before.ownTier === "inactive") throw new Refusal("entitlement_depends_on_owner");
       if (before.ownTier !== expectedTier) throw new Refusal("tier_mismatch");
 
-      const cutoff = laterOf(now(), before.operatorSessionsValidAfter);
+      // Codex r2: the cut-off comes from the database clock (the clock consume uses for iat), unless a test injects one.
+      const cutoff = laterOf(input.now ? now() : new Date(await dbClockMs(tx)), before.operatorSessionsValidAfter);
       await tx
         .update(organizations)
         .set({ ownerId: newOwner.id, operatorSessionsValidAfter: cutoff, updatedAt: cutoff })
@@ -445,7 +450,7 @@ export async function rollbackWorkspaceOwnershipTransfer(input: RollbackWorkspac
       if (!current) throw new Refusal("workspace_not_found");
       if (comparable(current) !== comparable(recordedAfter)) throw new Refusal("state_drifted");
 
-      const cutoff = laterOf(now(), current.operatorSessionsValidAfter);
+      const cutoff = laterOf(input.now ? now() : new Date(await dbClockMs(tx)), current.operatorSessionsValidAfter);
       await tx
         .update(organizations)
         .set({ ownerId: recordedBefore.ownerId, operatorSessionsValidAfter: cutoff, updatedAt: cutoff })

@@ -358,6 +358,19 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     assert.equal(await portalOrgFor(infoSessionAfterTransfer), EPIC);
   });
 
+  test("one clock (Codex r2): consume stamps iat with the DATABASE clock even when the app clock runs 20 s ahead", async () => {
+    const link = signAt("magic", INFO_EMAIL, Date.now());
+    mock.timers.enable({ apis: ["Date"], now: Date.now() + 20_000 });
+    let r: Awaited<ReturnType<typeof OP.consumeOperatorMagicLink>>, cookie: string | null;
+    try {
+      ({ r, cookie } = await withOperatorCookie(null, async () => ({ r: await OP.consumeOperatorMagicLink({ orgSlug: EPIC_SLUG, token: link }), cookie: operatorCookie() })));
+    } finally { mock.timers.reset(); }
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const iat = S.operatorTokenIssuedAt(S.verifyOperatorToken(cookie!)!);
+    const dbNow = Number((await one<{ t: string }>(sql`select floor(extract(epoch from clock_timestamp()) * 1000)::bigint::text t`))?.t);
+    assert.ok(Math.abs(dbNow - iat) < 5_000, `iat follows the database clock (delta ${dbNow - iat} ms), not the app clock (+20 s)`);
+  });
+
   // ── Platform admin: no standing session (B), audited 2-hour support only (C) ──
   test("B: a platform-admin-only identity never gets a standing session — request, consume, invite self/alias", async () => {
     const asked = await OP.requestOperatorMagicLinkAction({ orgSlug: EPIC_SLUG, email: SUPER_EMAIL });
@@ -565,6 +578,21 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     assert.equal(r.ok, true, JSON.stringify(r));
     const v1 = (await one<{ v: string }>(sql`select operator_sessions_valid_after v from organizations where id = ${EPIC}::uuid`))?.v;
     assert.equal(new Date(v1!).getTime(), new Date(v0!).getTime(), "kept, not moved an hour back");
+  });
+
+  test("one clock (Codex r2): a transfer stamps its cut-off with the DATABASE clock even when the app clock runs 10 min behind", async () => {
+    // State here: the previous test rolled the transfer back (owner = platform admin), keeping cut-off v0.
+    const v0 = new Date((await one<{ v: string }>(sql`select operator_sessions_valid_after v from organizations where id = ${EPIC}::uuid`))!.v).getTime();
+    mock.timers.enable({ apis: ["Date"], now: Date.now() - 600_000 });
+    let r: Awaited<ReturnType<typeof T.transferWorkspaceOwnership>>;
+    try {
+      r = await T.transferWorkspaceOwnership({ orgId: EPIC, expectedCurrentOwnerId: SUPER, newOwnerUserId: INFO, expectedTier: "growth", oldOwnerHomeOrgId: SYN1, actor: superActor });
+    } finally { mock.timers.reset(); }
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const v1 = new Date((await one<{ v: string }>(sql`select operator_sessions_valid_after v from organizations where id = ${EPIC}::uuid`))!.v).getTime();
+    const dbNow = Number((await one<{ t: string }>(sql`select floor(extract(epoch from clock_timestamp()) * 1000)::bigint::text t`))?.t);
+    assert.ok(v1 > v0, "the new cut-off is later than the previous one (an app clock 10 min slow would have left v0)");
+    assert.ok(Math.abs(dbNow - v1) < 5_000, `cut-off follows the database clock (delta ${dbNow - v1} ms)`);
   });
 
   test("no external host was ever reached", () => {

@@ -47,6 +47,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
+import { dbClockMs } from "@/db/clock";
 import { orgMembers, organizations, partnerAgencies, users } from "@/db/schema";
 import { auth } from "@/auth";
 import { selectPortalEmailTransport } from "@/lib/portal/email-transport";
@@ -85,8 +86,10 @@ function getAppOrigin(): string {
   );
 }
 
-async function getOrgBySlug(orgSlug: string) {
-  const [org] = await db
+type DbClient = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function getOrgBySlug(orgSlug: string, client: DbClient = db) {
+  const [org] = await client
     .select({
       id: organizations.id,
       name: organizations.name,
@@ -101,9 +104,9 @@ async function getOrgBySlug(orgSlug: string) {
   return org ?? null;
 }
 
-async function getUserEmailById(userId: string | null): Promise<string | null> {
+async function getUserEmailById(userId: string | null, client: DbClient = db): Promise<string | null> {
   if (!userId) return null;
-  const [row] = await db
+  const [row] = await client
     .select({ email: users.email })
     .from(users)
     .where(eq(users.id, userId))
@@ -121,15 +124,18 @@ async function getUserEmailById(userId: string | null): Promise<string | null> {
  * workspace (ownerWorkspaceId). We resolve a human email from whichever is
  * set — ownerUserId first, then the owning workspace's owner.
  */
-async function resolveWorkspaceOwnerEmails(org: {
-  id: string;
-  ownerId: string | null;
-  parentAgencyId: string | null;
-}): Promise<{ ownerEmail: string | null; agencyOwnerEmail: string | null; memberEmails: string[] }> {
-  const ownerEmail = await getUserEmailById(org.ownerId);
+async function resolveWorkspaceOwnerEmails(
+  org: {
+    id: string;
+    ownerId: string | null;
+    parentAgencyId: string | null;
+  },
+  client: DbClient = db,
+): Promise<{ ownerEmail: string | null; agencyOwnerEmail: string | null; memberEmails: string[] }> {
+  const ownerEmail = await getUserEmailById(org.ownerId, client);
 
   // EPIC 2026-10-08: people already added to this workspace as owner/admin members.
-  const memberRows = await db
+  const memberRows = await client
     .select({ email: users.email })
     .from(orgMembers)
     .innerJoin(users, eq(users.id, orgMembers.userId))
@@ -138,7 +144,7 @@ async function resolveWorkspaceOwnerEmails(org: {
 
   let agencyOwnerEmail: string | null = null;
   if (org.parentAgencyId) {
-    const [agency] = await db
+    const [agency] = await client
       .select({
         ownerUserId: partnerAgencies.ownerUserId,
         ownerWorkspaceId: partnerAgencies.ownerWorkspaceId,
@@ -147,9 +153,9 @@ async function resolveWorkspaceOwnerEmails(org: {
       .where(eq(partnerAgencies.id, org.parentAgencyId))
       .limit(1);
     if (agency?.ownerUserId) {
-      agencyOwnerEmail = await getUserEmailById(agency.ownerUserId);
+      agencyOwnerEmail = await getUserEmailById(agency.ownerUserId, client);
     } else if (agency?.ownerWorkspaceId) {
-      const [ownerWs] = await db
+      const [ownerWs] = await client
         .select({ ownerId: organizations.ownerId })
         .from(organizations)
         .where(eq(organizations.id, agency.ownerWorkspaceId))
@@ -425,10 +431,11 @@ export async function consumeOperatorMagicLink(input: {
   // EPIC 2026-10-20 (Codex r1 BLOCKER): the decision and the new session's timestamp are serialised against an ownership transfer.
   // The workspace row is share-locked for the whole decision (transferWorkspaceOwnership takes FOR UPDATE on it), so a transfer
   // either committed before - and the fresh owner and cut-off read below see it - or waits until this session exists and then cuts
-  // it off with a later cut-off. Reads go through the pool and see committed state; nothing can commit a change to this row meanwhile.
+  // it off with a later cut-off. Every read runs on this transaction (one connection, Codex r2), and the session's iat comes from the
+  // DATABASE clock under the lock, the same clock the transfer's cut-off uses, so lock order is also timestamp order (Codex r2).
   const decided = await db.transaction(async (tx) => {
     await tx.execute(sql`select id from organizations where id = ${verified.orgId}::uuid for share`);
-    return decideOperatorMagicLinkConsume(orgSlug, verified);
+    return decideOperatorMagicLinkConsume(orgSlug, verified, tx);
   });
   if (!decided.ok) return decided;
   await setOperatorSessionCookie(decided.sessionToken);
@@ -452,8 +459,9 @@ export async function consumeOperatorMagicLink(input: {
 async function decideOperatorMagicLinkConsume(
   orgSlug: string,
   verified: OperatorTokenPayload,
+  client: DbClient,
 ): Promise<{ ok: true; org: { id: string }; sessionToken: string } | { ok: false; reason: string }> {
-  const org = await getOrgBySlug(orgSlug);
+  const org = await getOrgBySlug(orgSlug, client);
   if (!org || org.id !== verified.orgId) {
     return { ok: false, reason: "org_mismatch" };
   }
@@ -463,7 +471,7 @@ async function decideOperatorMagicLinkConsume(
   }
   // Re-authorise at consumption (a link outlives changes to who may hold it): the email must hold TENANT authority here — owner,
   // parent-agency owner or owner/admin member. Platform-admin authority alone never becomes a 7-day session.
-  const { ownerEmail, agencyOwnerEmail, memberEmails } = await resolveWorkspaceOwnerEmails(org);
+  const { ownerEmail, agencyOwnerEmail, memberEmails } = await resolveWorkspaceOwnerEmails(org, client);
   if (!isEmailAuthorizedForWorkspace(verified.email, { ownerEmail, agencyOwnerEmail, memberEmails, adminEmails: [] })) {
     return { ok: false, reason: "not_authorized_for_workspace" };
   }
@@ -472,8 +480,8 @@ async function decideOperatorMagicLinkConsume(
     return { ok: false, reason: "not_authorized_for_workspace" };
   }
 
-  // Mint a session token (long TTL); the caller sets the cookie after the decision commits.
-  const sessionIssuedAt = Date.now();
+  // Mint a session token (long TTL); the caller sets the cookie after the decision commits. iat = database clock (see above).
+  const sessionIssuedAt = await dbClockMs(client);
   const sessionExp = sessionIssuedAt + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
   const sessionToken = signOperatorToken({
     orgId: org.id,
