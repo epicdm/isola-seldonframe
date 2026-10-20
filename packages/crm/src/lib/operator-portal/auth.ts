@@ -160,7 +160,7 @@ async function resolveWorkspaceOwnerEmails(
         .from(organizations)
         .where(eq(organizations.id, agency.ownerWorkspaceId))
         .limit(1);
-      agencyOwnerEmail = await getUserEmailById(ownerWs?.ownerId ?? null);
+      agencyOwnerEmail = await getUserEmailById(ownerWs?.ownerId ?? null, client);
     }
   }
 

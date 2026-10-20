@@ -25,9 +25,10 @@
 
 "use server";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { db } from "@/db";
+import { dbClockMs } from "@/db/clock";
 import {
   agencySupportSessions,
   organizations,
@@ -135,37 +136,45 @@ async function mintSupportSession(input: {
   actorEmail: string | null;
 }): Promise<CreateSupportSessionResult> {
   const { workspace, agencyId, callerUserId } = input;
-  // Mint the support-session token.
-  const issuedAtMs = Date.now();
-  const expiresAtMs =
-    issuedAtMs + SUPPORT_SESSION_TTL_HOURS * 60 * 60 * 1000;
-  // Use a synthetic email for the support session — the operator
-  // portal session needs an email field, but we don't want to leak
-  // the agency operator's primary email into the workspace. Instead
-  // we use a deterministic synthetic ('support+<agency>@' style)
-  // that's distinguishable in audit logs.
-  const supportEmail = agencyId
-    ? `support+${agencyId.slice(0, 8)}@seldonframe-agency.local`
-    : `support+platform-${callerUserId.slice(0, 8)}@seldonframe-agency.local`;
-  const sessionToken = signOperatorToken({
-    orgId: workspace.id,
-    email: supportEmail,
-    exp: expiresAtMs,
-    kind: "session",
-    supportOriginUserId: callerUserId,
-    iat: issuedAtMs,
-  });
+  // EPIC 2026-10-20 (Codex r3): minted under a share lock on the workspace row with iat from the DATABASE clock - the clock and lock an
+  // ownership transfer uses for its cut-off - and recorded in the same transaction, so a support token is either cut off by a later
+  // transfer or issued after it; never stamped by a fast application clock past a cut-off it should fall under.
+  const minted = await db.transaction(async (tx) => {
+    await tx.execute(sql`select id from organizations where id = ${workspace.id}::uuid for share`);
+    // Mint the support-session token.
+    const issuedAtMs = await dbClockMs(tx);
+    const expiresAtMs =
+      issuedAtMs + SUPPORT_SESSION_TTL_HOURS * 60 * 60 * 1000;
+    // Use a synthetic email for the support session — the operator
+    // portal session needs an email field, but we don't want to leak
+    // the agency operator's primary email into the workspace. Instead
+    // we use a deterministic synthetic ('support+<agency>@' style)
+    // that's distinguishable in audit logs.
+    const supportEmail = agencyId
+      ? `support+${agencyId.slice(0, 8)}@seldonframe-agency.local`
+      : `support+platform-${callerUserId.slice(0, 8)}@seldonframe-agency.local`;
+    const sessionToken = signOperatorToken({
+      orgId: workspace.id,
+      email: supportEmail,
+      exp: expiresAtMs,
+      kind: "session",
+      supportOriginUserId: callerUserId,
+      iat: issuedAtMs,
+    });
 
-  // Audit row. The audit row is the precondition for the session: no row, no link.
-  const [auditRow] = await db
-    .insert(agencySupportSessions)
-    .values({
-      agencyId,
-      workspaceId: workspace.id,
-      originUserId: callerUserId,
-      notes: input.actorEmail ? `platform_support actor_email=${input.actorEmail}` : null,
-    })
-    .returning({ id: agencySupportSessions.id });
+    // Audit row. The audit row is the precondition for the session: no row, no link.
+    const [auditRow] = await tx
+      .insert(agencySupportSessions)
+      .values({
+        agencyId,
+        workspaceId: workspace.id,
+        originUserId: callerUserId,
+        notes: input.actorEmail ? `platform_support actor_email=${input.actorEmail}` : null,
+      })
+      .returning({ id: agencySupportSessions.id });
+    return { expiresAtMs, sessionToken, auditRow };
+  });
+  const { expiresAtMs, sessionToken, auditRow } = minted;
   if (!auditRow?.id) {
     return { ok: false, reason: "audit_write_failed" };
   }

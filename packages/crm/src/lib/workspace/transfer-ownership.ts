@@ -70,10 +70,12 @@ async function lockAndRead(client: Client, orgId: string, userIds: string[], als
   // Row locks: the workspaces and both users stay fixed until commit (concurrent transfers or edits wait, then see the new state).
   // Codex r2: EVERY workspace row this operation touches is locked first, in id order, before any user row - one global order, so two
   // concurrent transfers cannot each hold what the other needs.
-  const orgIds = [...new Set([orgId, ...alsoLockOrgIds.filter((o) => UUID_RE.test(o))])].sort();
+  // Canonical form (Codex r3): lowercase before de-duplicating and sorting, so the same two ids always lock in the same order.
+  const orgIds = [...new Set([orgId, ...alsoLockOrgIds].filter((o) => UUID_RE.test(o)).map((o) => o.toLowerCase()))].sort();
   for (const o of orgIds) await client.execute(sql`select id from organizations where id = ${o}::uuid for update`);
   if (userIds.length > 0) {
-    await client.execute(sql`select id from users where id in (${sql.join(userIds.map((u) => sql`${u}::uuid`), sql`, `)}) for update`);
+    const sortedUsers = [...new Set(userIds.map((u) => u.toLowerCase()))].sort();
+    await client.execute(sql`select id from users where id in (${sql.join(sortedUsers.map((u) => sql`${u}::uuid`), sql`, `)}) order by id for update`);
   }
   return readState(client, orgId, userIds);
 }
@@ -446,7 +448,9 @@ export async function rollbackWorkspaceOwnershipTransfer(input: RollbackWorkspac
       const recordedBefore = transfer.before as unknown as OwnershipState;
       const recordedAfter = transfer.after as unknown as OwnershipState;
       const ids = recordedAfter.users.map((u) => u.id);
-      const current = await lockAndRead(tx, input.orgId, ids);
+      // Codex r3: also lock every workspace a restored home points at (the old owner's replacement home is the current home).
+      const homes = [...recordedBefore.users.map((u) => u.orgId), ...recordedAfter.users.map((u) => u.orgId)];
+      const current = await lockAndRead(tx, input.orgId, ids, homes);
       if (!current) throw new Refusal("workspace_not_found");
       if (comparable(current) !== comparable(recordedAfter)) throw new Refusal("state_drifted");
 

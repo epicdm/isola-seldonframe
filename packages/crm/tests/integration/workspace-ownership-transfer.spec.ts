@@ -444,6 +444,18 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     assert.equal(ctxUser?.user.supportOriginUserId, SUPER);
   });
 
+  test("one clock (Codex r3): a support session's iat follows the DATABASE clock even when the app clock runs 20 s ahead", async () => {
+    as(SUPER, SUPER_EMAIL, null);
+    mock.timers.enable({ apis: ["Date"], now: Date.now() + 20_000 });
+    let r: Awaited<ReturnType<typeof SS.createAgencySupportSession>>;
+    try { r = await SS.createAgencySupportSession({ workspaceId: EPIC }); } finally { mock.timers.reset(); }
+    assert.equal(r.ok, true, JSON.stringify(r));
+    if (!r.ok) return;
+    const iat = S.operatorTokenIssuedAt(S.verifyOperatorToken(new URL(r.url).searchParams.get("token")!)!);
+    const dbNow = Number((await one<{ t: string }>(sql`select floor(extract(epoch from clock_timestamp()) * 1000)::bigint::text t`))?.t);
+    assert.ok(Math.abs(dbNow - iat) < 5_000, `iat follows the database clock (delta ${dbNow - iat} ms), not the app clock (+20 s)`);
+  });
+
   test("C: a support session cannot outlive 2 hours or be converted into a 7-day session", async () => {
     const expired = S.signOperatorToken({ orgId: EPIC, email: "support+platform-x@seldonframe-agency.local", kind: "session", supportOriginUserId: SUPER, iat: Date.now() - S.OPERATOR_SUPPORT_SESSION_TTL_MS - 1000, exp: Date.now() - 1000 });
     assert.equal(await portalOrgFor(expired), null);
