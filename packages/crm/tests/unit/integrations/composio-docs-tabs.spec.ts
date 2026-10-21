@@ -8,7 +8,11 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
 import { resolveComposioBinding, type ComposioBinding } from "../../../src/lib/integrations/composio/connector";
-import { parseTabsRead } from "../../../src/lib/integrations/composio/docs-tabs";
+import {
+  annotateComposioEnvelope,
+  parseTabsRead,
+  prepareComposioArgs,
+} from "../../../src/lib/integrations/composio/docs-tabs";
 
 const ALL_TABS_TEXT = [
   "--- TAB: Quick notes (t.a1) ---",
@@ -20,6 +24,11 @@ const ALL_TABS_TEXT = [
   "Transcription ended after 01:26:15",
 ].join("\n");
 const FIRST_TAB_TEXT = "Summary line";
+const TABS = [
+  { id: "t.a1", name: "Quick notes", body: "Summary line" },
+  { id: "t.b2", name: "Full notes", body: "Details" },
+  { id: "t.c3", name: "Transcript", body: "Transcription ended after 01:26:15" },
+];
 
 function binding(): ComposioBinding {
   return {
@@ -38,12 +47,14 @@ function harness() {
     executeTool: async (_orgId: string, tool: string, args: Record<string, unknown>) => {
       calls.push({ tool, args });
       if (tool === "GOOGLEDOCS_GET_DOCUMENT_PLAINTEXT") {
-        return {
-          document_id: "d1",
-          title: "Doc",
-          plain_text: args.include_tabs_content === true ? ALL_TABS_TEXT : FIRST_TAB_TEXT,
-          warnings: [],
-        };
+        const ids = Array.isArray(args.tab_ids) ? (args.tab_ids as string[]) : null;
+        const text =
+          args.include_tabs_content !== true
+            ? FIRST_TAB_TEXT
+            : ids
+              ? ids.map((id) => TABS.find((t) => t.id === id)!).map((t) => `--- TAB: ${t.name} (${t.id}) ---\n${t.body}`).join("\n")
+              : ALL_TABS_TEXT;
+        return { document_id: "d1", title: "Doc", plain_text: text, warnings: [] };
       }
       return { messages: [{ messageId: "m1" }] };
     },
@@ -78,8 +89,10 @@ describe("Docs plain-text read: never a silent subset", () => {
       { document_id: "d1", include_tabs_content: true, tab_ids: ["t.a1"] },
       h.ctx,
     )) as Record<string, unknown>;
+    assert.deepEqual(h.calls[0].args, { document_id: "d1", include_tabs_content: true, tab_ids: ["t.a1"] });
     assert.equal(Object.keys(out)[0], "partial_notice");
-    assert.match(String(out.partial_notice), /only the 3 requested tab\(s\) were read/);
+    assert.match(String(out.partial_notice), /only the 1 requested tab\(s\) were read/);
+    assert.deepEqual(out.tabs_read, ["Quick notes"]);
   });
 
   test("control: other composio tools are untouched (args and result identical)", async () => {
@@ -92,5 +105,31 @@ describe("Docs plain-text read: never a silent subset", () => {
   test("parseTabsRead ignores bare '---' separators", () => {
     assert.deepEqual(parseTabsRead(ALL_TABS_TEXT), ["Quick notes", "Full notes", "Transcript"]);
     assert.deepEqual(parseTabsRead("no markers\n---\n"), []);
+  });
+});
+
+describe("build/run envelope path (annotateComposioEnvelope + prepareComposioArgs)", () => {
+  test("Docs envelope: args default to all tabs; data annotated; envelope fields kept", () => {
+    const args = prepareComposioArgs("GOOGLEDOCS_GET_DOCUMENT_PLAINTEXT", { document_id: "d1" });
+    assert.deepEqual(args, { document_id: "d1", include_tabs_content: true });
+    const env = { successful: true, error: null, data: { document_id: "d1", plain_text: ALL_TABS_TEXT } };
+    const out = annotateComposioEnvelope("GOOGLEDOCS_GET_DOCUMENT_PLAINTEXT", args, env) as {
+      successful: boolean;
+      data: Record<string, unknown>;
+    };
+    assert.equal(out.successful, true);
+    assert.deepEqual(out.data.tabs_read, ["Quick notes", "Full notes", "Transcript"]);
+  });
+  test("Docs envelope with tabs excluded carries the PARTIAL notice inside data", () => {
+    const args = prepareComposioArgs("GOOGLEDOCS_GET_DOCUMENT_PLAINTEXT", { document_id: "d1", include_tabs_content: false });
+    const env = { successful: true, data: { plain_text: FIRST_TAB_TEXT } };
+    const out = annotateComposioEnvelope("GOOGLEDOCS_GET_DOCUMENT_PLAINTEXT", args, env) as { data: Record<string, unknown> };
+    assert.equal(Object.keys(out.data)[0], "partial_notice");
+  });
+  test("control: other actions' envelopes and args pass through identically", () => {
+    const args = { max_results: 5 };
+    assert.equal(prepareComposioArgs("GMAIL_FETCH_EMAILS", args), args);
+    const env = { successful: true, data: { messages: [] } };
+    assert.equal(annotateComposioEnvelope("GMAIL_FETCH_EMAILS", args, env), env);
   });
 });

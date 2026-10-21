@@ -27,6 +27,21 @@ export function prepareComposioArgs(
   return { ...args, include_tabs_content: true };
 }
 
+/** Apply annotateComposioResult to a raw Composio SDK envelope
+ *  ({ data, successful, error }) — for callers that execute actions directly
+ *  (e.g. the /api/v1/build/run endpoint) rather than through the agent
+ *  wrapper. Non-envelope values pass through unchanged. */
+export function annotateComposioEnvelope(
+  toolName: string,
+  args: Record<string, unknown>,
+  envelope: unknown,
+): unknown {
+  if (toolName !== DOCS_PLAINTEXT_TOOL) return envelope;
+  if (!envelope || typeof envelope !== "object" || !("data" in envelope)) return envelope;
+  const env = envelope as Record<string, unknown>;
+  return { ...env, data: annotateComposioResult(toolName, args, env.data) };
+}
+
 export function parseTabsRead(text: string): string[] {
   const names: string[] = [];
   for (const m of text.matchAll(TAB_MARKER)) names.push(m[1]!);

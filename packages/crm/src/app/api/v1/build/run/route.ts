@@ -39,6 +39,7 @@ import {
 } from "@/lib/build/run-drawdown";
 import { buildRunDrawdownDeps } from "@/lib/build/run-drawdown-deps";
 import { COMPOSIO_TOOLKITS, defaultToolsForToolkits } from "@/lib/integrations/composio/catalog";
+import { annotateComposioEnvelope, prepareComposioArgs } from "@/lib/integrations/composio/docs-tabs";
 
 type Body = { type?: unknown; id?: unknown; input?: unknown };
 
@@ -322,11 +323,18 @@ async function runTool(args: {
     }
 
     const composio = new Composio({ apiKey });
-    providerResponse = await composio.tools.execute(actionSlug, {
-      userId: renterOrgId, // user_id = orgId (the L-20 convention).
-      arguments: input,
-      dangerouslySkipVersionCheck: true,
-    });
+    // Docs plain-text reads default to ALL tabs and never return a silent
+    // subset (docs-tabs.ts) — same rule as the agent executor wrapper.
+    const execArgs = prepareComposioArgs(actionSlug, input);
+    providerResponse = annotateComposioEnvelope(
+      actionSlug,
+      execArgs,
+      await composio.tools.execute(actionSlug, {
+        userId: renterOrgId, // user_id = orgId (the L-20 convention).
+        arguments: execArgs,
+        dangerouslySkipVersionCheck: true,
+      }),
+    );
     successful = isSuccessfulComposioResponse(providerResponse);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
