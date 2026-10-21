@@ -2,22 +2,14 @@
 //
 // 2026-10-21 (Lane A) — replaces the "most recently updated form" pick that
 // let an internal staff-feedback form become a workspace's public /intake.
-// Rules, in order:
-//   1. The owner's explicit choice (organizations.settings.defaultIntakeFormId),
-//      only if that form is active AND public-eligible.
-//   2. The platform-seeded form whose slug is literally "intake" — this is the
-//      exact form today's /intake fallback already serves, so those
-//      workspaces keep resolving exactly as before.
-//   3. Exactly one active form explicitly marked public (settings.public === true).
-//   4. Otherwise: none. /intake then shows an honest "not available" page;
-//      it never falls back to an internal form.
-
-/** Path segment the proxy rewrites bare /intake and /forms to. toSlug() strips
- *  underscores, so no operator-created form can ever carry this slug. */
-export const WORKSPACE_DEFAULT_FORM_SLUG = "__workspace-default";
-
-/** The slug the platform seeds for a workspace's public intake form. */
-export const LEGACY_PUBLIC_INTAKE_SLUG = "intake";
+// Only forms EXPLICITLY marked public (intake_forms.settings.public === true)
+// are eligible. Among them, in order:
+//   1. the owner's explicit choice (organizations.settings.defaultIntakeFormId),
+//      if that form is active and public;
+//   2. exactly one active public form;
+//   3. otherwise none: /intake shows an honest "not available" page and never
+//      falls back to another form. A form's slug (even "intake") is not consent
+//      to publish it.
 
 /** organizations.settings key holding the owner-chosen default form id. */
 export const DEFAULT_INTAKE_FORM_SETTING = "defaultIntakeFormId";
@@ -29,14 +21,9 @@ export type IntakeFormCandidate = {
   settings: Record<string, unknown> | null | undefined;
 };
 
-export function isExplicitlyPublicForm(form: Pick<IntakeFormCandidate, "settings">): boolean {
+/** The only publication signal: an explicit `public: true` on the form. */
+export function isPublicIntakeEligible(form: Pick<IntakeFormCandidate, "settings">): boolean {
   return form.settings?.public === true;
-}
-
-/** A form may be the workspace's public default only if it is explicitly
- *  marked public, or is the platform-seeded public "intake" form. */
-export function isPublicIntakeEligible(form: Pick<IntakeFormCandidate, "slug" | "settings">): boolean {
-  return isExplicitlyPublicForm(form) || form.slug === LEGACY_PUBLIC_INTAKE_SLUG;
 }
 
 export function readDefaultIntakeFormId(orgSettings: unknown): string | null {
@@ -56,9 +43,29 @@ export function resolveDefaultIntakeForm<T extends IntakeFormCandidate>(input: {
     if (chosen) return chosen;
   }
 
-  const legacy = eligible.find((form) => form.slug === LEGACY_PUBLIC_INTAKE_SLUG);
-  if (legacy) return legacy;
+  return eligible.length === 1 ? eligible[0] : null;
+}
 
-  const explicitlyPublic = eligible.filter(isExplicitlyPublicForm);
-  return explicitlyPublic.length === 1 ? explicitlyPublic[0] : null;
+const INTAKE_DATA_ISLAND = /<script type="application\/json" id="sf-intake-data">([\s\S]*?)<\/script>/;
+
+/**
+ * Pre-rendered (formbricks-stack-v1) intake HTML carries its submission target in
+ * the `sf-intake-data` JSON island, and its render-time default is "intake". Served
+ * at the workspace-default URL, the browser path can't supply the slug either. So the
+ * island is re-bound to the resolved form's slug. Returns null when the HTML has no
+ * parseable island; the caller must then fail closed rather than serve a form that
+ * would submit to the wrong form.
+ */
+export function bindIntakeDataIslandFormSlug(html: string, formSlug: string): string | null {
+  const match = INTAKE_DATA_ISLAND.exec(html);
+  if (!match) return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const json = JSON.stringify({ ...(data as Record<string, unknown>), formSlug }).replace(/</g, "\\u003c");
+  return html.slice(0, match.index) + `<script type="application/json" id="sf-intake-data">${json}</script>` + html.slice(match.index + match[0].length);
 }

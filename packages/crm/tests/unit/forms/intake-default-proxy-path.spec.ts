@@ -4,7 +4,7 @@
 //   - "403" reproduces production today: from inside the container the public-hostname lookup returns 403
 //     "Forbidden" and the proxy falls back to hard-coded defaults;
 //   - "ok" is a working lookup that returns EPIC's real defaults (bookingSlug setup-help, formSlug pl-staff-test-oct15).
-// Asserts: bare /intake and /forms reach the workspace-default sentinel, never a guessed slug or the staff form;
+// Asserts: bare /intake and /forms reach the workspace-default route, never a guessed slug or the staff form;
 // every existing explicit form URL is unchanged; /book is unchanged with the internal-lookup gate OFF. The gate-ON
 // case is the positive control: it proves the gate, and nothing else, is what keeps /book unchanged.
 // Run: node --import tsx --test tests/unit/forms/intake-default-proxy-path.spec.ts
@@ -14,7 +14,7 @@ import { NextRequest } from "next/server";
 
 const HOST = "uplinks-workspace-4816.uplink.epic.dm";
 const ORG = "uplinks-workspace-4816";
-const SENTINEL = "__workspace-default";
+const ALIAS = `/workspace-intake/uplinks-workspace-4816`;
 
 const ENV_KEYS = ["PLATFORM_NAME", "PLATFORM_APP_URL", "NEXT_PUBLIC_APP_URL", "APP_HOSTS", "WORKSPACE_BASE_DOMAIN", "UPLINK_PROXY_INTERNAL_DOMAIN_LOOKUP", "UPLINK_PROXY_INTERNAL_ORIGIN", "PORT"] as const;
 const saved: Record<string, string | undefined> = {};
@@ -66,15 +66,15 @@ describe("workspace subdomain intake and booking rewrites (real proxy, fetch sea
     }
   });
 
-  it("production today (lookup 403): bare /intake and /forms reach the workspace-default sentinel, not a guessed 'intake' slug", async () => {
+  it("production today (lookup 403): bare /intake and /forms reach the workspace-default route, not a guessed 'intake' slug", async () => {
     lookupMode = "403";
-    assert.equal(await hit("/intake"), `/forms/${ORG}/${SENTINEL}`);
-    assert.equal(await hit("/forms"), `/forms/${ORG}/${SENTINEL}`);
+    assert.equal(await hit("/intake"), ALIAS);
+    assert.equal(await hit("/forms"), ALIAS);
   });
 
-  it("a working lookup: bare /intake still reaches the sentinel, never the lookup's staff form", async () => {
+  it("a working lookup: bare /intake still reaches the workspace-default route, never the lookup's staff form", async () => {
     lookupMode = "ok";
-    assert.equal(await hit("/intake"), `/forms/${ORG}/${SENTINEL}`);
+    assert.equal(await hit("/intake"), ALIAS);
     assert.notEqual(await hit("/intake"), `/forms/${ORG}/pl-staff-test-oct15`);
   });
 
@@ -105,7 +105,7 @@ describe("workspace subdomain intake and booking rewrites (real proxy, fetch sea
       lookups.length = 0;
       assert.equal(await hit("/book"), `/book/${ORG}/setup-help`);
       assert.ok(lookups.length > 0 && lookups.every((u) => u.startsWith("http://127.0.0.1:3000/api/v1/public/domain")), lookups.join(" "));
-      assert.equal(await hit("/intake"), `/forms/${ORG}/${SENTINEL}`);
+      assert.equal(await hit("/intake"), ALIAS);
     } finally {
       delete process.env.UPLINK_PROXY_INTERNAL_DOMAIN_LOOKUP;
     }

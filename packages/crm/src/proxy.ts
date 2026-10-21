@@ -21,7 +21,6 @@ import {
 import { toInternalRedirectPath } from "@/lib/auth/signup-redirect";
 import { extraAppHosts } from "@/lib/http/app-hosts";
 import { resolvePlatformBranding, resolveWorkspaceBaseDomain, shouldHideVendorMarketingPath, shouldServeBrandedRootPublicly } from "@/lib/branding/platform";
-import { WORKSPACE_DEFAULT_FORM_SLUG } from "@/lib/forms/default-intake";
 import { resolveDomainLookupOrigin } from "@/lib/http/domain-lookup-origin";
 
 const protectedPrefixes = ["/hub", "/dashboard", "/welcome", "/orgs", "/contacts", "/deals", "/activities", "/forms", "/settings", "/api/v1"];
@@ -116,11 +115,7 @@ function resolveWorkspaceRewritePath(
 ) {
   const defaultLandingSlug = defaults?.landingSlug || "home";
   const defaultBookingSlug = defaults?.bookingSlug || "default";
-  // Bare /intake and /forms go to the workspace-default sentinel; the public
-  // form page resolves the owner-chosen / public default server-side
-  // (lib/forms/default-intake.ts). Never the lookup's formSlug, and never an
-  // internal form by accident.
-  const defaultFormSlug = WORKSPACE_DEFAULT_FORM_SLUG;
+  const defaultFormSlug = defaults?.formSlug || "intake";
   const segments = pathname.split("/").filter(Boolean);
 
   if (pathname === "/" || pathname === "") {
@@ -131,8 +126,11 @@ function resolveWorkspaceRewritePath(
     return `/book/${slug}/${defaultBookingSlug}`;
   }
 
+  // Bare /intake and /forms: the workspace-default route resolves the owner-chosen /
+  // explicitly public form server-side (lib/forms/default-intake.ts). It never uses
+  // the lookup's formSlug, so it never guesses an internal form.
   if (pathname === "/forms" || pathname === "/intake") {
-    return `/forms/${slug}/${defaultFormSlug}`;
+    return `/workspace-intake/${slug}`;
   }
 
   if (pathname === "/l" || pathname === "/s") {

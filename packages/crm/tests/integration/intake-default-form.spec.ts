@@ -24,7 +24,7 @@ const F_STAFF = "fe000000-0000-4000-8000-000000000002";
 const F_LEGACY = "fe000000-0000-4000-8000-000000000003";
 const SLUG_E = "zz-intake-epic";
 const SLUG_L = "zz-intake-legacy";
-const SENTINEL = "__workspace-default";
+const DEFAULT = "(workspace default /intake)"; // rendered through app/workspace-intake/[orgSlug]
 let currentOrg = ORG_E;
 
 /** Walks a rendered server-component tree, returning every props object that carries `key`. */
@@ -48,13 +48,16 @@ function isNotFound(error: unknown): boolean {
 describe("workspace default intake form (scratch Postgres, rendered pages and routes)", { skip: !enabled && "set ACTIVITY_SCOPE_DB_TEST=scratch and DB_DRIVER=pg with a scratch database" }, () => {
   let db: typeof import("@/db").db;
   let Page: typeof import("@/app/forms/[id]/[formSlug]/page");
+  let Alias: typeof import("@/app/workspace-intake/[orgSlug]/page");
   let Domain: typeof import("@/app/api/v1/public/domain/route");
   let Actions: typeof import("@/lib/forms/actions");
   let Settings: typeof import("@/app/(dashboard)/settings/workspace/page");
 
   const render = async (orgSlug: string, formSlug: string) => {
     try {
-      const tree = await Page.default({ params: Promise.resolve({ id: orgSlug, formSlug }) });
+      const tree = formSlug === DEFAULT
+        ? await Alias.default({ params: Promise.resolve({ orgSlug }) })
+        : await Page.default({ params: Promise.resolve({ id: orgSlug, formSlug }) });
       return { notFound: false, formSlugs: findProps(tree as ReactNode, "formSlug").map((p) => p.formSlug) };
     } catch (error) {
       if (isNotFound(error)) return { notFound: true, formSlugs: [] as unknown[] };
@@ -106,6 +109,7 @@ describe("workspace default intake form (scratch Postgres, rendered pages and ro
       (${F_STAFF}::uuid, ${ORG_E}::uuid, 'Personal Line staff test feedback (15 Oct)', 'pl-staff-test-oct15', '[{"key":"q","label":"Staff question","type":"text","required":false}]'::jsonb, '{"theme":"dark"}'::jsonb, true, '2026-10-15T13:05:41Z'),
       (${F_LEGACY}::uuid, ${ORG_L}::uuid, 'Intake', 'intake', '[{"key":"name","label":"Name","type":"text","required":true}]'::jsonb, '{"submitLabel":"Send"}'::jsonb, true, now())`);
     Page = await import("@/app/forms/[id]/[formSlug]/page");
+    Alias = await import("@/app/workspace-intake/[orgSlug]/page");
     Domain = await import("@/app/api/v1/public/domain/route");
     Actions = await import("@/lib/forms/actions");
     Settings = await import("@/app/(dashboard)/settings/workspace/page");
@@ -123,22 +127,37 @@ describe("workspace default intake form (scratch Postgres, rendered pages and ro
   });
 
   test("nothing marked public: /intake is an honest 404 (never the staff form); domain route says no form", async () => {
-    assert.deepEqual(await render(SLUG_E, SENTINEL), { notFound: true, formSlugs: [] });
+    assert.deepEqual(await render(SLUG_E, DEFAULT), { notFound: true, formSlugs: [] });
     assert.equal((await domainDefaults(`${SLUG_E}.uplink.epic.dm`)).formSlug, null);
     assert.deepEqual(await settingsIntakeHrefs(), ["/forms"], "Settings must not advertise a dead /intake link");
   });
 
-  test("legacy workspace: its seeded 'intake' form still serves /intake exactly as today", async () => {
-    assert.deepEqual(await render(SLUG_L, SENTINEL), { notFound: false, formSlugs: ["intake"] });
+  test("a form slugged 'intake' is not public by its name: /intake is not available until it is marked public; its explicit URL keeps working", async () => {
     assert.deepEqual(await render(SLUG_L, "intake"), { notFound: false, formSlugs: ["intake"] });
-    assert.equal((await domainDefaults(`${SLUG_L}.uplink.epic.dm`)).formSlug, "intake");
+    assert.deepEqual(await render(SLUG_L, DEFAULT), { notFound: true, formSlugs: [] });
+    assert.equal((await domainDefaults(`${SLUG_L}.uplink.epic.dm`)).formSlug, null);
+    currentOrg = ORG_L;
+    await Actions.updateFormAction(fd({ formId: F_LEGACY, name: "Intake", slug: "intake", fields: '[{"key":"name","label":"Name","type":"text","required":true}]', publicIntake: "1" }));
+    assert.deepEqual(await formSettings(F_LEGACY), { submitLabel: "Send", public: true });
+    assert.deepEqual(await render(SLUG_L, DEFAULT), { notFound: false, formSlugs: ["intake"] }, "positive twin: marked public -> /intake");
+  });
+
+  test("tenant isolation: workspace L cannot mark or default workspace E's form", async () => {
+    currentOrg = ORG_L;
+    await Actions.updateFormAction(fd({ formId: F_STAFF, name: "hijack", slug: "hijack", fields: "[]", publicIntake: "1" }));
+    assert.deepEqual(await formSettings(F_STAFF), { theme: "dark" });
+    const r = (await db.execute(sql`select name, slug from intake_forms where id = ${F_STAFF}::uuid`)) as unknown as { rows: { name: string; slug: string }[] };
+    assert.deepEqual(r.rows[0], { name: "Personal Line staff test feedback (15 Oct)", slug: "pl-staff-test-oct15" });
+    await assert.rejects(Actions.setDefaultIntakeFormAction(fd({ defaultIntakeFormId: F_CUSTOMER })), /marked public/);
+    assert.equal((await orgSettings(ORG_L)).defaultIntakeFormId, undefined);
+    currentOrg = ORG_E;
   });
 
   test("owner marks the customer form public in the editor: it becomes /intake; other settings keys survive", async () => {
     currentOrg = ORG_E;
     await Actions.updateFormAction(fd({ formId: F_CUSTOMER, name: "Get my Personal Line", slug: "personal-line-intake", fields: '[{"key":"name","label":"Full name","type":"text","required":true}]', publicIntake: "1" }));
     assert.equal((await formSettings(F_CUSTOMER)).public, true);
-    assert.deepEqual(await render(SLUG_E, SENTINEL), { notFound: false, formSlugs: ["personal-line-intake"] });
+    assert.deepEqual(await render(SLUG_E, DEFAULT), { notFound: false, formSlugs: ["personal-line-intake"] });
     assert.equal((await domainDefaults(`${SLUG_E}.uplink.epic.dm`)).formSlug, "personal-line-intake");
     assert.deepEqual(await settingsIntakeHrefs(), [`https://${SLUG_E}.uplink.epic.dm/intake`]);
     // an editor save WITHOUT the field leaves the marking untouched (callers predating it)
@@ -155,19 +174,37 @@ describe("workspace default intake form (scratch Postgres, rendered pages and ro
     const s = await orgSettings(ORG_E);
     assert.equal(s.defaultIntakeFormId, F_CUSTOMER);
     assert.deepEqual([s.booking, s.chatbot, s.phoneWhatsapp], [{ keep: true }, { keep: true }, "keep"]);
-    assert.deepEqual(await render(SLUG_E, SENTINEL), { notFound: false, formSlugs: ["personal-line-intake"] });
+    assert.deepEqual(await render(SLUG_E, DEFAULT), { notFound: false, formSlugs: ["personal-line-intake"] });
   });
 
   test("two public forms: the explicit default decides; clearing it with two public forms gives the honest 404", async () => {
     currentOrg = ORG_E;
     await Actions.updateFormAction(fd({ formId: F_STAFF, name: "Personal Line staff test feedback (15 Oct)", slug: "pl-staff-test-oct15", fields: '[{"key":"q","label":"Staff question","type":"text","required":false}]', publicIntake: "1" }));
-    assert.deepEqual(await render(SLUG_E, SENTINEL), { notFound: false, formSlugs: ["personal-line-intake"] }, "explicit default wins over 'most recent'");
+    assert.deepEqual(await render(SLUG_E, DEFAULT), { notFound: false, formSlugs: ["personal-line-intake"] }, "explicit default wins over 'most recent'");
     await Actions.setDefaultIntakeFormAction(fd({ defaultIntakeFormId: "" }));
     assert.equal((await orgSettings(ORG_E)).defaultIntakeFormId, undefined);
-    assert.deepEqual(await render(SLUG_E, SENTINEL), { notFound: true, formSlugs: [] }, "ambiguous: no guess");
+    assert.deepEqual(await render(SLUG_E, DEFAULT), { notFound: true, formSlugs: [] }, "ambiguous: no guess");
     // positive twin: un-mark the staff form -> single public form again
     await Actions.updateFormAction(fd({ formId: F_STAFF, name: "Personal Line staff test feedback (15 Oct)", slug: "pl-staff-test-oct15", fields: '[{"key":"q","label":"Staff question","type":"text","required":false}]', publicIntake: "0" }));
-    assert.deepEqual(await render(SLUG_E, SENTINEL), { notFound: false, formSlugs: ["personal-line-intake"] });
+    assert.deepEqual(await render(SLUG_E, DEFAULT), { notFound: false, formSlugs: ["personal-line-intake"] });
+  });
+
+  test("pre-rendered (blueprint) form at /intake submits to ITSELF: the stale island slug is re-bound; no island -> fail closed", async () => {
+    currentOrg = ORG_E;
+    const island = JSON.stringify({ orgSlug: SLUG_E, formSlug: "intake" }).replace(/</g, "\\u003c");
+    const html = `<div class="sf-frame">form</div><script type="application/json" id="sf-intake-data">${island}</script>`;
+    await db.execute(sql`update intake_forms set content_html = ${html}, content_css = '.x{}' where id = ${F_CUSTOMER}::uuid`);
+    const htmlOf = async (formSlug: string) => {
+      const tree = formSlug === DEFAULT ? await Alias.default({ params: Promise.resolve({ orgSlug: SLUG_E }) }) : await Page.default({ params: Promise.resolve({ id: SLUG_E, formSlug }) });
+      const inner = findProps(tree as ReactNode, "dangerouslySetInnerHTML").map((p) => (p.dangerouslySetInnerHTML as { __html: string }).__html).find((h) => h.includes("sf-intake-data"));
+      return JSON.parse(/id="sf-intake-data">([\s\S]*?)<\/script>/.exec(inner ?? "")![1]) as { formSlug: string };
+    };
+    assert.equal((await htmlOf(DEFAULT)).formSlug, "personal-line-intake");
+    assert.equal((await htmlOf("personal-line-intake")).formSlug, "intake", "control: the explicit URL serves the stored HTML byte-for-byte, as today");
+    await db.execute(sql`update intake_forms set content_html = '<div>no island</div>' where id = ${F_CUSTOMER}::uuid`);
+    assert.deepEqual(await render(SLUG_E, DEFAULT), { notFound: true, formSlugs: [] });
+    await db.execute(sql`update intake_forms set content_html = null, content_css = null where id = ${F_CUSTOMER}::uuid`);
+    assert.deepEqual(await render(SLUG_E, DEFAULT), { notFound: false, formSlugs: ["personal-line-intake"] });
   });
 
   test("booking default in the domain route is untouched by this change", async () => {

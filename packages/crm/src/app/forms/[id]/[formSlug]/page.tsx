@@ -10,22 +10,7 @@ import { getPublicOrgThemeBySlug } from "@/lib/theme/actions";
 import type { Metadata } from "next";
 import { resolvePlatformBranding } from "@/lib/branding/platform";
 import { LicenseNoticeLink } from "@/components/legal/license-notice-link";
-import { WORKSPACE_DEFAULT_FORM_SLUG } from "@/lib/forms/default-intake";
-import { loadDefaultIntakeForm } from "@/lib/forms/default-intake-server";
-
-/** Bare /intake arrives as the workspace-default sentinel: map it to the
- *  workspace's public default form slug, or null when it has none. */
-async function resolveRequestedFormSlug(orgSlug: string, formSlug: string): Promise<string | null> {
-  if (formSlug !== WORKSPACE_DEFAULT_FORM_SLUG) return formSlug;
-  const [org] = await db
-    .select({ id: organizations.id, settings: organizations.settings })
-    .from(organizations)
-    .where(eq(organizations.slug, orgSlug))
-    .limit(1);
-  if (!org) return null;
-  const form = await loadDefaultIntakeForm(org.id, org.settings);
-  return form?.slug ?? null;
-}
+import { bindIntakeDataIslandFormSlug } from "@/lib/forms/default-intake";
 // 2026-05-18 (later) — agency-wide branding REMOVED from public-facing
 // intake pages. The agency's chrome substitution only applies to the
 // SMB operator's admin dashboard; their CUSTOMERS (the people filling
@@ -35,16 +20,14 @@ async function resolveRequestedFormSlug(orgSlug: string, formSlug: string): Prom
 // the top instead of the actual roofing company, which was confusing.
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string; formSlug: string }> }): Promise<Metadata> {
-  const { id: orgSlug, formSlug: requestedSlug } = await params;
-  const formSlug = await resolveRequestedFormSlug(orgSlug, requestedSlug);
-  const brand = resolvePlatformBranding();
-  if (!formSlug) return { title: "Form not available", robots: { index: false, follow: false } };
+  const { id: orgSlug, formSlug } = await params;
   const [row] = await db
     .select({ orgName: organizations.name, formName: intakeForms.name })
     .from(intakeForms)
     .innerJoin(organizations, eq(organizations.id, intakeForms.orgId))
     .where(and(eq(organizations.slug, orgSlug), eq(intakeForms.slug, formSlug)))
     .limit(1);
+  const brand = resolvePlatformBranding();
   if (!row) return { title: "Form not found", robots: { index: false, follow: false } };
   return {
     title: `${row.formName} | ${row.orgName}`,
@@ -56,15 +39,14 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function PublicIntakePage({
   params,
+  bindDataIslandSlug = false,
 }: {
   params: Promise<{ id: string; formSlug: string }>;
+  /** Set only by the workspace-default route (app/workspace-intake): re-bind the
+   *  pre-rendered HTML's submission target to this form; fail closed if it can't. */
+  bindDataIslandSlug?: boolean;
 }) {
-  const { id: orgSlug, formSlug: requestedSlug } = await params;
-  const formSlug = await resolveRequestedFormSlug(orgSlug, requestedSlug);
-
-  if (!formSlug) {
-    notFound();
-  }
+  const { id: orgSlug, formSlug } = await params;
 
   const [org] = await db
     .select({ id: organizations.id, name: organizations.name })
@@ -98,6 +80,12 @@ export default async function PublicIntakePage({
   // (formbricks-stack-v1) when present on the row. Falls back to the
   // legacy PublicForm React component for rows that predate the wiring.
   const useBlueprintRender = Boolean(form.contentHtml && form.contentCss);
+  const blueprintHtml = useBlueprintRender && bindDataIslandSlug
+    ? bindIntakeDataIslandFormSlug(form.contentHtml!, form.slug)
+    : form.contentHtml;
+  if (useBlueprintRender && !blueprintHtml) {
+    notFound();
+  }
 
   if (useBlueprintRender) {
     // 2026-05-18 — inject the workspace logo + business name floating
@@ -146,7 +134,7 @@ export default async function PublicIntakePage({
             </span>
           </div>
         ) : null}
-        <div dangerouslySetInnerHTML={{ __html: form.contentHtml! }} />
+        <div dangerouslySetInnerHTML={{ __html: blueprintHtml! }} />
         {showBadge ? (
           <div className="flex justify-center py-2">
             <PoweredByBadge source="workspace_form" />
