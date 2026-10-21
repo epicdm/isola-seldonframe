@@ -1327,11 +1327,9 @@ export async function updateBookingCalendarAction(input: {
   const raw = typeof input.calendarId === "string" ? input.calendarId.trim() : "";
   if (raw.length > 320 || /[\s"<>]/.test(raw)) return { ok: false, error: "invalid_calendar_id" };
 
-  const settingsSql = (
-    raw
-      ? sql`jsonb_set(COALESCE(${organizations.settings}, '{}'::jsonb), ARRAY['bookingCalendar']::text[], ${JSON.stringify({ calendarId: raw })}::jsonb, true)`
-      : sql`COALESCE(${organizations.settings}, '{}'::jsonb) - 'bookingCalendar'`
-  ) as unknown as typeof organizations.$inferInsert.settings;
+  const settingsSql = raw
+    ? sql`jsonb_set(COALESCE(${organizations.settings}, '{}'::jsonb), ARRAY['bookingCalendar']::text[], ${JSON.stringify({ calendarId: raw })}::jsonb, true)`
+    : sql`COALESCE(${organizations.settings}, '{}'::jsonb) - 'bookingCalendar'`;
 
   await db
     .update(organizations)

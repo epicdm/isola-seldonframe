@@ -43,6 +43,12 @@ const sent: Sent[] = [];
 const calls: Call[] = [];
 const calendarMode: { busy: Array<{ start: string; end: string }>; fail: "none" | "errors" | "throw" } = { busy: [], fail: "none" };
 let currentOrg = ORG_CFG;
+// Per-recipient send behaviour of the mocked sendEmailFromApi, emulating the
+// real function's persisted state: an emails row is written "queued", then
+// "sent" only after the provider accepted (as lib/emails/api.ts does).
+//   fail_before_send  → provider rejects: row stays "queued", throws
+//   throw_after_sent  → provider accepted ("sent"), a later step throws
+const emailMode = new Map<string, "fail_before_send" | "throw_after_sent">();
 let portalContactId = "";
 
 class FakeComposio {
@@ -110,9 +116,16 @@ describe("release 1: availability + cancellation (scratch Postgres, production d
     mock.module("@composio/core", { namedExports: { Composio: FakeComposio } });
     mock.module(f("src/lib/emails/api.ts"), {
       namedExports: {
-        sendEmailFromApi: async (p: Sent) => {
+        sendEmailFromApi: async (p: Sent & { metadata?: Record<string, unknown>; contactId?: string | null }) => {
+          const { db: d } = await import("@/db");
+          const mode = emailMode.get(p.toEmail);
+          const md = JSON.stringify({ source: "api", ...(p.metadata ?? {}) });
+          const ins = (await d.execute(sql`insert into emails (org_id, provider, from_email, to_email, subject, status, metadata) values (${p.orgId}::uuid, 'test', 'from@r1.test', ${p.toEmail}, ${p.subject}, 'queued', ${md}::jsonb) returning id`)) as unknown as { rows: Array<{ id: string }> };
+          if (mode === "fail_before_send") throw new Error("provider rejected");
           sent.push({ orgId: p.orgId, toEmail: p.toEmail, subject: p.subject, body: p.body, attachments: p.attachments });
-          return { emailId: `em_${sent.length}`, contactId: null, suppressed: false };
+          await d.execute(sql`update emails set status='sent', sent_at=now() where id=${ins.rows[0].id}::uuid`);
+          if (mode === "throw_after_sent") throw new Error("usage accounting failed after send");
+          return { emailId: ins.rows[0].id, contactId: null, suppressed: false };
         },
         getEmailWithEvents: async () => null,
       },
@@ -278,6 +291,38 @@ describe("release 1: availability + cancellation (scratch Postgres, production d
     assert.match(customer[0].subject, /^Cancelled: /, "fallback dedicated email");
     assert.equal(field(icsOf(customer[0])!, "METHOD"), "CANCEL");
     await ex(sql`update outbound_message_triggers set enabled=true where org_id=${ORG_CFG}::uuid and skill_id='booking-cancellation'`);
+  });
+
+  test("existing cancellation email ACCEPTED then a post-send step throws: no fallback — still ONE customer email (Codex R1 #2)", async () => {
+    reset();
+    const b = await book("r1-cfg", "acc@r1.test", "14:00");
+    reset();
+    emailMode.set("acc@r1.test", "throw_after_sent");
+    await A.cancelBookingByTokenAction({ bookingId: b.id, token: sign(b.id) });
+    emailMode.delete("acc@r1.test");
+    const customer = sent.filter((s) => s.toEmail === "acc@r1.test");
+    assert.equal(customer.length, 1, "accepted email counts as delivered");
+    assert.ok(icsOf(customer[0]), "it carried the CANCEL");
+  });
+
+  test("customer delivery FAILED: owner served once; a later booking.cancelled retries the customer only (Codex R1 #1)", async () => {
+    reset();
+    const b = await book("r1-cfg", "retry@r1.test", "15:00");
+    reset();
+    emailMode.set("retry@r1.test", "fail_before_send");
+    await A.cancelBookingByTokenAction({ bookingId: b.id, token: sign(b.id) });
+    assert.equal(sent.filter((s) => s.toEmail === "retry@r1.test").length, 0, "nothing reached the customer");
+    assert.equal(sent.filter((s) => s.toEmail === "r1-cfg-owner@r1.test").length, 1, "owner notice sent");
+    const [m1] = await rows<{ d: Record<string, unknown> | null }>(sql`select metadata->'icsCancelDelivery' as d from bookings where id=${b.id}::uuid`);
+    assert.equal((m1.d ?? {}).customer, undefined, "customer released (retryable)");
+    emailMode.delete("retry@r1.test");
+    reset();
+    const { emitSeldonEvent } = await import("@/lib/events/bus");
+    await emitSeldonEvent("booking.cancelled", { appointmentId: b.id, contactId: b.contact_id }, { orgId: ORG_CFG });
+    const customer = sent.filter((s) => s.toEmail === "retry@r1.test");
+    assert.equal(customer.length, 1, "retry delivers to the customer");
+    assert.equal(field(icsOf(customer[0])!, "SEQUENCE"), "1", "same cancel SEQUENCE on the retry");
+    assert.equal(sent.filter((s) => s.toEmail === "r1-cfg-owner@r1.test").length, 0, "owner NOT re-sent");
   });
 
   test("cancel via the CUSTOMER PORTAL: ONE customer email carrying the CANCEL, reminder cancelled; a repeat sends nothing", async () => {

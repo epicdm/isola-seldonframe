@@ -79,9 +79,10 @@ export type DispatchInput = {
    *  notice also updates their calendar (one email, not two). Absent →
    *  byte-for-byte today's behaviour. */
   emailAttachments?: Array<{ filename: string; content: string; contentType?: string }>;
-  /** Called once per email actually sent (not suppressed) WITH the
-   *  attachments — lets the caller fall back when none went out. */
-  onAttachedEmailSent?: () => void;
+  /** Merged into the emails row metadata of every email that carries
+   *  `emailAttachments` — lets the caller confirm delivery from the
+   *  persisted row (status "sent" only after the provider accepted it). */
+  emailMetadata?: Record<string, unknown>;
 };
 
 export async function dispatchOutboundMessagesForEvent(
@@ -388,12 +389,9 @@ export async function dispatchOutboundMessagesForEvent(
           subject: composed.subject ?? "Confirmation",
           body: finalBody,
           ...(input.emailAttachments && input.emailAttachments.length > 0
-            ? { attachments: input.emailAttachments }
+            ? { attachments: input.emailAttachments, ...(input.emailMetadata ? { metadata: input.emailMetadata } : {}) }
             : {}),
         });
-        if (!result.suppressed && input.emailAttachments && input.emailAttachments.length > 0) {
-          input.onAttachedEmailSent?.();
-        }
 
         if (result.suppressed) {
           await db

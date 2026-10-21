@@ -585,17 +585,17 @@ export function registerCrmEventListeners() {
       // nothing). Everyone else: today's dispatch, unchanged.
       const selectedCalendar = await loadSelectedBusinessCalendar(cancelOrgId).catch(() => null);
       let dispatched = false;
-      const runDispatch = async (attachment?: { filename: string; content: string; contentType?: string }) => {
+      const runDispatch = async (
+        attachment?: { filename: string; content: string; contentType?: string },
+        emailMetadata?: Record<string, unknown>,
+      ) => {
         dispatched = true;
-        let attachedSent = false;
         try {
           await dispatchOutboundMessagesForEvent({
             orgId: cancelOrgId,
             eventType: "booking.cancelled",
             payload: data,
-            ...(attachment
-              ? { emailAttachments: [attachment], onAttachedEmailSent: () => { attachedSent = true; } }
-              : {}),
+            ...(attachment ? { emailAttachments: [attachment], emailMetadata } : {}),
           });
         } catch (err) {
           console.warn(
@@ -603,18 +603,17 @@ export function registerCrmEventListeners() {
             err,
           );
         }
-        return attachedSent;
       };
       if (selectedCalendar) {
         const bookingIdForCalendar =
           typeof data.bookingId === "string" ? data.bookingId : appointmentId;
         const result = await sendBookingCalendarCancellation(
           { orgId: cancelOrgId, bookingId: bookingIdForCalendar },
-          { deliverToCustomer: (attachment) => runDispatch(attachment) },
+          { deliverToCustomer: (attachment, emailMetadata) => runDispatch(attachment, emailMetadata) },
         );
-        // Could not prepare the calendar cancel (not a repeat): keep the
-        // customer's normal cancellation email.
-        if (!result.sent && result.reason !== "already_cancelled_or_missing" && !dispatched) {
+        // Could not prepare the calendar cancel at all (before any recipient
+        // was claimed): keep the customer's normal cancellation email.
+        if (!result.sent && !dispatched) {
           await runDispatch();
         }
       } else {
