@@ -22,6 +22,7 @@
 // that listing slip through as "free". Both the browse filter and the deploy
 // gate below read the full pricing-menu columns for this reason.
 
+import { crossTenantDroppedCount } from "@/lib/agents/mcp/connector-identity";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { marketplaceListings } from "@/db/schema/marketplace";
@@ -312,9 +313,11 @@ async function deploy(input: { workspaceToken: string; slug: string }): Promise<
 
   // Token-scoped admin URL so the operator lands in their workspace to review
   // and publish the freshly-installed draft agent (no signup; 7-day token).
+  const connectorsNotCopied = crossTenantDroppedCount(listing.agentBlueprint as AgentBlueprint | null);
   return {
     ok: true,
     name: listing.name,
+    ...(connectorsNotCopied > 0 ? { connectorsNotCopied } : {}),
     url: withChatGptRef(
       `${APP_URL}/admin/${encodeURIComponent(orgId)}?token=${encodeURIComponent(input.workspaceToken)}`,
     ),

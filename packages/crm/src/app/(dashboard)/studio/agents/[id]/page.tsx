@@ -521,7 +521,23 @@ export default async function AgentTemplatePage({
     sell: "For myself, on the marketplace, or to a client.",
   };
 
+  // A marketplace install / fork that refused some source connectors says so
+  // (count only), instead of a silently shorter Connectors list (Law 26).
+  const connectorsNotCopied = Number(blueprint.connectorsNotCopied ?? 0);
+  const connectorsNotCopiedNotice =
+    connectorsNotCopied > 0 ? (
+      <p
+        role="status"
+        className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-300"
+      >
+        {connectorsNotCopied} connector(s) from the original agent were not copied — they need your
+        own connection. Add them under Connectors &amp; Tools.
+      </p>
+    ) : null;
+
   const editor = (
+    <>
+    {connectorsNotCopiedNotice}
     <AgentTemplateEditor
       templateId={template.id}
       surface={surface}
@@ -551,6 +567,7 @@ export default async function AgentTemplatePage({
       }))}
       collapsibleScript
     />
+    </>
   );
 
   // Setup mode (spec §1): incomplete lifecycle -> the one-stage-per-screen

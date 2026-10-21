@@ -122,6 +122,11 @@ export type AgentBlueprint = {
    *  native tool path is byte-for-byte unchanged when this is empty/undefined.
    *  Stored as jsonb (no migration). See lib/agents/mcp/connectors.ts. */
   connectors?: import("@/lib/agents/mcp/connectors").ConnectorBinding[];
+  /** Set on a cross-tenant clone (marketplace install / fork) when connectors
+   *  from the source were refused by the connector filter — a COUNT only (no
+   *  endpoint or secret name). The Studio template page shows it so a dropped
+   *  connector is never silent (Law 26). */
+  connectorsNotCopied?: number;
   /** 2026-06-22 (agency multi-client deploy) — when this agent was created by
    *  deploying a marketplace agent TEMPLATE into a client workspace, the source
    *  `agent_templates.id`. Used purely for IDEMPOTENCY: a re-deploy of the same

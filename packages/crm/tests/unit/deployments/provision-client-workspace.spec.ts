@@ -371,7 +371,7 @@ describe("copyTemplateConnectorsToAgent (deploy-copy)", () => {
       agentTemplateId: "tmpl-1",
       clientOrgId: "client-org-9",
     });
-    assert.deepEqual(result, { ok: true, copied: 1 });
+    assert.deepEqual(result, { ok: true, copied: 1, notCopied: 0 });
     assert.deepEqual(updated, {
       agentId: "client-agent-1",
       orgId: "client-org-9",
@@ -393,7 +393,7 @@ describe("copyTemplateConnectorsToAgent (deploy-copy)", () => {
       agentTemplateId: "tmpl-1",
       clientOrgId: "client-org-9",
     });
-    assert.deepEqual(result, { ok: true, copied: 0 });
+    assert.deepEqual(result, { ok: true, copied: 0, notCopied: 0 });
     assert.equal(updateCalled, false, "native path preserved — never update when no connectors");
   });
 

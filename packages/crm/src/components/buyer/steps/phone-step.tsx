@@ -78,6 +78,7 @@ export function PhoneStep({ deploymentId, seed, canGoBack, onBack, onContinue }:
 
   // Get-a-number state.
   const [areaCode, setAreaCode] = useState(seed.defaultAreaCode);
+  const [connectorsNotCopied, setConnectorsNotCopied] = useState(0);
   const [provisioned, setProvisioned] = useState<string | null>(
     seed.phoneNumber && seed.numberOrigin === "provisioned" ? seed.phoneNumber : null,
   );
@@ -120,7 +121,10 @@ export function PhoneStep({ deploymentId, seed, canGoBack, onBack, onContinue }:
     startProvision(async () => {
       const r = await provisionDeploymentNumberAction({ deploymentId, areaCode: areaCode.trim() });
       if (r.ok) {
-        if ("phoneNumber" in r) setProvisioned(r.phoneNumber);
+        if ("phoneNumber" in r) {
+          setProvisioned(r.phoneNumber);
+          setConnectorsNotCopied(r.connectorsNotCopied ?? 0);
+        }
         return;
       }
       setProvisionError(provisionErrorCopy(r.error));
@@ -230,6 +234,11 @@ export function PhoneStep({ deploymentId, seed, canGoBack, onBack, onContinue }:
                 A local number, active now. Put it on your site and Google listing
                 whenever you’re ready.
               </p>
+              {connectorsNotCopied > 0 && (
+                <p role="status" style={panelNote}>
+                  {connectorsNotCopied} connector(s) from the template were not copied to the client's agent because they don't match a verified connection. Reconnect them on that agent.
+                </p>
+              )}
             </>
           ) : (
             <>

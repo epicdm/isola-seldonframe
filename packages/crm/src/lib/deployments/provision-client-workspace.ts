@@ -81,7 +81,7 @@ export type ProvisionClientWorkspaceDeps = {
     builderOrgId: string;
     agentTemplateId: string;
     clientOrgId: string;
-  }) => Promise<void>;
+  }) => Promise<CopyTemplateConnectorsResult | void>;
   /** 2026-07-08 post-review — GATE, not best-effort. Checked BEFORE any
    *  provisioning side effect (createFullWorkspace, agency attach,
    *  deployment update). This is the ONLY seam in this module that can
@@ -91,7 +91,13 @@ export type ProvisionClientWorkspaceDeps = {
 };
 
 export type ProvisionClientWorkspaceResult =
-  | { ok: true; orgId: string; skipped?: true }
+  | {
+      ok: true;
+      orgId: string;
+      skipped?: true;
+      /** Template connectors NOT copied to the client agent (fail-closed). */
+      connectorsNotCopied?: number;
+    }
   | { ok: false; error: "create_threw" | "create_failed" }
   | { ok: false; error: "subaccount_limit_reached"; used: number; limit: number };
 
@@ -178,19 +184,21 @@ export async function provisionClientWorkspaceForDeployment(
   // the deployment is already created + linked; missing connectors just mean the
   // builder re-binds or a later retry copies them. The text runtime consumes
   // them; voice ignores them (native-only).
+  let connectorsNotCopied = 0;
   if (deps.copyTemplateConnectors) {
     try {
-      await deps.copyTemplateConnectors({
+      const copied = await deps.copyTemplateConnectors({
         builderOrgId: deployment.builderOrgId,
         agentTemplateId: deployment.agentTemplateId,
         clientOrgId: orgId,
       });
+      if (copied && copied.ok) connectorsNotCopied = copied.notCopied;
     } catch {
       /* connector copy is best-effort — never block provisioning on it */
     }
   }
 
-  return { ok: true, orgId };
+  return connectorsNotCopied > 0 ? { ok: true, orgId, connectorsNotCopied } : { ok: true, orgId };
 }
 
 // ─── connector copy (#3 — Studio connectors → deployed text agent) ───────────
@@ -227,7 +235,9 @@ export type CopyTemplateConnectorsDeps = {
 };
 
 export type CopyTemplateConnectorsResult =
-  | { ok: true; copied: number }
+  /** `notCopied` = template connectors refused by the canonical-binding filter
+   *  (fail-closed; surfaced to the operator, never silent). */
+  | { ok: true; copied: number; notCopied: number }
   | { ok: false; reason: "no_client_agent" | "update_failed" | "threw" };
 
 /**
@@ -244,16 +254,15 @@ export async function copyTemplateConnectorsToAgent(
     // The write below is TRUSTED (it may add bindings), so copy only bindings
     // the hardened bind flow could have produced — never an edited template's
     // pointer at another secret or an internal/attacker host.
-    const connectors = await canonicalTemplateBindings(
-      await deps.loadTemplateConnectors({
-        builderOrgId: args.builderOrgId,
-        agentTemplateId: args.agentTemplateId,
-      }),
-      { resolve: deps.resolve },
-    );
+    const loaded = await deps.loadTemplateConnectors({
+      builderOrgId: args.builderOrgId,
+      agentTemplateId: args.agentTemplateId,
+    });
+    const connectors = await canonicalTemplateBindings(loaded, { resolve: deps.resolve });
+    const notCopied = (Array.isArray(loaded) ? loaded.length : 0) - connectors.length;
     // No connectors → no-op (preserve the native path; never write the blueprint).
     if (!connectors || connectors.length === 0) {
-      return { ok: true, copied: 0 };
+      return { ok: true, copied: 0, notCopied };
     }
 
     const agentId = await deps.findClientDefaultAgentId(args.clientOrgId);
@@ -266,7 +275,7 @@ export async function copyTemplateConnectorsToAgent(
     });
     if (!result.ok) return { ok: false, reason: "update_failed" };
 
-    return { ok: true, copied: connectors.length };
+    return { ok: true, copied: connectors.length, notCopied };
   } catch {
     return { ok: false, reason: "threw" };
   }

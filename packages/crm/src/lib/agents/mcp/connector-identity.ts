@@ -62,8 +62,25 @@ export function crossTenantSafeConnectors(bindings: ConnectorBinding[] | undefin
   return (Array.isArray(bindings) ? bindings : []).filter((b) => isCanonicalVetted(b) || isCleanComposio(b));
 }
 
-/** Apply crossTenantSafeConnectors to a cloned blueprint (absent stays absent). */
-export function withCrossTenantSafeConnectors<T extends { connectors?: ConnectorBinding[] }>(blueprint: T): T {
+/** How many of a cloned blueprint's connectors crossTenantSafeConnectors drops. */
+export function crossTenantDroppedCount(blueprint: { connectors?: ConnectorBinding[] } | null | undefined): number {
+  const all = Array.isArray(blueprint?.connectors) ? blueprint!.connectors! : [];
+  return all.length - crossTenantSafeConnectors(all).length;
+}
+
+/**
+ * Apply crossTenantSafeConnectors to a cloned blueprint (absent stays absent).
+ * Fails closed but never silently: when anything is dropped the clone carries
+ * `connectorsNotCopied` (a count — no endpoint or secret name), which the
+ * Studio template page shows until the buyer reconnects.
+ */
+export function withCrossTenantSafeConnectors<T extends { connectors?: ConnectorBinding[] }>(
+  blueprint: T,
+): T & { connectorsNotCopied?: number } {
   if (blueprint == null || blueprint.connectors === undefined) return blueprint;
-  return { ...blueprint, connectors: crossTenantSafeConnectors(blueprint.connectors) };
+  const kept = crossTenantSafeConnectors(blueprint.connectors);
+  const dropped = blueprint.connectors.length - kept.length;
+  return dropped > 0
+    ? { ...blueprint, connectors: kept, connectorsNotCopied: dropped }
+    : { ...blueprint, connectors: kept };
 }

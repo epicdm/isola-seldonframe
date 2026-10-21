@@ -18,6 +18,7 @@
 // bindings — a Circle-side problem must never break agent generation.
 
 import type { ConnectorBinding, McpToolSchema } from "./connectors";
+import { noRedirectFetch } from "./agent-connector-guard";
 import { MAX_ENABLED_TOOLS, MAX_CACHED_TOOLS, getVettedConnector, boundMcpToolSchema } from "./connectors";
 import { resolveConnectorBearer } from "./resolve-bearer";
 import { createMcpClient } from "./client";
@@ -54,7 +55,8 @@ export async function discoverVettedToolsLive(
     const bearer = await resolveConnectorBearer(orgId, connector.secretService);
     if (!bearer) return [];
 
-    const client = createMcpClient({ endpoint: connector.endpoint, bearer });
+    // Never follows a redirect (same rule as bind/refresh discovery).
+    const client = createMcpClient({ endpoint: connector.endpoint, bearer, fetchImpl: noRedirectFetch() });
     const tools = await client.listTools();
     const bounded: McpToolSchema[] = [];
     for (const tool of tools) {

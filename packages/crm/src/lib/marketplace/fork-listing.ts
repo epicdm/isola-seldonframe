@@ -26,7 +26,7 @@
 // buildRealForkListingDeps() and translates the result into a 303 redirect.
 
 import type { AgentBlueprint } from "@/db/schema/agents";
-import { withCrossTenantSafeConnectors } from "@/lib/agents/mcp/connector-identity";
+import { crossTenantDroppedCount, withCrossTenantSafeConnectors } from "@/lib/agents/mcp/connector-identity";
 import type { AgentTemplateType } from "@/lib/agent-templates/store";
 import { storefrontPriceFromRow, type StorefrontPricingRow } from "@/lib/marketplace/pricing-model";
 
@@ -84,7 +84,9 @@ export type ForkListingDeps = {
 };
 
 export type ForkListingResult =
-  | { ok: true; adminUrl: string; publicUrl: string }
+  /** connectorsNotCopied: source connectors refused by the cross-tenant filter
+   *  (fail-closed; shown to the buyer, never silent). */
+  | { ok: true; adminUrl: string; publicUrl: string; connectorsNotCopied?: number }
   | { ok: false; reason: string };
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -171,10 +173,12 @@ export async function forkListingIntoNewWorkspace(
     };
   }
 
+  const connectorsNotCopied = crossTenantDroppedCount(listing.agentBlueprint);
   return {
     ok: true,
     adminUrl: deps.buildAdminUrl(workspace.orgId, workspace.bearerToken),
     publicUrl: deps.buildPublicUrl(workspace.slug),
+    ...(connectorsNotCopied > 0 ? { connectorsNotCopied } : {}),
   };
 }
 

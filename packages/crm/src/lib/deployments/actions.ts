@@ -516,7 +516,9 @@ export async function pauseDeploymentAction(
 // ─── provisionDeploymentNumberAction ─────────────────────────────────────────
 
 export type ProvisionDeploymentNumberActionResult =
-  | { ok: true; phoneNumber: string }
+  /** connectorsNotCopied: template connectors the client agent did NOT get
+   *  (they don't match a verified connection) — shown to the operator. */
+  | { ok: true; phoneNumber: string; connectorsNotCopied?: number }
   /** The agent is OUTBOUND (event/schedule) — it activated WITHOUT a number; it
    *  sends from the client org's existing line. No Twilio number is bought. */
   | { ok: true; outbound: true }
@@ -647,12 +649,14 @@ export async function provisionDeploymentNumberAction(input: {
   // builder org as a fallback until a later retry provisions). Reload the row so
   // the idempotent clientOrgId guard sees the latest persisted state. Never
   // block the action's success on provisioning, and never let it throw.
+  let connectorsNotCopied = 0;
   try {
     const fresh = (await getDeployment(parsed.data.deploymentId)) ?? existing;
     const provisioned = await provisionClientWorkspaceForDeployment(
       buildProvisionDeps(),
       fresh,
     );
+    if (provisioned.ok) connectorsNotCopied = provisioned.connectorsNotCopied ?? 0;
     if (!provisioned.ok) {
       // 2026-07-08 — subaccount_limit_reached is a real, structured
       // gate rejection (not a transient error): the builder is over
@@ -677,7 +681,9 @@ export async function provisionDeploymentNumberAction(input: {
   }
 
   revalidatePath("/studio/clients");
-  return { ok: true, phoneNumber: result.phoneNumber };
+  return connectorsNotCopied > 0
+    ? { ok: true, phoneNumber: result.phoneNumber, connectorsNotCopied }
+    : { ok: true, phoneNumber: result.phoneNumber };
 }
 
 /** Real default deps for provisionClientWorkspaceForDeployment, wired to the
@@ -712,7 +718,7 @@ function buildProvisionDeps() {
       agentTemplateId: string;
       clientOrgId: string;
     }) => {
-      await copyTemplateConnectorsToAgent(
+      return copyTemplateConnectorsToAgent(
         {
           loadTemplateConnectors: async ({ builderOrgId, agentTemplateId }) => {
             const { getAgentTemplate } = await import("@/lib/agent-templates/store");

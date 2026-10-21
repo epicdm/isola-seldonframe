@@ -474,7 +474,10 @@ export function formatBuildResult(input: { url: string; claimUrl?: string }): st
 /** Render the deploy_agent result: installed (free), or a friendly not-available
  *  message. Never renders a claim/purchase link — paid agents are managed on
  *  seldonframe.com, not through ChatGPT. */
-export function formatDeployResult(input: { name: string; url?: string }): string {
+export function formatDeployResult(input: { name: string; url?: string; connectorsNotCopied?: number }): string {
   const where = input.url ? ` Manage it here: ${input.url}` : "";
-  return `Installed "${input.name}" into your workspace.${where}`;
+  const n = input.connectorsNotCopied ?? 0;
+  const dropped =
+    n > 0 ? ` ${n} connector(s) from the original agent were not copied — they need your own connection.` : "";
+  return `Installed "${input.name}" into your workspace.${where}${dropped}`;
 }

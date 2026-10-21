@@ -48,7 +48,7 @@ function run(template: ConnectorBinding[], resolve = async (h: string) => [{ add
 describe("deploy-copy keeps only canonical template bindings", () => {
   test("control: canonical byo + vetted + composio bindings all copy", async () => {
     const { result, written } = await run([CANONICAL_BYO, CANONICAL_VETTED, COMPOSIO]);
-    assert.deepEqual(result, { ok: true, copied: 3 });
+    assert.deepEqual(result, { ok: true, copied: 3, notCopied: 0 });
     assert.deepEqual(written, [[CANONICAL_BYO, CANONICAL_VETTED, COMPOSIO]]);
   });
 

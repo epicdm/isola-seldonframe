@@ -77,6 +77,8 @@ export type DeployAgentResult = {
   name?: string;
   url?: string;
   error?: string;
+  /** Source connectors refused by the cross-tenant filter (shown in the reply). */
+  connectorsNotCopied?: number;
 };
 
 export type ChatGptMcpDeps = {
@@ -257,7 +259,11 @@ async function handleToolsCall(
           return toolTextResult(result.error ?? "Could not deploy that agent.", true);
         }
         return toolResult(
-          formatDeployResult({ name: result.name ?? "the agent", url: result.url }),
+          formatDeployResult({
+            name: result.name ?? "the agent",
+            url: result.url,
+            connectorsNotCopied: result.connectorsNotCopied,
+          }),
           { ...result },
         );
       });

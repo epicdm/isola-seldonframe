@@ -18,8 +18,9 @@
 // Known residuals (not closed here — say so, don't assume):
 //   - DNS-rebinding TOCTOU: the endpoint is resolved and vetted, then fetch()
 //     resolves it again; the vetted IP is not pinned to the socket.
-//   - The conversation-time call (tools.ts → runtime-client) refuses redirects
-//     but does not re-run the public-address check on each call.
+//   - The conversation-time call (tools.ts → runtime-client) re-runs the
+//     public-address check on every request and refuses redirects, but the
+//     vetted IP is not pinned to the socket (same TOCTOU as above).
 //   - Studio template BYO secrets keep the workspace-wide byo_<slug> name
 //     (live honest bindings depend on it); slugs are lossy
 //     (api.example.com and api-example.com share one), so two template
@@ -128,8 +129,11 @@ export function noRedirectFetch(base: typeof fetch = fetch): typeof fetch {
 }
 
 function identityOf(b: ConnectorBinding): string {
-  const r = b as { kind: string; id: string; serviceName?: string; endpoint?: string };
-  return JSON.stringify([r.kind, r.id, r.serviceName ?? null, r.endpoint ?? null]);
+  const r = b as { kind: string; id: string; serviceName?: string; endpoint?: string; enabledToolkits?: unknown };
+  // A composio binding's toolkits decide which managed apps it can act in, so
+  // they are part of its identity (an untrusted patch may not widen them).
+  const toolkits = Array.isArray(r.enabledToolkits) ? [...r.enabledToolkits].map(String).sort() : null;
+  return JSON.stringify([r.kind, r.id, r.serviceName ?? null, r.endpoint ?? null, toolkits]);
 }
 
 /**

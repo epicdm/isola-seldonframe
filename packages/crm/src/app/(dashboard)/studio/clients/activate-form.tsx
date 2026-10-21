@@ -72,6 +72,7 @@ export function ActivateForm({ deploymentId, contactPhone }: ActivateFormProps) 
   const [isProvisioning, startProvision] = useTransition();
   // Live number after a successful provision.
   const [activeNumber, setActiveNumber] = useState<string | null>(null);
+  const [connectorsNotCopied, setConnectorsNotCopied] = useState(0);
 
   // SECONDARY: paste a number you already own (collapsed).
   const [ownOpen, setOwnOpen] = useState(false);
@@ -94,6 +95,7 @@ export function ActivateForm({ deploymentId, contactPhone }: ActivateFormProps) 
         // includes it) activates with no number — just mark it activated.
         if ("phoneNumber" in result) {
           setActiveNumber(result.phoneNumber);
+          setConnectorsNotCopied(result.connectorsNotCopied ?? 0);
         } else {
           setActivated(true);
         }
@@ -137,6 +139,11 @@ export function ActivateForm({ deploymentId, contactPhone }: ActivateFormProps) 
           <Phone className="mb-0.5 mr-0.5 inline size-3" />
           {activeNumber}
         </p>
+        {connectorsNotCopied > 0 && (
+          <p role="status" className="max-w-xs text-right text-[11px] text-amber-700 dark:text-amber-400">
+            {connectorsNotCopied} connector(s) from the template were not copied to the client's agent because they don't match a verified connection. Reconnect them on that agent.
+          </p>
+        )}
       </div>
     );
   }
