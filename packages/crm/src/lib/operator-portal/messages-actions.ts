@@ -1,10 +1,24 @@
 // src/lib/operator-portal/messages-actions.ts
 "use server";
 
+import { and, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { contacts } from "@/db/schema";
 import { requireOperatorSessionForOrg } from "./auth";
 import { getOutboundSmsEnabled } from "./outbound-sms-flag";
 import { addThreadNote, markThreadRead } from "./messages";
 import { sendSmsFromApi } from "@/lib/sms/api";
+
+// A contact id from the client is only used when it belongs to the session's
+// workspace; another workspace's id is refused exactly like a missing one.
+async function contactInOrg(orgId: string, contactId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(and(eq(contacts.orgId, orgId), eq(contacts.id, contactId)))
+    .limit(1);
+  return Boolean(row);
+}
 
 export type SendReplyResult =
   | { ok: true }
@@ -22,6 +36,9 @@ export async function sendReplyAction(params: {
   const enabled = await getOutboundSmsEnabled(orgId);
   if (!enabled) {
     return { ok: false, error: "outbound_sms_not_enabled" };
+  }
+  if (!(await contactInOrg(orgId, params.contactId))) {
+    return { ok: false, error: "contact_not_found" };
   }
 
   try {
@@ -48,6 +65,9 @@ export async function addNoteAction(params: {
 
   if (!params.body.trim()) {
     return { ok: false, error: "Note body is required" };
+  }
+  if (!(await contactInOrg(session.orgId, params.contactId))) {
+    return { ok: false, error: "Contact not found" };
   }
 
   try {

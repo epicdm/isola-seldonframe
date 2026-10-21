@@ -5,7 +5,8 @@
 // getCurrentUser, i.e. "who is signed in, in which workspace") and next/cache revalidatePath (no Next runtime in node:test).
 // Every refusal has an own-id positive twin in the same run.
 //
-// Opt-in: refuses unless NEON_LOCAL_HOST is set AND ACTIVITY_SCOPE_DB_TEST=scratch. Needs node --experimental-test-module-mocks.
+// Opt-in: refuses unless NEON_LOCAL_HOST is set, DB_DRIVER=pg (direct Postgres, so no test fetch stub can touch the DB
+// transport) AND ACTIVITY_SCOPE_DB_TEST=scratch. Needs node --experimental-test-module-mocks.
 // Run: node --experimental-test-module-mocks --import tsx --test tests/integration/activity-action-workspace-scope.spec.ts
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -14,7 +15,7 @@ import test, { before, describe, mock } from "node:test";
 
 import { sql } from "drizzle-orm";
 
-const enabled = process.env.ACTIVITY_SCOPE_DB_TEST === "scratch" && !!process.env.NEON_LOCAL_HOST;
+const enabled = process.env.ACTIVITY_SCOPE_DB_TEST === "scratch" && !!process.env.NEON_LOCAL_HOST && process.env.DB_DRIVER === "pg";
 
 const ORG_A = "a9000000-0000-4000-8000-000000000001";
 const ORG_B = "a9000000-0000-4000-8000-000000000002";
@@ -29,7 +30,7 @@ const PIPE_B = "d9000000-0000-4000-8000-00000000000b";
 const DEAL_A = "e9000000-0000-4000-8000-00000000000a";
 const DEAL_B = "e9000000-0000-4000-8000-00000000000b";
 
-describe("createActivityAction scopes contact, deal and user ids to the session workspace (scratch Postgres)", { skip: !enabled && "set ACTIVITY_SCOPE_DB_TEST=scratch with a scratch database" }, () => {
+describe("createActivityAction scopes contact, deal and user ids to the session workspace (scratch Postgres)", { skip: !enabled && "set ACTIVITY_SCOPE_DB_TEST=scratch and DB_DRIVER=pg with a scratch database" }, () => {
   let db: typeof import("@/db").db;
   let createActivityAction: typeof import("@/lib/activities/actions").createActivityAction;
   const n = async (q: ReturnType<typeof sql>) =>

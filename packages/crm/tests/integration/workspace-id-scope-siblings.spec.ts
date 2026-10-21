@@ -5,14 +5,15 @@
 // Real Drizzle queries against a scratch Postgres through the production driver. Each refusal has an own-id positive twin in the same
 // run, and the fixture proves the foreign contact exists (so a refusal means "refused", not "absent").
 //
-// Opt-in: refuses unless NEON_LOCAL_HOST is set AND ACTIVITY_SCOPE_DB_TEST=scratch. The scratch database must carry the CRM schema.
+// Opt-in: refuses unless NEON_LOCAL_HOST is set, DB_DRIVER=pg (direct Postgres, so no test fetch stub can touch the DB
+// transport) AND ACTIVITY_SCOPE_DB_TEST=scratch. The scratch database must carry the CRM schema.
 // Run: node --import tsx --test tests/integration/workspace-id-scope-siblings.spec.ts
 import assert from "node:assert/strict";
 import test, { before, describe } from "node:test";
 
 import { sql } from "drizzle-orm";
 
-const enabled = process.env.ACTIVITY_SCOPE_DB_TEST === "scratch" && !!process.env.NEON_LOCAL_HOST;
+const enabled = process.env.ACTIVITY_SCOPE_DB_TEST === "scratch" && !!process.env.NEON_LOCAL_HOST && process.env.DB_DRIVER === "pg";
 
 const ORG_A = "a8000000-0000-4000-8000-000000000001";
 const ORG_B = "a8000000-0000-4000-8000-000000000002";
@@ -22,7 +23,7 @@ const CONTACT_A = "c8000000-0000-4000-8000-00000000000a";
 const CONTACT_B = "c8000000-0000-4000-8000-00000000000b";
 const PIPE_A = "d8000000-0000-4000-8000-00000000000a";
 
-describe("caller-supplied contact ids are scoped to the caller's workspace (scratch Postgres, production driver)", { skip: !enabled && "set ACTIVITY_SCOPE_DB_TEST=scratch with a scratch database" }, () => {
+describe("caller-supplied contact ids are scoped to the caller's workspace (scratch Postgres, production driver)", { skip: !enabled && "set ACTIVITY_SCOPE_DB_TEST=scratch and DB_DRIVER=pg with a scratch database" }, () => {
   let db: typeof import("@/db").db;
   let bearerA = "";
   let routes: {
@@ -98,7 +99,9 @@ describe("caller-supplied contact ids are scoped to the caller's workspace (scra
   });
 
   test("emails POST: foreign contactId -> 404 before anything is queued; own contactId passes the scope gate (positive control)", async () => {
+    const sentBefore = outbound.length;
     const foreign = await outcome(() => call(routes.emails, "/api/v1/emails", { to: "x@scope.test", subject: "s", body: "b", contactId: CONTACT_B }));
+    assert.equal(outbound.length, sentBefore, "a refused email must not reach any provider");
     assert.equal(foreign.status, 404);
     assert.deepEqual(foreign.body, { error: "contact not found" });
     assert.equal(await n(sql`select count(*)::int as n from emails where contact_id = ${CONTACT_B}::uuid`), 0);
@@ -109,7 +112,9 @@ describe("caller-supplied contact ids are scoped to the caller's workspace (scra
   });
 
   test("sms POST: foreign contactId -> 404 before anything is queued; own contactId passes the scope gate (positive control)", async () => {
+    const sentBefore = outbound.length;
     const foreign = await outcome(() => call(routes.sms, "/api/v1/sms", { to: "+15550100002", body: "b", contactId: CONTACT_B }));
+    assert.equal(outbound.length, sentBefore, "a refused sms must not reach any provider");
     assert.equal(foreign.status, 404);
     assert.deepEqual(foreign.body, { error: "contact not found" });
     assert.equal(await n(sql`select count(*)::int as n from sms_messages where contact_id = ${CONTACT_B}::uuid`), 0);

@@ -1,8 +1,22 @@
 "use server";
 
+import { and, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { contacts } from "@/db/schema";
 import { requireOperatorSessionForOrg } from "./auth";
 import { createContactForOrg } from "@/lib/contacts/create-for-org";
 import { sendReviewRequest } from "./review-request";
+
+// A contact id from the client is only used when it belongs to the session's
+// workspace; another workspace's id is refused exactly like a missing one.
+async function contactInOrg(orgId: string, contactId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(and(eq(contacts.orgId, orgId), eq(contacts.id, contactId)))
+    .limit(1);
+  return Boolean(row);
+}
 
 export async function createOperatorContactAction(params: {
   orgSlug: string;
@@ -52,10 +66,12 @@ export async function requestReviewAction(params: {
   | { ok: false; error: string }
 > {
   const session = await requireOperatorSessionForOrg(params.orgSlug);
-  void session; // orgId validated — sendReviewRequest uses orgId from params (contacts already scoped)
 
   if (!params.reviewLink.trim()) {
     return { ok: false, error: "Review link is required" };
+  }
+  if (!(await contactInOrg(session.orgId, params.contactId))) {
+    return { ok: false, error: "Contact not found" };
   }
 
   try {

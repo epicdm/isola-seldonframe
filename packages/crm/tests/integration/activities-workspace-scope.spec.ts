@@ -5,14 +5,15 @@
 // Every refusal has its positive twin in the same run (Law 19), and the fixture proves the foreign ids really exist (so a 404 means
 // "refused", not "absent").
 //
-// Opt-in: refuses unless NEON_LOCAL_HOST is set AND ACTIVITY_SCOPE_DB_TEST=scratch. The scratch database must carry the CRM schema.
+// Opt-in: refuses unless NEON_LOCAL_HOST is set, DB_DRIVER=pg (direct Postgres, so no test fetch stub can touch the DB
+// transport) AND ACTIVITY_SCOPE_DB_TEST=scratch. The scratch database must carry the CRM schema.
 // Run: node --import tsx --test tests/integration/activities-workspace-scope.spec.ts
 import assert from "node:assert/strict";
 import test, { before, describe } from "node:test";
 
 import { sql } from "drizzle-orm";
 
-const enabled = process.env.ACTIVITY_SCOPE_DB_TEST === "scratch" && !!process.env.NEON_LOCAL_HOST;
+const enabled = process.env.ACTIVITY_SCOPE_DB_TEST === "scratch" && !!process.env.NEON_LOCAL_HOST && process.env.DB_DRIVER === "pg";
 
 const ORG_A = "a7000000-0000-4000-8000-000000000001";
 const ORG_B = "a7000000-0000-4000-8000-000000000002";
@@ -26,7 +27,7 @@ const DEAL_A = "e7000000-0000-4000-8000-00000000000a";
 const DEAL_B = "e7000000-0000-4000-8000-00000000000b";
 const MISSING = "f7000000-0000-4000-8000-0000000000ff";
 
-describe("POST /api/v1/activities is scoped to the caller's workspace (scratch Postgres, production driver)", { skip: !enabled && "set ACTIVITY_SCOPE_DB_TEST=scratch with a scratch database" }, () => {
+describe("POST /api/v1/activities is scoped to the caller's workspace (scratch Postgres, production driver)", { skip: !enabled && "set ACTIVITY_SCOPE_DB_TEST=scratch and DB_DRIVER=pg with a scratch database" }, () => {
   let db: typeof import("@/db").db;
   let POST: typeof import("@/app/api/v1/activities/route").POST;
   let bearerA = "";
