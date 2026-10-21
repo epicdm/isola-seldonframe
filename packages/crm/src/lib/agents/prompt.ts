@@ -241,6 +241,13 @@ export async function composeSystemPrompt(input: ComposeSystemPromptInput): Prom
         Object.prototype.hasOwnProperty.call(skillVars, key) ? skillVars[key]! : match,
       ),
     );
+    // Runtime date anchor, independent of the operator's prose: a custom script
+    // may carry no placeholder at all, or a date frozen when the editor
+    // pre-filled it. This line is always current and says it wins.
+    sections.push(
+      `## Current date\nToday is ${skillVars.currentDate} (${skillVars.currentTime} ${skillVars.timezone}). ` +
+        `Use this as the anchor for "today", "tomorrow", "next 7 days" and similar; it overrides any date written elsewhere in these instructions.`,
+    );
   } else {
     const upFrontSkills = allSkills.filter((s) => s.id !== "hard-rules");
     for (const skill of upFrontSkills) {

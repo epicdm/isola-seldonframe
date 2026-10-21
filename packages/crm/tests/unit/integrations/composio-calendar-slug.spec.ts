@@ -94,6 +94,32 @@ describe("custom script gets today's date (temporal grounding)", () => {
     assert.doesNotMatch(prompt, /\{\{currentDate\}\}/);
   });
 
+  test("a custom script WITHOUT placeholders (or with a frozen date) still gets the current-date anchor", async () => {
+    const prompt = await composeSystemPrompt({
+      orgName: "Test Co",
+      soul: null,
+      blueprint: { ...base, customSkillMd: "Today is Wednesday, October 1, 2026. Read only." } as unknown as AgentBlueprint,
+      archetype: "website-chatbot",
+      now,
+      timezone: "America/Dominica",
+    });
+    assert.match(prompt, /## Current date\nToday is Wednesday, October 21, 2026 \(11:00 AM America\/Dominica\)\./);
+    assert.match(prompt, /overrides any date written elsewhere/);
+  });
+
+  test("control: no custom script -> platform temporal skill carries the date and no extra anchor section is added", async () => {
+    const prompt = await composeSystemPrompt({
+      orgName: "Test Co",
+      soul: null,
+      blueprint: { ...base } as unknown as AgentBlueprint,
+      archetype: "website-chatbot",
+      now,
+      timezone: "America/Dominica",
+    });
+    assert.match(prompt, /Today is Wednesday, October 21, 2026/);
+    assert.doesNotMatch(prompt, /## Current date/);
+  });
+
   test("control: unknown placeholders are left untouched; scripts without placeholders unchanged", async () => {
     const prompt = await composeSystemPrompt({
       orgName: "Test Co",
