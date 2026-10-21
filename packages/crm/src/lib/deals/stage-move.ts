@@ -24,6 +24,11 @@ import { trackEvent } from "@/lib/analytics/track";
 import { logBrainEvent } from "@/lib/analytics/brain";
 import { findStage } from "@/lib/deals/stages";
 
+/** The move and its audit row are committed; only the in-process dispatch failed (integration callers only). */
+export class StageDispatchError extends Error {
+  constructor(public readonly causeError: unknown) { super("deal.stage_changed dispatch failed"); this.name = "StageDispatchError"; }
+}
+
 export type StageMoveActor =
   | { kind: "user" }
   | { kind: "api" }
@@ -125,7 +130,12 @@ export async function moveDealToStage(input: {
   });
 
   // dispatch the already-logged event (listeners, wait resume, subscriptions) without a second log row
-  await emitSeldonEvent("deal.stage_changed", eventData, { orgId, preLoggedEventId: eventLogId });
+  // an integration retries through its own inbox, so it is told when dispatch failed (the move + audit row stand)
+  try {
+    await emitSeldonEvent("deal.stage_changed", eventData, { orgId, preLoggedEventId: eventLogId, throwOnDispatchFailure: input.actor.kind === "integration" });
+  } catch (err) {
+    throw new StageDispatchError(err);
+  }
 
   const dealValue = Number(updatedDeal?.value ?? 0);
   const stageLower = stage.toLowerCase();

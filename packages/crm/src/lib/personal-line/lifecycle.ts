@@ -35,7 +35,8 @@
 // enqueue) is marked on the inbox row (event_dispatched / stage_dispatched). A reclaimed event re-dispatches any of ITS
 // logged rows not yet marked — the pl.* row found by its eventId, the deal.stage_changed row by actor.ref = eventId
 // (written in the same statement as the move, so it proves this event made that move). Dispatch is therefore
-// at-least-once; wait resume (CAS) and subscription enqueue (unique idempotency key) absorb a repeat.
+// at-least-once; wait resume (CAS) and subscription enqueue (unique idempotency key) absorb a repeat. A dispatch that
+// FAILS (the bus is asked to rethrow) leaves the marker unset and the event unfinished, so the sender's retry reclaims it.
 import { randomUUID } from "node:crypto";
 import { findStage } from "@/lib/deals/stages";
 import type { StageMoveResult } from "@/lib/deals/stage-move";
@@ -247,10 +248,20 @@ export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, 
     return { status: "failed", reason: link.reason };
   }
   await store.mergeFacts(orgId, e.subjectId, rank, { ...e.facts, ...(e.plAccountId ? { pl_account_id: e.plAccountId } : {}) });
-  const deal = await projectDeal(orgId, e, link.contactId, store, move);
+  let deal: string;
+  let stageDispatchFailed: unknown = null;
+  try {
+    deal = await projectDeal(orgId, e, link.contactId, store, move);
+  } catch (err) {
+    // only a StageDispatchError is absorbed here: the move and its audit row ARE committed, only the dispatch failed
+    // -> re-dispatched from the saved row on reclaim. Anything else propagates (event stays unfinished).
+    if (!(err instanceof Error && err.name === "StageDispatchError")) throw err;
+    stageDispatchFailed = err;
+    deal = "moved:dispatch_pending";
+  }
   // the move (if any) dispatched inside moveDealToStage; record that, or re-dispatch THIS event's logged move after a crash
   const ds = await store.dispatchState(orgId, e.eventId);
-  if (!ds.stageDispatched) {
+  if (!ds.stageDispatched && !stageDispatchFailed) {
     if (!deal.startsWith("moved:")) {
       const prior = await store.findLoggedStageMove(orgId, e.eventId);
       if (prior) await emit("deal.stage_changed", prior.payload, orgId, prior.id);
@@ -276,6 +287,7 @@ export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, 
     if (prior) await emit(e.type, prior.payload, orgId, prior.id);
     await store.markDispatched(orgId, e.eventId, "event");
   }
+  if (stageDispatchFailed) throw stageDispatchFailed;   // unfinished: the reclaim re-dispatches the saved stage row
   await store.finishEvent(orgId, e.eventId, true, deal);
   return { status: "processed", contactId: link.contactId, deal, activity };
 }

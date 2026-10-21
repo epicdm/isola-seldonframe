@@ -312,6 +312,38 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     assert.equal(seen.length, 2);                                           // no further dispatch
   });
 
+  test("Codex r4: a FAILED dispatch (pl.* or stage) leaves the event unfinished; the sender's retry reclaims it and re-dispatches the saved rows once", async () => {
+    configure();
+    assert.equal((await post(EPIC, body("pl.signup_started", "subj_dfail"))).status, 200);
+    const raw = body("pl.line_created", "subj_dfail");
+    const e = JSON.parse(raw);
+    const { drizzleLifecycleStore, processLifecycleEvent, parseLifecycleEvent } = await import("@/lib/personal-line/lifecycle");
+    const { moveDealToStage, StageDispatchError } = await import("@/lib/deals/stage-move");
+    const store = await drizzleLifecycleStore();
+    const ev = parseLifecycleEvent(raw)!;
+    // attempt 1: the move commits (with its audit row) but its dispatch fails; the pl.* dispatch fails too
+    const failingMove = async (i: any) => { const r = await moveDealToStage(i); if (r.ok) throw new StageDispatchError(new Error("enqueue down")); return r; };
+    const failingEmit = async () => { throw new Error("enqueue down"); };
+    await assert.rejects(processLifecycleEvent(EPIC, ev, store, failingEmit as any, failingMove));
+    assert.equal((await plDealOf(EPIC, "subj_dfail"))[0].stage, "Line created");      // the move itself stands
+    const st: any = await db.execute(sql`select outcome, event_logged, event_dispatched, stage_dispatched from integration_event_inbox where event_id = ${e.event_id}`);
+    assert.deepEqual((st.rows ?? st)[0], { outcome: null, event_logged: true, event_dispatched: false, stage_dispatched: false });
+    // a retry inside 30 s is told to come back (503), not "duplicate"
+    const early = await post(EPIC, raw);
+    assert.equal(early.status, 503);
+    // retry after the reclaim window: both saved rows re-dispatched, nothing re-logged, then finished
+    await db.execute(sql`update integration_event_inbox set received_at = now() - interval '5 minutes' where event_id = ${e.event_id}`);
+    const seen: string[] = [];
+    const rec = async (t: string) => { seen.push(t); };
+    const r2 = await processLifecycleEvent(EPIC, ev, store, rec as any, (i) => moveDealToStage(i));
+    assert.equal(r2.status, "processed");
+    assert.deepEqual(seen.sort(), ["deal.stage_changed", "pl.line_created"]);
+    assert.equal(await count(sql`select count(*)::int n from workflow_event_log where org_id = ${EPIC}::uuid and (payload->>'eventId' = ${e.event_id} or payload->'actor'->>'ref' = ${e.event_id})`), 2);
+    assert.equal(await count(sql`select count(*)::int n from activities where org_id = ${EPIC}::uuid and metadata->>'event_id' = ${e.event_id}`), 1);
+    const r3 = await post(EPIC, raw);
+    assert.equal((await r3.json()).status, "duplicate");
+  });
+
   test("Codex r2: the stage write and its deal.stage_changed row are ONE statement — a lost CAS writes neither", async () => {
     configure();
     assert.equal((await post(EPIC, body("pl.signup_started", "subj_cas"))).status, 200);

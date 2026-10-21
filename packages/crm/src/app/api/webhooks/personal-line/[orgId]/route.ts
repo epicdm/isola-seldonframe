@@ -21,7 +21,8 @@ export async function POST(request: Request, context: { params: Promise<{ orgId:
     const r = await handlePersonalLineLifecycle(request, orgId, {
       config: () => resolveLifecycleConfig(process.env),
       store: drizzleLifecycleStore,
-      emit: (type, data, org, preLoggedEventId) => emitSeldonEvent(type, data as never, { orgId: org, preLoggedEventId }),
+      // dispatch failures propagate (500, event left unfinished) so plsvc retries and the reclaim re-dispatches the saved rows
+      emit: (type, data, org, preLoggedEventId) => emitSeldonEvent(type, data as never, { orgId: org, preLoggedEventId, throwOnDispatchFailure: true }),
       move: (input) => moveDealToStage(input),
     });
     return NextResponse.json(r.body, { status: r.status, headers: { "cache-control": "no-store" } });
