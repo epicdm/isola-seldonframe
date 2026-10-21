@@ -18,6 +18,7 @@ const EXPECTED_SLUGS = [
   "gmail",
   "googlecalendar",
   "googledrive",
+  "googledocs",
   "slack",
   "notion",
   "hubspot",
@@ -25,8 +26,8 @@ const EXPECTED_SLUGS = [
   "outlook",
 ];
 
-test("catalog has the 8 curated toolkits in order", () => {
-  assert.equal(COMPOSIO_TOOLKITS.length, 8);
+test("catalog has the 9 curated toolkits in order", () => {
+  assert.equal(COMPOSIO_TOOLKITS.length, 9);
   assert.deepEqual([...COMPOSIO_TOOLKIT_SLUGS], EXPECTED_SLUGS);
 });
 

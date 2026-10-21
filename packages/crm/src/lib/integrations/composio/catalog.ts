@@ -30,7 +30,7 @@ function logoFor(slug: string): string {
 }
 
 /**
- * The 8 curated, managed-auth toolkits. Order is the display order in the
+ * The 9 curated, managed-auth toolkits. Order is the display order in the
  * /integrations grid. Keep this list small + intentional — adding a toolkit is
  * a single entry here (the grid + the connection filter read this list).
  */
@@ -54,6 +54,15 @@ export const COMPOSIO_TOOLKITS: readonly ComposioToolkitInfo[] = [
     slug: "googledrive",
     label: "Google Drive",
     logo: logoFor("googledrive"),
+    primaryTrigger: null,
+  },
+  {
+    // Google Docs is its OWN Composio toolkit (separate managed connection from
+    // googledrive). Drive's DOWNLOAD/EXPORT actions return a hosted file link,
+    // not text, so reading a Doc's text needs this toolkit's PLAINTEXT action.
+    slug: "googledocs",
+    label: "Google Docs",
+    logo: logoFor("googledocs"),
     primaryTrigger: null,
   },
   {
@@ -137,6 +146,13 @@ const DEFAULT_TOOLS_BY_TOOLKIT: Record<string, readonly string[]> = {
     "GOOGLEDRIVE_FIND_FILE",
     "GOOGLEDRIVE_CREATE_FILE",
     "GOOGLEDRIVE_DOWNLOAD_FILE",
+  ],
+  // READ-ONLY by design: find a Doc, read it as plain text. No create/update/
+  // insert/delete actions are seeded (slugs + args verified against Composio's
+  // googledocs toolkit docs, 2026-10-21).
+  googledocs: [
+    "GOOGLEDOCS_SEARCH_DOCUMENTS",
+    "GOOGLEDOCS_GET_DOCUMENT_PLAINTEXT",
   ],
   slack: ["SLACK_SEND_MESSAGE", "SLACK_LIST_CHANNELS", "SLACK_FETCH_CONVERSATION_HISTORY"],
   notion: ["NOTION_CREATE_PAGE", "NOTION_SEARCH", "NOTION_QUERY_DATABASE"],

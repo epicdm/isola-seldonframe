@@ -153,6 +153,17 @@ export const TOOL_CATALOG: readonly ToolCatalogEntry[] = [
     ],
   },
   {
+    // Composio managed toolkit — COMPOSIO_TOOLKITS[slug="googledocs"]. Read-only
+    // Doc text (search + plain-text read). Binds as { kind:"composio",
+    // enabledToolkits:["googledocs"], enabledTools:[…] }.
+    id: "googledocs",
+    connectorKind: "composio",
+    toolkitSlug: "googledocs",
+    label: "Google Docs",
+    description: "Find Google Docs and read their text (read-only).",
+    keywords: ["google doc", "google docs", "googledocs"],
+  },
+  {
     // Composio managed toolkit — COMPOSIO_TOOLKITS[slug="googlecalendar"]. Binds
     // as { kind:"composio", enabledToolkits:["googlecalendar"], enabledTools:[…] }.
     id: "googlecalendar",
