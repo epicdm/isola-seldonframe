@@ -1329,6 +1329,8 @@ export async function cancelBookingByTokenAction(input: {
 export async function updateBookingCalendarAction(input: {
   calendarId: string | null;
 }): Promise<{ ok: true; calendarId: string | null } | { ok: false; error: "unauthorized" | "invalid_calendar_id" }> {
+  // EPIC 2026-10-21 (staff access): the selected business calendar is a workspace booking setting - owner/admin only.
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };

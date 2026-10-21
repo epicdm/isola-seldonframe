@@ -460,6 +460,31 @@ describe("Staff access (scratch Postgres, production driver)", { skip: !enabled 
     assert.equal(tm2.test_mode, false, "staff could not switch it");
   });
 
+  test("actions added by live 7fe2158d: booking calendar setting is owner/admin, its read is staff; Chatwoot link lookup/confirm are owner/admin", async () => {
+    const { updateBookingCalendarAction, getBookingCalendarSelectionAction } = await import("@/lib/bookings/actions");
+    const { findChatwootCandidatesAction, confirmChatwootLinkAction } = await import("@/lib/chatwoot-link/actions");
+    const calendarId = "staff.fixture.calendar@group.calendar.test";
+    asOperator(STAFF);
+    await assert.rejects(() => updateBookingCalendarAction({ calendarId }), (e: unknown) => isRoleRefusal(e));
+    assert.deepEqual(await getBookingCalendarSelectionAction(), { calendarId: null }, "staff's refused write changed nothing");
+    asOperator(ADMIN);
+    assert.deepEqual(await updateBookingCalendarAction({ calendarId }), { ok: true, calendarId }, "control: an admin saves the calendar");
+    asOperator(STAFF);
+    assert.deepEqual(await getBookingCalendarSelectionAction(), { calendarId }, "staff can READ the selection (the bookings page needs it)");
+    asOperator(ADMIN);
+    assert.deepEqual(await updateBookingCalendarAction({ calendarId: null }), { ok: true, calendarId: null });
+    for (const realm of ["operator", "nextauth"] as const) {
+      if (realm === "operator") asOperator(STAFF); else asNextAuth(STAFF, W);
+      await assert.rejects(() => findChatwootCandidatesAction(U(95)), (e: unknown) => isRoleRefusal(e), `${realm}: staff lookup refused`);
+      await assert.rejects(() => confirmChatwootLinkAction({ contactId: U(95), chatwootContactId: 1, conversationId: 1 }), (e: unknown) => isRoleRefusal(e), `${realm}: staff confirm refused`);
+    }
+    asNextAuth(OWNER, OWNER_HOME, W);
+    const found = await findChatwootCandidatesAction(U(95));
+    assert.equal(found.ok, false, "control: an owner passes the role guard and reaches the service (unknown contact -> typed result, no throw)");
+    const confirmed = await confirmChatwootLinkAction({ contactId: U(95), chatwootContactId: 1, conversationId: 1 });
+    assert.notDeepEqual(confirmed, { ok: false, code: "forbidden" }, "the owner is not told 'forbidden'");
+  });
+
   test("target workspace: a staff member of W who OWNS another workspace cannot change W from there (home / client-supplied targets)", async () => {
     asNextAuth(DUAL, W, DUAL_A); // active = the workspace they own; home = W where they are staff
     assert.equal(await helpers.getCurrentWorkspaceRole(), "owner", "control: they are owner of the ACTIVE workspace");

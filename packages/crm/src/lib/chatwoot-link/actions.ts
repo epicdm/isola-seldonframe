@@ -4,18 +4,25 @@
 // from the request; see session.ts for mixed sessions) and then runs the injectable core in service.ts. No token, Chatwoot URL with
 // credentials, or raw Chatwoot payload is ever returned to the browser.
 import { assertWritable } from "@/lib/demo/server";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 import { confirmChatwootLink, findChatwootCandidates, type ConfirmResult, type FindResult } from "./service";
 import { resolveChatwootActor } from "./session";
 import { makeChatwootLinkDeps } from "./wiring";
 
 export async function findChatwootCandidatesAction(contactId: string): Promise<FindResult> {
+  // EPIC 2026-10-21 (staff access): only owner/admin can confirm a link, and the card that calls this is offered only to them,
+  // so the Chatwoot lookup is owner/admin as well. The workspace role is re-read per request (lib/auth/workspace-role.ts).
+  await requireWorkspaceAdmin();
   const actor = await resolveChatwootActor();
   if (!actor) return { ok: false, code: "not_found" };
   return findChatwootCandidates(actor, String(contactId ?? ""), makeChatwootLinkDeps(actor.orgId));
 }
 
 export async function confirmChatwootLinkAction(input: { contactId: string; chatwootContactId: number; conversationId: number }): Promise<ConfirmResult> {
+  // EPIC 2026-10-21 (staff access): owner/admin first (a staff caller gets the role refusal); the service then applies its own
+  // stricter rule (real person, owner/admin) exactly as before.
+  await requireWorkspaceAdmin();
   assertWritable();
   const actor = await resolveChatwootActor();
   if (!actor) return { ok: false, code: "forbidden" };
