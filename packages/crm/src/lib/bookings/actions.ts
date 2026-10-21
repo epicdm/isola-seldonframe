@@ -15,6 +15,15 @@ import { recordBookingOutcomeLearning } from "@/lib/soul/learning";
 import { computeRescheduledEnd, intervalsOverlap, shouldSendRescheduleEmail as shouldSendRescheduleEmailPure } from "./calendar-math";
 import { sendBookingRescheduleEmail } from "@/lib/messaging/skills/booking-reschedule";
 import {
+  checkBusinessCalendarBusy,
+  filterSlotsOutsideBusy,
+  loadSelectedBusinessCalendar,
+  overlapsBusy,
+  resolveSelectedBusinessCalendar,
+  type SelectedBusinessCalendar,
+} from "./business-calendar";
+import { appendBookingLifecycleActivity } from "./lifecycle";
+import {
   deleteGoogleCalendarBookingEvent,
   reconcileGoogleCalendarBookings,
   syncBookingWithGoogleCalendar,
@@ -143,6 +152,10 @@ type PublicBookingContext = {
   /** Workspace-level minimum lead time (minutes) before a slot is bookable.
    *  0 when the workspace has no booking rules (back-compat). */
   minNoticeMinutes: number;
+  /** 2026-10-21 — the workspace's explicitly selected business calendar
+   *  (settings.bookingCalendar), read with the same settings row as the
+   *  rules. null → no calendar check (today's behaviour). */
+  businessCalendar: SelectedBusinessCalendar | null;
   /** v1.40.1 — vertical-aware booking form fields. Empty array if
    *  the appointment type doesn't define any (legacy templates). */
   intakeFields: BookingIntakeField[];
@@ -375,6 +388,7 @@ async function resolvePublicBookingContext(orgSlug: string, bookingSlug: string)
     bufferAfterMinutes,
     maxBookingsPerDay,
     minNoticeMinutes,
+    businessCalendar: resolveSelectedBusinessCalendar(org.settings),
     // v1.40.1 — vertical-aware booking intake fields. Populated during
     // create_full_workspace based on the classified archetype. Empty
     // array for legacy templates (renders the default name+email+notes).
@@ -487,8 +501,46 @@ export async function listPublicBookingSlotsAction({
     now: today,
   });
 
+  // 2026-10-21 — selected business calendar (configured workspaces only):
+  // drop slots that overlap the calendar's busy time. computeSlotsForDay and
+  // the approved hours are untouched — busy time only REMOVES offered slots
+  // (it is not a booked row: no max-per-day count, no buffers). Short
+  // per-org/day cache + rate limit for this anonymous route. Lookup failure
+  // or rate limit with no cached result → FAIL CLOSED: no slots + an honest
+  // flag. No selected calendar → today's behaviour, unchanged.
+  let offered = slots;
+  if (slots.length > 0 && context.businessCalendar) {
+    const calendar = await checkBusinessCalendarBusy({
+      orgId: context.orgId,
+      timeMin: dayStartUtc,
+      timeMax: dayEndUtc,
+      timezone: tz,
+      selected: context.businessCalendar,
+      useCache: true,
+    });
+    if (calendar.status === "unavailable") {
+      console.warn(
+        JSON.stringify({
+          event: "public_slots.calendar_unavailable",
+          orgId: context.orgId,
+          date,
+          reason: calendar.reason,
+        }),
+      );
+      return {
+        slots: [] as string[],
+        durationMinutes: context.durationMinutes,
+        workspaceTimezone: tz,
+        availabilityUnavailable: true as const,
+      };
+    }
+    if (calendar.status === "ok") {
+      offered = filterSlotsOutsideBusy(slots, context.durationMinutes, calendar.busy);
+    }
+  }
+
   return {
-    slots,
+    slots: offered,
     durationMinutes: context.durationMinutes,
     // v1.40.2 — surface workspace TZ so the form can format slots
     // and label the time zone clearly.
@@ -1186,6 +1238,7 @@ export async function cancelBookingByTokenAction(input: {
       contactId: bookings.contactId,
       userId: bookings.userId,
       externalEventId: bookings.externalEventId,
+      title: bookings.title,
     })
     .from(bookings)
     .where(eq(bookings.id, input.bookingId))
@@ -1197,10 +1250,33 @@ export async function cancelBookingByTokenAction(input: {
     return { ok: true, alreadyCancelled: true };
   }
 
-  await db
+  // 2026-10-21 — the status guard makes the cancel happen once: a second
+  // concurrent click updates nothing and returns alreadyCancelled without
+  // re-emitting booking.cancelled.
+  const [cancelledRow] = await db
     .update(bookings)
     .set({ status: "cancelled", cancelledAt: new Date(), updatedAt: new Date() })
-    .where(eq(bookings.id, row.id));
+    .where(and(eq(bookings.id, row.id), ne(bookings.status, "cancelled")))
+    .returning({ id: bookings.id });
+  if (!cancelledRow) {
+    return { ok: true, alreadyCancelled: true };
+  }
+
+  // 2026-10-21 — def-uplink-booking-public-manage-cancel-writes-no-crm-history:
+  // append the cancellation outcome (the original booking activity is left
+  // untouched). Same shape as the customer-portal cancel. Selected-calendar
+  // workspaces only (owner scope 2026-10-21).
+  if (row.contactId && (await loadSelectedBusinessCalendar(row.orgId).catch(() => null))) {
+    await appendBookingLifecycleActivity({
+      orgId: row.orgId,
+      contactId: row.contactId,
+      bookingId: row.id,
+      type: "booking_cancelled",
+      subject: `Customer cancelled: ${row.title}`,
+      body: "(cancelled from the booking management link)",
+      source: "booking_manage_link",
+    });
+  }
 
   // Soft-fail Google Calendar cleanup — never block the cancel.
   try {
@@ -1234,6 +1310,47 @@ export async function cancelBookingByTokenAction(input: {
   revalidatePath(`/booking/manage/${row.id}`);
 
   return { ok: true, alreadyCancelled: false };
+}
+
+// 2026-10-21 — the workspace's selected business calendar (the one the
+// public page checks for busy time). Stored on its own settings key so saving
+// the booking-hours form (which replaces settings.booking wholesale) can never
+// wipe it, and saving this can never change the hours. Empty → cleared
+// (today's behaviour). The public page fails closed if it cannot be read.
+export async function updateBookingCalendarAction(input: {
+  calendarId: string | null;
+}): Promise<{ ok: true; calendarId: string | null } | { ok: false; error: "unauthorized" | "invalid_calendar_id" }> {
+  assertWritable();
+  const orgId = await getOrgId();
+  if (!orgId) return { ok: false, error: "unauthorized" };
+
+  const raw = typeof input.calendarId === "string" ? input.calendarId.trim() : "";
+  if (raw.length > 320 || /[\s"<>]/.test(raw)) return { ok: false, error: "invalid_calendar_id" };
+
+  const settingsSql = (
+    raw
+      ? sql`jsonb_set(COALESCE(${organizations.settings}, '{}'::jsonb), ARRAY['bookingCalendar']::text[], ${JSON.stringify({ calendarId: raw })}::jsonb, true)`
+      : sql`COALESCE(${organizations.settings}, '{}'::jsonb) - 'bookingCalendar'`
+  ) as unknown as typeof organizations.$inferInsert.settings;
+
+  await db
+    .update(organizations)
+    .set({ settings: settingsSql, updatedAt: new Date() })
+    .where(eq(organizations.id, orgId));
+
+  revalidatePath("/bookings");
+  return { ok: true, calendarId: raw || null };
+}
+
+export async function getBookingCalendarSelectionAction(): Promise<{ calendarId: string | null }> {
+  const orgId = await getOrgId();
+  if (!orgId) return { calendarId: null };
+  const [row] = await db
+    .select({ settings: organizations.settings })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+  return { calendarId: resolveSelectedBusinessCalendar(row?.settings ?? null)?.calendarId ?? null };
 }
 
 export async function markBookingNoShowAction(bookingId: string) {
@@ -1564,6 +1681,36 @@ export async function submitPublicBookingAction({
       requested_start: bookingStart.toISOString(),
       requested_end: slotEnd.toISOString(),
     });
+  }
+
+  // 2026-10-21 — re-check the selected business calendar at booking time
+  // (fresh lookup, never the cache) so a slot that went busy after the page
+  // loaded cannot be booked. Fail closed on lookup failure. No selected
+  // calendar → no check (unchanged).
+  if (bookingContext.businessCalendar) {
+    const calendarAtSubmit = await checkBusinessCalendarBusy({
+      orgId: bookingContext.orgId,
+      timeMin: bookingStart,
+      timeMax: slotEnd,
+      timezone: bookingContext.workspaceTimezone,
+      selected: bookingContext.businessCalendar,
+      useCache: false,
+    });
+    if (calendarAtSubmit.status === "unavailable") {
+      return rejectAndThrow("calendar_availability_unavailable", {
+        reason: calendarAtSubmit.reason,
+        requested_start: bookingStart.toISOString(),
+      });
+    }
+    if (
+      calendarAtSubmit.status === "ok" &&
+      overlapsBusy(bookingStart.getTime(), slotEnd.getTime(), calendarAtSubmit.busy)
+    ) {
+      return rejectAndThrow("slot_calendar_busy", {
+        requested_start: bookingStart.toISOString(),
+        requested_end: slotEnd.toISOString(),
+      });
+    }
   }
 
   const provider = await resolveBookingProvider(null);

@@ -74,6 +74,14 @@ export type DispatchInput = {
    *  eventType. The render-vars builder normalises to a flat
    *  Record<string,string>. */
   payload: DispatchEventPayload;
+  /** 2026-10-21 — OPTIONAL calendar attachment (e.g. the booking's CANCEL
+   *  .ics) added to every EMAIL this event sends, so the customer's existing
+   *  notice also updates their calendar (one email, not two). Absent →
+   *  byte-for-byte today's behaviour. */
+  emailAttachments?: Array<{ filename: string; content: string; contentType?: string }>;
+  /** Called once per email actually sent (not suppressed) WITH the
+   *  attachments — lets the caller fall back when none went out. */
+  onAttachedEmailSent?: () => void;
 };
 
 export async function dispatchOutboundMessagesForEvent(
@@ -379,7 +387,13 @@ export async function dispatchOutboundMessagesForEvent(
           toEmail: toAddress,
           subject: composed.subject ?? "Confirmation",
           body: finalBody,
+          ...(input.emailAttachments && input.emailAttachments.length > 0
+            ? { attachments: input.emailAttachments }
+            : {}),
         });
+        if (!result.suppressed && input.emailAttachments && input.emailAttachments.length > 0) {
+          input.onAttachedEmailSent?.();
+        }
 
         if (result.suppressed) {
           await db

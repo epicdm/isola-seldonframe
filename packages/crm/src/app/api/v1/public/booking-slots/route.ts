@@ -34,6 +34,11 @@ export async function GET(request: Request) {
     return NextResponse.json({
       slots: result.slots,
       durationMinutes: result.durationMinutes,
+      // 2026-10-21 — present only when the selected business calendar
+      // could not be checked (fail closed).
+      ...("availabilityUnavailable" in result && result.availabilityUnavailable
+        ? { availabilityUnavailable: true }
+        : {}),
     });
   } catch (err) {
     console.error(

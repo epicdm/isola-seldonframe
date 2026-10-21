@@ -26,13 +26,14 @@
 
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { activities, bookings, users } from "@/db/schema";
 import { assertWritable } from "@/lib/demo/server";
 import { emitSeldonEvent } from "@/lib/events/bus";
 import { trackEvent } from "@/lib/analytics/track";
 import { requirePortalSessionForOrg } from "@/lib/portal/auth";
+import { loadSelectedBusinessCalendar } from "@/lib/bookings/business-calendar";
 
 /**
  * v1.21.1 — Resolve the workspace owner's userId for activities.
@@ -71,6 +72,28 @@ export async function cancelBookingAction(input: {
 
   const session = await requirePortalSessionForOrg(input.orgSlug);
 
+  // 2026-10-21 — selected-business-calendar workspaces: an ATOMIC
+  // scheduled->cancelled transition decides "first cancel", so concurrent or
+  // repeated requests emit the lifecycle event exactly once. Elsewhere this
+  // block does nothing and the cancel below is unchanged.
+  const selectedCalendar = await loadSelectedBusinessCalendar(session.orgId).catch(() => null);
+  let firstCancel = false;
+  if (selectedCalendar) {
+    const [transitioned] = await db
+      .update(bookings)
+      .set({ status: "cancelled", cancelledAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(bookings.id, input.bookingId),
+          eq(bookings.orgId, session.orgId),
+          eq(bookings.contactId, session.contact.id),
+          ne(bookings.status, "cancelled"),
+        ),
+      )
+      .returning({ id: bookings.id });
+    firstCancel = Boolean(transitioned);
+  }
+
   // Atomic, scoped cancel: the WHERE clause enforces both org and
   // contact ownership. If the booking belongs to a different contact
   // OR a different org, returning() yields no row and we surface
@@ -92,6 +115,19 @@ export async function cancelBookingAction(input: {
 
   if (!updated) {
     return { ok: false, reason: "booking_not_found" };
+  }
+
+  // 2026-10-21 — selected-business-calendar workspaces: emit the standard
+  // booking.cancelled so this cancel gets the same lifecycle as every other
+  // cancel path (calendar CANCEL on the cancellation email + organizer
+  // notice, reminders cancelled). The portal never emitted it — its
+  // reminders kept firing. Elsewhere: unchanged.
+  if (selectedCalendar && firstCancel) {
+    await emitSeldonEvent(
+      "booking.cancelled",
+      { appointmentId: updated.id, contactId: session.contact.id },
+      { orgId: session.orgId },
+    );
   }
 
   // v1.21.1 — bridge to operator's contact activity feed.

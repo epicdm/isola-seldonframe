@@ -189,6 +189,9 @@ export function PublicBookingForm({
   const [slots, setSlots] = useState<string[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<string>("");
   const [slotsLoading, setSlotsLoading] = useState(false);
+  // 2026-10-21 — true when the workspace's selected business calendar could
+  // not be checked: the server offers no slots (fail closed) and we say so.
+  const [availabilityUnavailable, setAvailabilityUnavailable] = useState(false);
   const [step, setStep] = useState<Step>("pick-date");
   const { showDemoToast } = useDemoToast();
 
@@ -229,6 +232,9 @@ export function PublicBookingForm({
       if (cancelled) return;
 
       setSlots(result.slots);
+      setAvailabilityUnavailable(
+        "availabilityUnavailable" in result && result.availabilityUnavailable === true,
+      );
       if (!result.slots.includes(selectedSlot)) {
         setSelectedSlot("");
       }
@@ -468,6 +474,11 @@ export function PublicBookingForm({
                           style={{ backgroundColor: "color-mix(in srgb, var(--sf-text, #0a0a0a) 6%, transparent)" }}
                         />
                       ))}
+                    </div>
+                  ) : slots.length === 0 && availabilityUnavailable ? (
+                    <div className="rounded-xl border border-dashed py-12 text-center" style={{ borderColor: "var(--sf-border)" }} role="status">
+                      <p className="text-sm font-medium" style={{ color: "var(--sf-text)" }}>Availability is temporarily unavailable.</p>
+                      <p className="mt-1 text-xs" style={{ color: "var(--sf-muted)" }}>We can&apos;t confirm open times right now. Please try again shortly.</p>
                     </div>
                   ) : slots.length === 0 ? (
                     <div className="rounded-xl border border-dashed py-12 text-center" style={{ borderColor: "var(--sf-border)" }}>

@@ -26,6 +26,7 @@ import type {
   WorkspaceBookingRules,
 } from "@/lib/bookings/workspace-rules";
 import { updateWorkspaceBookingRulesAction } from "@/lib/bookings/actions";
+import { BusinessCalendarSelector } from "./business-calendar-selector";
 
 // Monday→Sunday for display; data keys remain sunday..saturday.
 const DISPLAY_DAYS: { key: AvailabilityDayKey; label: string }[] = [
@@ -335,6 +336,7 @@ export function AvailabilityRulesPanel({
             </span>
           ) : null}
         </div>
+        <BusinessCalendarSelector />
       </div>
     </section>
   );

@@ -36,6 +36,13 @@ import { buildBookingICS } from "./build-ics";
 const CALENDAR_CONTENT_TYPE = "text/calendar; method=REQUEST";
 const ICS_FILENAME = "appointment.ics";
 
+/** The ONE iCalendar UID of a booking. The original invite (SEQUENCE 0) and
+ *  the cancellation (METHOD:CANCEL) carry this same UID so the recipient's
+ *  calendar removes the original event, never adds one. */
+export function bookingIcsUid(bookingId: string): string {
+  return `booking-${bookingId}@seldonframe.com`;
+}
+
 /** Normalised data the invite needs. Injected in tests; loaded from the DB
  *  in production via the default `loadInviteData`. */
 export type InviteData = {
@@ -90,7 +97,7 @@ export type SendBookingCalendarInviteInput = {
  * Default DB-backed loader. Resolves the booking row, the org (name, slug,
  * timezone, sender email, soul phone), and the owner email.
  */
-async function defaultLoadInviteData(
+export async function loadInviteDataFromDb(
   orgId: string,
   bookingId: string,
 ): Promise<InviteData | null> {
@@ -186,7 +193,7 @@ async function defaultLoadInviteData(
 }
 
 const defaultDeps: BookingInviteDeps = {
-  loadInviteData: defaultLoadInviteData,
+  loadInviteData: loadInviteDataFromDb,
   sendEmail: sendEmailFromApi,
   now: new Date(),
 };
@@ -248,7 +255,7 @@ export async function sendBookingCalendarInvite(
     const description = descriptionParts.join("\n");
 
     const ics = buildBookingICS({
-      uid: `booking-${booking.id}@seldonframe.com`,
+      uid: bookingIcsUid(booking.id),
       start: booking.startsAt,
       end: booking.endsAt,
       now: deps.now,

@@ -24,6 +24,8 @@ import { syncContactToNewsletter } from "@/lib/integrations/newsletter-sync";
 import { dispatchOutboundMessagesForEvent } from "@/lib/messaging/dispatch";
 // 2026-06-21 — ICS-push: emit an .ics calendar invite on booking.created.
 import { sendBookingCalendarInvite } from "@/lib/calendar/booking-invite";
+import { sendBookingCalendarCancellation } from "@/lib/calendar/booking-lifecycle";
+import { loadSelectedBusinessCalendar } from "@/lib/bookings/business-calendar";
 // Task 8 — push new bookings into the org's OWN connected Google/Outlook
 // calendar (Composio, org-level connection). Fail-soft; fire-and-forget.
 import { pushBookingToConnectedCalendar } from "@/lib/integrations/calendar-push";
@@ -576,17 +578,47 @@ export function registerCrmEventListeners() {
       typeof data.appointmentId === "string" ? data.appointmentId : "";
     const cancelOrgId = await resolveOrgIdForBookingId(appointmentId).catch(() => null);
     if (cancelOrgId) {
-      try {
-        await dispatchOutboundMessagesForEvent({
-          orgId: cancelOrgId,
-          eventType: "booking.cancelled",
-          payload: data,
-        });
-      } catch (err) {
-        console.warn(
-          `[listeners] dispatchOutboundMessagesForEvent booking.cancelled failed:`,
-          err,
+      // 2026-10-21 — selected-business-calendar workspaces: the calendar
+      // CANCEL (same UID, higher SEQUENCE) rides on the EXISTING cancellation
+      // email (one customer email), the organizer gets a notice, and the
+      // whole thing runs once per booking (a repeated booking.cancelled sends
+      // nothing). Everyone else: today's dispatch, unchanged.
+      const selectedCalendar = await loadSelectedBusinessCalendar(cancelOrgId).catch(() => null);
+      let dispatched = false;
+      const runDispatch = async (attachment?: { filename: string; content: string; contentType?: string }) => {
+        dispatched = true;
+        let attachedSent = false;
+        try {
+          await dispatchOutboundMessagesForEvent({
+            orgId: cancelOrgId,
+            eventType: "booking.cancelled",
+            payload: data,
+            ...(attachment
+              ? { emailAttachments: [attachment], onAttachedEmailSent: () => { attachedSent = true; } }
+              : {}),
+          });
+        } catch (err) {
+          console.warn(
+            `[listeners] dispatchOutboundMessagesForEvent booking.cancelled failed:`,
+            err,
+          );
+        }
+        return attachedSent;
+      };
+      if (selectedCalendar) {
+        const bookingIdForCalendar =
+          typeof data.bookingId === "string" ? data.bookingId : appointmentId;
+        const result = await sendBookingCalendarCancellation(
+          { orgId: cancelOrgId, bookingId: bookingIdForCalendar },
+          { deliverToCustomer: (attachment) => runDispatch(attachment) },
         );
+        // Could not prepare the calendar cancel (not a repeat): keep the
+        // customer's normal cancellation email.
+        if (!result.sent && result.reason !== "already_cancelled_or_missing" && !dispatched) {
+          await runDispatch();
+        }
+      } else {
+        await runDispatch();
       }
 
       // 2026-05-18 — Slice 6: cancel pending scheduled sends targeted
