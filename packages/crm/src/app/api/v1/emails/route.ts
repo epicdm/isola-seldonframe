@@ -1,7 +1,7 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { emails, users } from "@/db/schema";
+import { contacts, emails, users } from "@/db/schema";
 import { guardApiRequest } from "@/lib/api/guard";
 import { sendEmailFromApi } from "@/lib/emails/api";
 
@@ -59,6 +59,17 @@ export async function POST(request: Request) {
   }
   if (typeof body.body !== "string" || !body.body.trim()) {
     return NextResponse.json({ error: "body is required" }, { status: 400 });
+  }
+
+  // A contact id is only accepted when it belongs to the caller's workspace;
+  // checked before anything is sent or written.
+  if (typeof body.contactId === "string") {
+    const [ownContact] = await db
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(and(eq(contacts.orgId, guard.orgId), eq(contacts.id, body.contactId)))
+      .limit(1);
+    if (!ownContact) return NextResponse.json({ error: "contact not found" }, { status: 404 });
   }
 
   const userId = await getOrgOwnerUserId(guard.orgId);

@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { deals, pipelines } from "@/db/schema";
+import { contacts, deals, pipelines } from "@/db/schema";
 import { guardApiRequest } from "@/lib/api/guard";
 
 export async function GET(request: Request) {
@@ -17,6 +17,16 @@ export async function POST(request: Request) {
   if ("error" in guard) return guard.error;
 
   const body = await request.json();
+  // A contact id is only accepted when it belongs to the caller's workspace.
+  if (typeof body.contactId === "string") {
+    const [ownContact] = await db
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(and(eq(contacts.orgId, guard.orgId), eq(contacts.id, body.contactId)))
+      .limit(1);
+    if (!ownContact) return NextResponse.json({ error: "contact not found" }, { status: 404 });
+  }
+
   const [pipeline] = await db
     .select()
     .from(pipelines)

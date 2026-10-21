@@ -107,6 +107,34 @@ describe("POST /api/v1/activities is scoped to the caller's workspace (scratch P
     assert.equal(await count(sql`deal_id = ${DEAL_B}::uuid`), 0);
   });
 
+  test("camelCase keys: own contactId -> 201 (positive control); foreign contactId -> 404, nothing written", async () => {
+    const own = await post({ contactId: CONTACT_A });
+    assert.equal(own.status, 201);
+    assert.equal(((await own.json()) as { data: { contactId: string } }).data.contactId, CONTACT_A);
+    const foreign = await post({ contactId: CONTACT_B });
+    assert.equal(foreign.status, 404);
+    assert.deepEqual(await foreign.json(), { error: "contact not found" });
+    assert.equal(await count(sql`contact_id = ${CONTACT_B}::uuid`), 0);
+  });
+
+  test("a missing deal id gets the same 404 body as a foreign one (no existence oracle)", async () => {
+    const missing = await post({ deal_id: MISSING });
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { error: "deal not found" });
+  });
+
+  test("foreign contact + own deal (mixed, other way round) -> 404, nothing written in A", async () => {
+    const before = await count(sql`org_id = ${ORG_A}::uuid`);
+    const r = await post({ contactId: CONTACT_B, dealId: DEAL_A });
+    assert.equal(r.status, 404);
+    assert.equal(await count(sql`org_id = ${ORG_A}::uuid`), before);
+  });
+
+  test("positive control: own contact + own deal together -> 201", async () => {
+    const r = await post({ contact_id: CONTACT_A, deal_id: DEAL_A });
+    assert.equal(r.status, 201);
+  });
+
   test("no cross-workspace activity row exists after the run (activity org differs from its contact's or deal's org)", async () => {
     const r = (await db.execute(sql`select count(*)::int as n from activities a left join contacts c on c.id = a.contact_id left join deals d on d.id = a.deal_id where a.org_id in (${ORG_A}::uuid, ${ORG_B}::uuid) and ((c.id is not null and c.org_id <> a.org_id) or (d.id is not null and d.org_id <> a.org_id))`)) as unknown as { rows: { n: number }[] };
     assert.equal(r.rows[0].n, 0);

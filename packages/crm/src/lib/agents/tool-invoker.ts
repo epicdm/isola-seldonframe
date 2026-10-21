@@ -3,6 +3,7 @@ import { db } from "@/db";
 import {
   activities,
   bookings,
+  contacts,
   organizations,
   orgMembers,
 } from "@/db/schema";
@@ -101,6 +102,17 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
       throw new Error(
         "create_activity: no contactId (args.contact_id unresolved and runContext.customer.contactId missing)",
       );
+    }
+
+    // The contact id may come from the model (args.contact_id), so it is only
+    // used when it belongs to this run's workspace.
+    const [ownContact] = await db
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(and(eq(contacts.orgId, orgId), eq(contacts.id, contactId)))
+      .limit(1);
+    if (!ownContact) {
+      throw new Error("create_activity: contact not found in this workspace");
     }
 
     // 2026-05-18 — resolve a real user_id (org owner or fallback to

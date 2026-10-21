@@ -3,8 +3,8 @@
 import { and, desc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { activities } from "@/db/schema";
-import { getOrgId } from "@/lib/auth/helpers";
+import { activities, contacts, deals, orgMembers, users } from "@/db/schema";
+import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import { assertWritable } from "@/lib/demo/server";
 
 export async function listActivities() {
@@ -27,12 +27,52 @@ export async function createActivityAction(formData: FormData) {
   }
 
   const contactId = (formData.get("contactId") as string | null) || null;
+  const dealId = (formData.get("dealId") as string | null) || null;
+  const userId = String(formData.get("userId") ?? "");
+
+  // Every id in the form is checked against the session's workspace before
+  // the write; an id from another workspace is refused like a missing one.
+  if (contactId) {
+    const [ownContact] = await db
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(and(eq(contacts.orgId, orgId), eq(contacts.id, contactId)))
+      .limit(1);
+    if (!ownContact) throw new Error("Contact not found");
+  }
+  if (dealId) {
+    const [ownDeal] = await db
+      .select({ id: deals.id })
+      .from(deals)
+      .where(and(eq(deals.orgId, orgId), eq(deals.id, dealId)))
+      .limit(1);
+    if (!ownDeal) throw new Error("Deal not found");
+  }
+  // The UI always sends the signed-in user; any other user must belong to
+  // this workspace (home org or member).
+  if (!userId) throw new Error("User not found");
+  const currentUser = await getCurrentUser();
+  if (userId !== currentUser?.id) {
+    const [homeUser] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.orgId, orgId), eq(users.id, userId)))
+      .limit(1);
+    const [member] = homeUser
+      ? [homeUser]
+      : await db
+          .select({ id: orgMembers.userId })
+          .from(orgMembers)
+          .where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, userId)))
+          .limit(1);
+    if (!member) throw new Error("User not found");
+  }
 
   await db.insert(activities).values({
     orgId,
-    userId: String(formData.get("userId") ?? ""),
+    userId,
     contactId,
-    dealId: (formData.get("dealId") as string | null) || null,
+    dealId,
     type: String(formData.get("type") ?? "note"),
     subject: String(formData.get("subject") ?? ""),
     body: String(formData.get("body") ?? ""),
