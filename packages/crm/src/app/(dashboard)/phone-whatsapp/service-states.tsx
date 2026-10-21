@@ -74,7 +74,7 @@ export function ServiceStatesCard({ states, observedAt = null, eligibility = nul
     ...(eligibility ? [["Calling eligibility", [eligibility.headline, eligibility.tone]] as const] : []),
     ["Calling service setup", TEXT.setup[states.setup]],
     ["Routing", routingHealth ? [routingHealth.text, HEALTH_TONE[routingHealth.state]] as const : TEXT.routing[states.routing]],
-    ["Acceptance call", routingHealth ? (routingHealth.state === "verified" ? ["Recorded by EPIC staff (see Routing)", "ok"] as const : ["No passing WhatsApp acceptance call is recorded for the current route", "attention"] as const) : TEXT.acceptance[states.acceptance]],
+    ["Acceptance call", routingHealth ? (routingHealth.state === "verified" ? ["Recorded by EPIC staff (see Routing)", "ok"] as const : routingHealth.state === "unknown" ? ["Cannot be confirmed: routing could not be checked right now", "unknown"] as const : ["No passing WhatsApp acceptance call is recorded for the current route", "attention"] as const) : TEXT.acceptance[states.acceptance]],
   ];
   return (
     <section className="crm-card space-y-2 p-4" data-testid="service-states" aria-label="Calling service status">

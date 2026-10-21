@@ -108,7 +108,10 @@ describe("routing health for a staff-linked line (owner ruling 2026-10-21)", () 
   test("voice platform unreadable: unknown, says it could not be checked", async () => {
     const v = await serviceView(WS, PHONE, deps({ ev: evidence({ magnusOk: false }), observations: [obs({ result: "whatsapp_call_passed" })] }));
     assert.equal(health(v)?.state, "unknown");
-    assert.match(card(v), /Routing could not be checked right now/);
+    const html = card(v);
+    assert.match(html, /Routing could not be checked right now/);
+    assert.match(html, /Cannot be confirmed: routing could not be checked/); // a recorded call exists; it is not "absent"
+    assert.doesNotMatch(html, /No passing WhatsApp acceptance call is recorded/);
   });
 
   test("voice platform shows no active destination: a live fault, whatever was recorded earlier", async () => {
