@@ -233,6 +233,86 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     assert.equal((await post(EPIC, unknownTime)).status, 200);
   });
 
+  test("Codex r1 P1: an UNFINISHED claim (crashed worker, inside 30 s) -> 503 retryable, never a 200 duplicate; after the reclaim window it is processed", async () => {
+    configure();
+    const raw = body("pl.signup_started", "subj_inprog");
+    const e = JSON.parse(raw);
+    await db.execute(sql`insert into integration_event_inbox (org_id, provider, event_id, external_id, type, occurred_at, detected_at, version, received_at)
+      values (${EPIC}::uuid, 'personal_line', ${e.event_id}, 'subj_inprog', 'pl.signup_started', now(), now(), 1, now())`);
+    const r1 = await post(EPIC, raw);
+    assert.equal(r1.status, 503);
+    assert.equal((await r1.json()).error, "event_in_progress");
+    assert.equal((await plDealOf(EPIC, "subj_inprog")).length, 0);
+    await db.execute(sql`update integration_event_inbox set received_at = now() - interval '5 minutes' where event_id = ${e.event_id}`);
+    const r2 = await post(EPIC, raw);
+    assert.equal(r2.status, 200);
+    assert.equal((await r2.json()).status, "processed");
+    assert.equal((await plDealOf(EPIC, "subj_inprog")).length, 1);
+    const r3 = await post(EPIC, raw);                                  // positive twin of "duplicate": FINISHED -> 200 duplicate
+    assert.equal((await r3.json()).status, "duplicate");
+  });
+
+  test("Codex r1 P1: crash AFTER the stage write but BEFORE deal.stage_changed -> the reclaimed event repairs the missing event exactly once, no second activity", async () => {
+    configure();
+    assert.equal((await post(EPIC, body("pl.signup_started", "subj_crash"))).status, 200);
+    const raw = body("pl.line_created", "subj_crash");
+    const e = JSON.parse(raw);
+    const [d] = await plDealOf(EPIC, "subj_crash");
+    // simulate the crashed worker: claim recorded, intent recorded, card moved, NO event, NO activity, NOT finished
+    await db.execute(sql`insert into integration_event_inbox (org_id, provider, event_id, external_id, type, occurred_at, detected_at, version, received_at)
+      values (${EPIC}::uuid, 'personal_line', ${e.event_id}, 'subj_crash', 'pl.line_created', now(), now(), 2, now() - interval '5 minutes')`);
+    await db.execute(sql`update integration_subject_facts set facts = facts || ${JSON.stringify({ move_intent: { event_id: e.event_id, deal_id: d.id, from: "Signup started", to: "Line created" } })}::jsonb
+      where org_id = ${EPIC}::uuid and external_id = 'subj_crash'`);
+    await db.update(S.deals).set({ stage: "Line created" }).where(eq(S.deals.id, d.id));
+    const before = (await stageEvents(EPIC)).filter((x: any) => x.dealId === d.id).length;
+    const r = await post(EPIC, raw);
+    assert.equal(r.status, 200);
+    assert.match((await r.json()).deal, /event_repaired$/);
+    const evs = (await stageEvents(EPIC)).filter((x: any) => x.dealId === d.id);
+    assert.equal(evs.length, before + 1);
+    assert.deepEqual([evs.at(-1).from, evs.at(-1).to, evs.at(-1).actor?.ref], ["Signup started", "Line created", e.event_id]);
+    // a further redelivery: duplicate, no third event
+    await post(EPIC, raw);
+    assert.equal((await stageEvents(EPIC)).filter((x: any) => x.dealId === d.id).length, before + 1);
+    // positive twin: an ordinary later event still moves the card and logs normally
+    assert.equal((await post(EPIC, body("pl.app_activated", "subj_crash"))).status, 200);
+    assert.equal((await plDealOf(EPIC, "subj_crash"))[0].stage, "App activated");
+  });
+
+  test("Codex r1 P1: crash between contact insert and identity insert -> the replay reuses THAT contact (deterministic id), never a second one", async () => {
+    configure();
+    const { subjectContactId } = await import("@/lib/personal-line/link");
+    const cid = subjectContactId(EPIC, "personal_line", "subj_orphan");
+    await db.insert(S.contacts).values({ id: cid, orgId: EPIC, firstName: "Personal Line subscriber", source: "personal_line" });   // the crashed half
+    assert.equal((await post(EPIC, body("pl.signup_started", "subj_orphan"))).status, 200);
+    const ident: any = await db.execute(sql`select contact_id from external_identities where org_id = ${EPIC}::uuid and external_id = 'subj_orphan'`);
+    assert.equal((ident.rows ?? ident)[0].contact_id, cid);
+    assert.equal(await count(sql`select count(*)::int n from contacts where org_id = ${EPIC}::uuid and id = ${cid}::uuid`), 1);
+    assert.equal((await plDealOf(EPIC, "subj_orphan"))[0].contactId, cid);
+  });
+
+  test("Codex r1 P2: date-only / zone-less timestamps and duplicated JSON members are refused (422); the canonical form is accepted", async () => {
+    configure();
+    const base = JSON.parse(body("pl.signup_started", "subj_ts"));
+    for (const bad of ["2026-10-21", "2026-10-21T15:07:58", "2026-10-21 15:07:58Z"]) {
+      assert.equal((await post(EPIC, JSON.stringify({ ...base, event_id: randomUUID(), occurred_at: bad }))).status, 422, bad);
+    }
+    const dup = JSON.stringify({ ...base, event_id: randomUUID() }).replace('"tenant":"epic"', '"tenant":"epic","tenant":"epic"');
+    assert.ok(dup.includes('"tenant":"epic","tenant":"epic"'));
+    assert.equal((await post(EPIC, dup)).status, 422);
+    assert.equal((await post(EPIC, JSON.stringify({ ...base, event_id: randomUUID(), occurred_at: "2026-10-21T15:07:58+00:00" }))).status, 200);
+  });
+
+  test("app activated: event time is the REGISTER's own time or null; an observation time in occurred_at is refused", async () => {
+    configure();
+    const a = JSON.parse(produced["pl.app_activated"]);
+    assert.ok(a.facts.registration_observed_at);
+    const lie = body("pl.app_activated", "subj_obs", { occurred_at: a.facts.registration_observed_at, facts: { ...a.facts, registered_at: null } });
+    assert.equal((await post(EPIC, lie)).status, 422);
+    const honest = body("pl.app_activated", "subj_obs", { occurred_at: null, facts: { ...a.facts, registered_at: null } });
+    assert.equal((await post(EPIC, honest)).status, 200);
+  });
+
   test("the orphaned synthetic 'Proposal' deal is untouched by all of the above", async () => {
     const [d] = await db.select().from(S.deals).where(eq(S.deals.id, orphanDealId));
     assert.equal(d.stage, "Proposal");

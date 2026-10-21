@@ -23,6 +23,7 @@ export async function POST(request: Request, context: { params: Promise<{ orgId:
       store: drizzleLifecycleStore,
       emit: (type, data, org) => emitSeldonEvent(type, data, { orgId: org }),
       move: (input) => moveDealToStage(input),
+      emitStage: (data, org) => emitSeldonEvent("deal.stage_changed", data, { orgId: org }),
     });
     return NextResponse.json(r.body, { status: r.status, headers: { "cache-control": "no-store" } });
   } catch (err) {

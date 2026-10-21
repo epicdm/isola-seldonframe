@@ -9,11 +9,20 @@
 // controls that contact. So:
 //   - identity already exists for (org, personal_line, subject) -> reuse ITS contact (refresh the verified phone)
 //   - otherwise                                                 -> create a NEW contact, then the identity row
-// Race-safe without a transaction (the neon-http driver has none): the identity insert is ON CONFLICT DO NOTHING on
-// the two unique indexes; the loser deletes the contact it just created and re-reads the winner.
+// Crash-safe and race-safe without a transaction (the neon-http driver has none) — Codex r1 P1: the new contact's id is
+// DETERMINISTIC per (workspace, provider, subject), and both inserts are ON CONFLICT DO NOTHING. A crash between the
+// contact insert and the identity insert, a replay, or two concurrent first events all converge on the SAME contact
+// row; nothing is ever deleted.
+import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
 export const PL_PROVIDER = "personal_line";
+
+/** PURE. The contact id a subject gets in a workspace: a name-based UUID (v5 layout) over (org, provider, subject). */
+export function subjectContactId(orgId: string, provider: string, subjectId: string): string {
+  const h = createHash("sha256").update(`uplink-external-contact-v1|${orgId.toLowerCase()}|${provider}|${subjectId}`).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${((parseInt(h[16], 16) & 0x3) | 0x8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
 
 export type LinkInput = { subjectId: string; waId: string | null; displayName: string | null };
 export type LinkResult =
@@ -24,10 +33,10 @@ export interface LinkStore {
   findIdentityByExternal(orgId: string, provider: string, externalId: string): Promise<{ contactId: string } | null>;
   contactExists(orgId: string, contactId: string): Promise<boolean>;
   setContactPhone(orgId: string, contactId: string, phone: string): Promise<void>;
-  createContact(orgId: string, c: { firstName: string; phone: string | null; source: string }): Promise<string>;
+  /** Insert the contact with exactly this id; a no-op if it already exists. */
+  createContact(orgId: string, c: { id: string; firstName: string; phone: string | null; source: string }): Promise<void>;
   /** true = inserted; false = a unique index already held this (subject or contact). */
   insertIdentity(orgId: string, provider: string, externalId: string, contactId: string): Promise<boolean>;
-  deleteContact(orgId: string, contactId: string): Promise<void>;
 }
 
 export async function linkPersonalLine(orgId: string, input: LinkInput, store: LinkStore): Promise<LinkResult> {
@@ -38,15 +47,11 @@ export async function linkPersonalLine(orgId: string, input: LinkInput, store: L
     if (phone) await store.setContactPhone(orgId, existing.contactId, phone);
     return { ok: true, contactId: existing.contactId, created: false };
   }
-  const contactId = await store.createContact(orgId, {
-    firstName: input.displayName ?? "Personal Line subscriber",
-    phone,
-    source: "personal_line",
-  });
+  const contactId = subjectContactId(orgId, PL_PROVIDER, input.subjectId);
+  await store.createContact(orgId, { id: contactId, firstName: input.displayName ?? "Personal Line subscriber", phone, source: "personal_line" });
   if (await store.insertIdentity(orgId, PL_PROVIDER, input.subjectId, contactId)) {
     return { ok: true, contactId, created: true };
   }
-  await store.deleteContact(orgId, contactId);
   const winner = await store.findIdentityByExternal(orgId, PL_PROVIDER, input.subjectId);
   return winner ? { ok: true, contactId: winner.contactId, created: false } : { ok: false, reason: "conflict" };
 }
@@ -74,10 +79,9 @@ export async function drizzleLinkStore(): Promise<LinkStore> {
         .where(and(eq(contacts.orgId, orgId), eq(contacts.id, contactId)));
     },
     async createContact(orgId, c) {
-      const [row] = await db.insert(contacts)
-        .values({ orgId, firstName: c.firstName, phone: c.phone, source: c.source })
-        .returning({ id: contacts.id });
-      return row.id;
+      await db.insert(contacts)
+        .values({ id: c.id, orgId, firstName: c.firstName, phone: c.phone, source: c.source })
+        .onConflictDoNothing();
     },
     async insertIdentity(orgId, provider, externalId, contactId) {
       const rows = await db.insert(externalIdentities)
@@ -85,9 +89,6 @@ export async function drizzleLinkStore(): Promise<LinkStore> {
         .onConflictDoNothing()
         .returning({ id: externalIdentities.id });
       return rows.length === 1;
-    },
-    async deleteContact(orgId, contactId) {
-      await db.delete(contacts).where(and(eq(contacts.orgId, orgId), eq(contacts.id, contactId)));
     },
   };
 }

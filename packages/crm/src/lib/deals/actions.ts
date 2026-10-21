@@ -111,7 +111,9 @@ export async function createDealAction(formData: FormData) {
     throw new Error("Contact not found");
   }
 
-  const firstStage = Array.isArray(pipeline.stages) && pipeline.stages.length > 0 ? pipeline.stages[0] : { name: "New", probability: 0 };
+  // EPIC 2026-10-21 (Codex r1): never invent a stage the pipeline does not have.
+  if (!Array.isArray(pipeline.stages) || pipeline.stages.length === 0) throw new Error("Pipeline has no stages");
+  const firstStage = pipeline.stages[0];
 
   await db.insert(deals).values({
     orgId,
@@ -176,7 +178,8 @@ export async function quickCreateDealAction(input: {
   if (!contact) return { ok: false, error: "Contact not found." };
 
   const stages = Array.isArray(pipeline.stages) ? pipeline.stages : [];
-  const fallbackStage = stages[0] ?? { name: "New", probability: 0 };
+  if (stages.length === 0) return { ok: false, error: "Pipeline has no stages." };
+  const fallbackStage = stages[0];
   // EPIC 2026-10-21: a named stage must exist in this pipeline — refused, never silently replaced by the first stage.
   const namedStage = input.stage ? stages.find((s) => s.name === input.stage) : undefined;
   if (input.stage && !namedStage) return { ok: false, error: "Unknown stage." };

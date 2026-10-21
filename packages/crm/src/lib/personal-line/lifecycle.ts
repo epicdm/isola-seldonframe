@@ -63,19 +63,26 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const WA_RE = /^[1-9][0-9]{6,15}$/;
 const TENANT_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
-const isIso = (v: unknown): v is string => typeof v === "string" && v.length <= 40 && Number.isFinite(Date.parse(v));
+// Codex r1 P2: explicitly zoned ISO-8601 instants only (no date-only, no local/naive times).
+const ISO_ZONED = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;
+const isIso = (v: unknown): v is string => typeof v === "string" && ISO_ZONED.test(v) && Number.isFinite(Date.parse(v));
 const iso = (v: string) => new Date(v).toISOString();
 
 const FACT_KEYS: Record<PlLifecycleType, readonly string[]> = {
   "pl.signup_started": ["door"],
   "pl.line_created": ["did_masked"],
-  "pl.app_activated": ["registered_at", "credential_fetched_at"],
+  "pl.app_activated": ["registered_at", "registration_observed_at", "credential_fetched_at"],
   "pl.first_call": ["first_call_at", "first_call_detected_at"],
 };
 
 /** Strict parse: exact keys, typed facts, and the proof field each type's single source establishes. */
 export function parseLifecycleEvent(raw: string): PlLifecycleEvent | null {
   if (Buffer.byteLength(raw, "utf8") > 4096) return null;
+  // Codex r1 P2: JSON.parse keeps the LAST of duplicated members; a signed body must not be ambiguous. Every key this
+  // contract knows is distinct across the envelope and facts, and no accepted value can contain a quote, so a key
+  // appearing twice anywhere is a duplicate member.
+  const seen = new Set<string>();
+  for (const m of raw.matchAll(/"([A-Za-z0-9_]+)"\s*:/g)) { if (seen.has(m[1])) return null; seen.add(m[1]); }
   let v: unknown;
   try { v = JSON.parse(raw); } catch { return null; }
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
@@ -105,7 +112,11 @@ export function parseLifecycleEvent(raw: string): PlLifecycleEvent | null {
   if (type !== "pl.signup_started" && o.pl_account_id === null) return null;
   if ((type === "pl.signup_started" || type === "pl.line_created") && occurred === null) return null;
   if (type === "pl.app_activated") {
-    if (!isIso(f.registered_at) || occurred !== iso(f.registered_at)) return null;
+    // registered_at = the REGISTER's own time when plsvc knows it (listener PeerStatus event), else null;
+    // registration_observed_at = when plsvc observed it. The event time is the former or unknown, never the latter.
+    if (!isIso(f.registration_observed_at)) return null;
+    const regAt = f.registered_at === undefined || f.registered_at === null ? null : iso(f.registered_at as string);
+    if (occurred !== regAt) return null;
   }
   if (type === "pl.first_call") {
     if (!isIso(f.first_call_detected_at)) return null;
@@ -130,13 +141,21 @@ const SUBJECT: Record<PlLifecycleType, string> = {
 };
 
 export interface LifecycleStore extends LinkStore {
-  /** true = this event_id is new and now claimed; false = already received (duplicate). */
-  claimEvent(orgId: string, e: PlLifecycleEvent, rank: number): Promise<boolean>;
+  /** new = claimed now; duplicate = already FINISHED; in_progress = claimed by a worker that has not finished (retryable). */
+  claimEvent(orgId: string, e: PlLifecycleEvent, rank: number): Promise<"new" | "duplicate" | "in_progress">;
   finishEvent(orgId: string, eventId: string, applied: boolean, outcome: string): Promise<void>;
   /** Upsert the subject's facts row (merge facts, last_version = greatest). Creates the row the projection claims on. */
   mergeFacts(orgId: string, subjectId: string, rank: number, facts: Record<string, unknown>): Promise<void>;
   defaultPipeline(orgId: string): Promise<{ id: string; stages: PipelineStage[] } | null>;
-  readProjection(orgId: string, subjectId: string): Promise<{ dealId: string | null; createdAt: Date | null }>;
+  readProjection(orgId: string, subjectId: string): Promise<{ dealId: string | null; createdAt: Date | null; intent: MoveIntent | null }>;
+  /** Persist "this event is about to move the card from X to Y" BEFORE the move, so a crash between the move and its
+   *  deal.stage_changed can be repaired when the event is reclaimed (Codex r1 P1). */
+  recordMoveIntent(orgId: string, subjectId: string, intent: MoveIntent): Promise<void>;
+  readDealStage(orgId: string, dealId: string): Promise<string | null>;
+  /** Was a deal.stage_changed with actor.ref = eventId logged for this deal? / a pl.* event with this eventId? / its activity? */
+  stageEventLogged(orgId: string, dealId: string, eventId: string): Promise<boolean>;
+  lifecycleEventLogged(orgId: string, type: string, eventId: string): Promise<boolean>;
+  activityLogged(orgId: string, eventId: string): Promise<boolean>;
   /** CAS: set projected_deal_id iff it is NULL. */
   claimProjection(orgId: string, subjectId: string, dealId: string): Promise<boolean>;
   /** Insert the deal with exactly this id; false if it already exists. */
@@ -148,10 +167,12 @@ export interface LifecycleStore extends LinkStore {
   addActivity(orgId: string, contactId: string, a: { type: string; subject: string; metadata: Record<string, unknown>; completedAt: Date }): Promise<boolean>;
 }
 
+export type MoveIntent = { event_id: string; deal_id: string; from: string; to: string };
+export type EmitStageChanged = (data: { dealId: string; from: string; to: string; actor: { kind: "integration"; name: string; ref: string } }, orgId: string) => Promise<void>;
 export type MoveFn = (input: { orgId: string; dealId: string; stage: string; actor: { kind: "integration"; name: string; ref?: string | null }; forwardOnly: true }) => Promise<StageMoveResult>;
 export type Emit = (type: PlLifecycleType, data: Record<string, unknown>, orgId: string) => Promise<void>;
 
-export async function projectDeal(orgId: string, e: PlLifecycleEvent, contactId: string, store: LifecycleStore, move: MoveFn): Promise<string> {
+export async function projectDeal(orgId: string, e: PlLifecycleEvent, contactId: string, store: LifecycleStore, move: MoveFn, emitStage: EmitStageChanged): Promise<string> {
   const target = STAGE_FOR[e.type];
   const pipe = await store.defaultPipeline(orgId);
   if (!pipe) return "no_default_pipeline";
@@ -172,7 +193,7 @@ export async function projectDeal(orgId: string, e: PlLifecycleEvent, contactId:
     if (await store.claimProjection(orgId, e.subjectId, id)) {
       created = await store.insertDeal(orgId, dealRow(id));
       await store.markProjectionCreated(orgId, e.subjectId);
-      proj = { dealId: id, createdAt: new Date() };
+      proj = { dealId: id, createdAt: new Date(), intent: null };
     } else {
       proj = await store.readProjection(orgId, e.subjectId);
     }
@@ -187,8 +208,21 @@ export async function projectDeal(orgId: string, e: PlLifecycleEvent, contactId:
     return "deal_deleted_not_recreated";
   }
   if (e.plAccountId) await store.attachAccountId(orgId, proj.dealId, e.plAccountId);
+  const dealId = proj.dealId;
+  // Repair (reclaim after a crash): THIS event already moved the card but its deal.stage_changed was never logged.
+  const intent = proj.intent;
+  if (!created && intent && intent.event_id === e.eventId && intent.deal_id === dealId && intent.to === target.stage
+      && (await store.readDealStage(orgId, dealId)) === target.stage && !(await store.stageEventLogged(orgId, dealId, e.eventId))) {
+    await emitStage({ dealId, from: intent.from, to: intent.to, actor: { kind: "integration", name: PL_PROVIDER, ref: e.eventId } }, orgId);
+    return `moved:${intent.from}->${intent.to}:event_repaired`;
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
-    const r = await move({ orgId, dealId: proj.dealId, stage: target.stage, actor: { kind: "integration", name: PL_PROVIDER, ref: e.eventId }, forwardOnly: true });
+    const from = created ? null : await store.readDealStage(orgId, dealId);
+    if (from !== null) {
+      const cur = findStage(pipe.stages, from);
+      if (cur && t.index > cur.index) await store.recordMoveIntent(orgId, e.subjectId, { event_id: e.eventId, deal_id: dealId, from, to: target.stage });
+    }
+    const r = await move({ orgId, dealId, stage: target.stage, actor: { kind: "integration", name: PL_PROVIDER, ref: e.eventId }, forwardOnly: true });
     if (r.ok) return `moved:${r.from}->${r.to}`;
     if (r.error === "conflict") continue;
     if (created && r.error === "not_forward") return `deal_created:${t.stage.name}`;
@@ -199,20 +233,24 @@ export async function projectDeal(orgId: string, e: PlLifecycleEvent, contactId:
 
 export type ProcessResult =
   | { status: "duplicate" }
+  | { status: "in_progress" }
   | { status: "processed"; contactId: string; deal: string; activity: boolean }
   | { status: "failed"; reason: string };
 
-export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, store: LifecycleStore, emit: Emit, move: MoveFn): Promise<ProcessResult> {
+export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, store: LifecycleStore, emit: Emit, move: MoveFn, emitStage: EmitStageChanged): Promise<ProcessResult> {
   const rank = STAGE_FOR[e.type].rank;
-  if (!(await store.claimEvent(orgId, e, rank))) return { status: "duplicate" };
+  const claim = await store.claimEvent(orgId, e, rank);
+  if (claim === "duplicate") return { status: "duplicate" };
+  if (claim === "in_progress") return { status: "in_progress" };
   const link = await linkPersonalLine(orgId, { subjectId: e.subjectId, waId: e.waId, displayName: null }, store);
   if (!link.ok) {
     await store.finishEvent(orgId, e.eventId, false, `link_${link.reason}`);
     return { status: "failed", reason: link.reason };
   }
   await store.mergeFacts(orgId, e.subjectId, rank, { ...e.facts, ...(e.plAccountId ? { pl_account_id: e.plAccountId } : {}) });
-  const deal = await projectDeal(orgId, e, link.contactId, store, move);
-  const activity = await store.addActivity(orgId, link.contactId, {
+  const deal = await projectDeal(orgId, e, link.contactId, store, move, emitStage);
+  // Effects are deduplicated per event id, so a reclaimed event never repeats a timeline entry or a pl.* emission.
+  const activity = (await store.activityLogged(orgId, e.eventId)) ? false : await store.addActivity(orgId, link.contactId, {
     type: "personal_line",
     subject: SUBJECT[e.type] + (e.occurredAt ? "" : " (time it happened unknown; detection time shown)"),
     metadata: {
@@ -221,7 +259,7 @@ export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, 
     },
     completedAt: new Date(e.occurredAt ?? e.detectedAt),
   });
-  await emit(e.type, { contactId: link.contactId, subjectId: e.subjectId, plAccountId: e.plAccountId, eventId: e.eventId, occurredAt: e.occurredAt, detectedAt: e.detectedAt, facts: e.facts, deal }, orgId);
+  if (!(await store.lifecycleEventLogged(orgId, e.type, e.eventId))) await emit(e.type, { contactId: link.contactId, subjectId: e.subjectId, plAccountId: e.plAccountId, eventId: e.eventId, occurredAt: e.occurredAt, detectedAt: e.detectedAt, facts: e.facts, deal }, orgId);
   await store.finishEvent(orgId, e.eventId, true, deal);
   return { status: "processed", contactId: link.contactId, deal, activity };
 }
@@ -232,6 +270,7 @@ export type WebhookDeps = {
   store(): Promise<LifecycleStore>;
   emit: Emit;
   move: MoveFn;
+  emitStage: EmitStageChanged;
   nowS?: () => number;
 };
 
@@ -256,9 +295,11 @@ export async function handlePersonalLineLifecycle(request: Request, orgId: strin
     console.warn(`[pl-lifecycle] refused: tenant/workspace mismatch`);
     return { status: 403, body: { ok: false, error: "tenant_workspace_mismatch" } };
   }
-  const result = await processLifecycleEvent(mapped, event, await deps.store(), deps.emit, deps.move);
+  const result = await processLifecycleEvent(mapped, event, await deps.store(), deps.emit, deps.move, deps.emitStage);
   console.info(`[pl-lifecycle] ${event.type} ${event.eventId} -> ${result.status}${result.status === "processed" ? ` ${result.deal}` : ""}`);
   if (result.status === "failed") return { status: 409, body: { ok: false, error: result.reason } };
+  // Codex r1 P1: an unfinished claim is NOT a success; the sender must retry it later.
+  if (result.status === "in_progress") return { status: 503, body: { ok: false, error: "event_in_progress" } };
   return { status: 200, body: { ok: true, ...result } };
 }
 
@@ -277,14 +318,17 @@ export async function drizzleLifecycleStore(): Promise<LifecycleStore> {
         .values({ orgId, provider: P, eventId: e.eventId, externalId: e.subjectId, type: e.type, occurredAt: e.occurredAt ? new Date(e.occurredAt) : null, detectedAt: new Date(e.detectedAt), version: rank })
         .onConflictDoNothing()
         .returning({ id: inbox.eventId });
-      if (rows.length === 1) return true;
+      if (rows.length === 1) return "new";
       // A claim whose processing never finished (crash mid-way) is re-claimable after 30 s, atomically, so a sender
       // retry is not told "duplicate" for an event that was never applied. A finished one (outcome set) never is.
       const reclaimed = await db.update(inbox)
         .set({ receivedAt: new Date() })
         .where(and(eq(inbox.orgId, orgId), eq(inbox.provider, P), eq(inbox.eventId, e.eventId), sql`${inbox.outcome} IS NULL`, lt(inbox.receivedAt, new Date(Date.now() - 30_000))))
         .returning({ id: inbox.eventId });
-      return reclaimed.length === 1;
+      if (reclaimed.length === 1) return "new";
+      const [row] = await db.select({ outcome: inbox.outcome }).from(inbox)
+        .where(and(eq(inbox.orgId, orgId), eq(inbox.provider, P), eq(inbox.eventId, e.eventId))).limit(1);
+      return row && row.outcome !== null ? "duplicate" : "in_progress";
     },
     async finishEvent(orgId, eventId, applied, outcome) {
       await db.update(inbox).set({ applied, outcome }).where(and(eq(inbox.orgId, orgId), eq(inbox.provider, P), eq(inbox.eventId, eventId)));
@@ -303,9 +347,31 @@ export async function drizzleLifecycleStore(): Promise<LifecycleStore> {
       return p ? { id: p.id, stages: Array.isArray(p.stages) ? p.stages : [] } : null;
     },
     async readProjection(orgId, subjectId) {
-      const [r] = await db.select({ dealId: facts.projectedDealId, createdAt: facts.projectedDealCreatedAt }).from(facts)
+      const [r] = await db.select({ dealId: facts.projectedDealId, createdAt: facts.projectedDealCreatedAt, f: facts.facts }).from(facts)
         .where(and(eq(facts.orgId, orgId), eq(facts.provider, P), eq(facts.externalId, subjectId))).limit(1);
-      return { dealId: r?.dealId ?? null, createdAt: r?.createdAt ?? null };
+      const intent = (r?.f as Record<string, unknown> | undefined)?.move_intent as MoveIntent | undefined;
+      return { dealId: r?.dealId ?? null, createdAt: r?.createdAt ?? null, intent: intent ?? null };
+    },
+    async recordMoveIntent(orgId, subjectId, intent) {
+      await db.update(facts).set({ facts: sql`${facts.facts} || ${JSON.stringify({ move_intent: intent })}::jsonb`, updatedAt: new Date() })
+        .where(and(eq(facts.orgId, orgId), eq(facts.provider, P), eq(facts.externalId, subjectId)));
+    },
+    async readDealStage(orgId, dealId) {
+      const [r] = await db.select({ stage: deals.stage }).from(deals).where(and(eq(deals.orgId, orgId), eq(deals.id, dealId))).limit(1);
+      return r?.stage ?? null;
+    },
+    async stageEventLogged(orgId, dealId, eventId) {
+      const r: any = await db.execute(sql`select 1 from workflow_event_log where org_id = ${orgId}::uuid and event_type = 'deal.stage_changed'
+        and payload->>'dealId' = ${dealId} and payload->'actor'->>'ref' = ${eventId} limit 1`);
+      return (r.rows ?? r).length > 0;
+    },
+    async lifecycleEventLogged(orgId, type, eventId) {
+      const r: any = await db.execute(sql`select 1 from workflow_event_log where org_id = ${orgId}::uuid and event_type = ${type} and payload->>'eventId' = ${eventId} limit 1`);
+      return (r.rows ?? r).length > 0;
+    },
+    async activityLogged(orgId, eventId) {
+      const r: any = await db.execute(sql`select 1 from activities where org_id = ${orgId}::uuid and type = 'personal_line' and metadata->>'event_id' = ${eventId} limit 1`);
+      return (r.rows ?? r).length > 0;
     },
     async claimProjection(orgId, subjectId, dealId) {
       const rows = await db.update(facts).set({ projectedDealId: dealId })
