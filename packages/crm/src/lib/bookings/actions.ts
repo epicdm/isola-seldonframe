@@ -32,6 +32,7 @@ import { buildMeetingUrl, resolveBookingProvider } from "./providers";
 // archetype: the look must never drive intake SEMANTICS when soul/settings
 // say what the business does.
 import { resolveIntakeFieldsFromSoul } from "./resolve-intake-fields";
+import { isBookingReminderWorkflowEnabled } from "@/lib/messaging/reminder-guards";
 import { PUBLIC_BOOKING_WINDOW_DAYS } from "./booking-window";
 // Workspace-level booking availability + rules. Types + pure helpers live
 // in a NON-"use server" module so they can be imported anywhere. The public
@@ -1725,7 +1726,11 @@ export async function submitPublicBookingAction({
       // sends an SMS (if Twilio configured) or email (if Resend); writes
       // an activity row in either case. Skips internally if the booking
       // is already <24h away or gets cancelled before fire time.
-      try {
+      // 2026-10-21 — OFF by default: the outbound_scheduled_sends trigger
+      // (booking-reminder-24h) is the single reminder path. Enable this
+      // workflow only with BOOKING_REMINDER_WORKFLOW=on (and then disable
+      // that trigger) so a customer can never get two reminders.
+      if (isBookingReminderWorkflowEnabled(process.env)) try {
         const { start } = await import("workflow/api");
         const { bookingReminderWorkflow } = await import(
           "@/lib/workflows/booking-reminder"

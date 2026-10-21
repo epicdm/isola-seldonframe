@@ -32,6 +32,7 @@ import { sendEmailFromApi } from "@/lib/emails/api";
 import { sendSmsFromApi } from "@/lib/sms/api";
 import { composeOutboundMessage } from "./compose";
 import { buildRenderVars, type DispatchEventPayload } from "./render-vars";
+import { isScheduledSendPastBookingStart } from "./reminder-guards";
 
 const SMS_STOP_FOOTER = "Reply STOP to unsubscribe.";
 
@@ -175,6 +176,13 @@ export async function processScheduledSend(
   if (!trigger.enabled) {
     await markScheduledSendCancelled(row.id, "trigger_disabled");
     return { ok: false, reason: "trigger_disabled" };
+  }
+
+  // 2026-10-21 — never send a booking reminder after the appointment has
+  // started (e.g. rows left pending while the scheduler was not running).
+  if (isScheduledSendPastBookingStart(row.eventType, row.payload, new Date())) {
+    await markScheduledSendCancelled(row.id, "past_start");
+    return { ok: false, reason: "past_start" };
   }
 
   const [org] = await db
