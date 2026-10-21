@@ -37,7 +37,7 @@ import { buyerSetupPath } from "@/lib/marketplace/buyer/buyer-routes";
 import { hasDeclaredTemplateVariables } from "@/lib/agent-templates/generalize";
 import { hasOrgInstalledListing, markOrgInstalledListing, provisionBuyerAgentFromListing, finalizeSoulPurchaseFromWebhook, enableBlockForOrg } from "@/lib/marketplace/fulfillment";
 import type { ListingInstallRow } from "@/lib/marketplace/fulfillment";
-import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { getOrgIdAsWorkspaceAdmin, requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 type GeneratedFile = { path: string; content: string };
@@ -309,11 +309,11 @@ export type BuyBoxAuthDeps = {
 
 export async function installAgentListingAction(
   input: { slug: string },
-  _deps: BuyBoxAuthDeps = { getCurrentUser, getOrgId },
+  _deps: BuyBoxAuthDeps = { getCurrentUser, getOrgId: getOrgIdAsWorkspaceAdmin },
 ) {
   // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
-  _deps = (await serverSideDeps(_deps)) ?? { getCurrentUser, getOrgId };
-  await requireWorkspaceAdmin();
+  // The production getOrgId is the owner/admin-guarded resolver; a logged-out visitor still gets the typed auth_required.
+  _deps = (await serverSideDeps(_deps)) ?? { getCurrentUser, getOrgId: getOrgIdAsWorkspaceAdmin };
   assertWritable();
 
   const user = await _deps.getCurrentUser();

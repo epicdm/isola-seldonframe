@@ -485,6 +485,26 @@ describe("Staff access (scratch Postgres, production driver)", { skip: !enabled 
     assert.notDeepEqual(confirmed, { ok: false, code: "forbidden" }, "the owner is not told 'forbidden'");
   });
 
+  test("logged-out callers: the guard passes through (typed 'auth_required', no side effect); signed-in non-admins are still refused", async () => {
+    asNextAuth(null);
+    await RW.requireWorkspaceAdmin(); // nobody signed in: nothing to authorize, the action's own check answers
+    await RW.requireWorkspaceAdminFor(W);
+    const { installAgentListingAction } = await import("@/lib/marketplace/actions");
+    const { setWorkspaceTestModeAction } = await import("@/lib/test-mode/actions");
+    const loggedOut = (await installAgentListingAction({ slug: "x" })) as { ok: boolean; reason?: string };
+    assert.deepEqual({ ok: loggedOut.ok, reason: loggedOut.reason }, { ok: false, reason: "auth_required" }, "typed answer, not a masked throw");
+    const on = new FormData();
+    on.set("testMode", "true");
+    await setWorkspaceTestModeAction(on).then(() => assert.fail("an anonymous test-mode switch must not succeed"), (e: unknown) => assert.equal(isRoleRefusal(e), false, "it refuses by its own session check"));
+    const [tm] = await rows<{ test_mode: boolean }>(sql`select test_mode from organizations where id = ${W}::uuid`);
+    assert.equal(tm.test_mode, false, "no side effect for an anonymous caller");
+    // Control: a signed-in person with no standing in W (stranger) and a staff member are still refused by the same guard.
+    asNextAuth(OUTSIDER, OUT_HOME, W);
+    await assert.rejects(() => RW.requireWorkspaceAdminFor(W), (e: unknown) => isRoleRefusal(e));
+    asOperator(STAFF);
+    await assert.rejects(() => RW.requireWorkspaceAdmin(), (e: unknown) => isRoleRefusal(e));
+  });
+
   test("target workspace: a staff member of W who OWNS another workspace cannot change W from there (home / client-supplied targets)", async () => {
     asNextAuth(DUAL, W, DUAL_A); // active = the workspace they own; home = W where they are staff
     assert.equal(await helpers.getCurrentWorkspaceRole(), "owner", "control: they are owner of the ACTIVE workspace");
