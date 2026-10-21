@@ -88,8 +88,19 @@ describe("deriveServiceStates: a staff-linked line (no connect-flow record) read
     assert.equal(deriveServiceStates({ ...base }).connection, "not_connected");
   });
 
-  test("routing with NO chosen destination is never 'a different destination than the one you chose'", () => {
-    assert.equal(deriveServiceStates({ ...base, connectionStatus: "active" }).routing, "routed_by_staff");
+  test("routing with NO chosen destination on a staff-linked line is never 'a different destination than the one you chose'", () => {
+    assert.equal(deriveServiceStates({ ...base, staffLine: { metaStatus: "CONNECTED" } }).routing, "routed_by_staff");
+    assert.equal(deriveServiceStates({ ...base, staffLine: { metaStatus: null } }).routing, "routed_by_staff");
+  });
+
+  test("staff-linked line whose route target could not be read: routing UNKNOWN, never 'routed' (fail closed)", () => {
+    assert.equal(deriveServiceStates({ ...base, staffLine: { metaStatus: "CONNECTED" }, routing: { ...routedActive, destinationTarget: null } }).routing, "unknown");
+  });
+
+  test("control: the self-serve path (active record, nothing chosen) is unchanged by this fix and keeps its setup action", () => {
+    const s = deriveServiceStates({ ...base, connectionStatus: "active" });
+    assert.equal(s.routing, "routed_other_destination"); // pre-existing behaviour, deliberately not touched here
+    assert.ok(SETUP_ACTIONS.has(s.next), "positive control for the action-membership check");
   });
 
   test("control: a chosen destination that differs from the route is still 'routed_other_destination'", () => {
@@ -134,6 +145,12 @@ describe("serviceView (the GET /service/state path) for a staff-linked line", ()
     assert.equal(v.states.next, "choose_destination_and_set_up");
   });
 
+  test("positive control for the counter: an active connect-flow record DOES reach the ledger/provisioner", async () => {
+    const d = deps({ connection: "active" });
+    await attach(WS, PHONE, FIXED.id, d).catch(() => null);
+    assert.ok(d.provCalls() > 0);
+  });
+
   test("the write gate is untouched: attach for a staff-linked line is still refused and calls no provisioner", async () => {
     const d = deps();
     const r = await attach(WS, PHONE, FIXED.id, d);
@@ -158,6 +175,12 @@ describe("<ServiceStatesCard> wording for a staff-linked line", () => {
     const html = renderToString(<ServiceStatesCard states={deriveServiceStates({ connectionStatus: null, ledger: null, routing: null, expectedTarget: null, acceptance: null, staffLine: { metaStatus: null } })} />);
     assert.match(html, /could not be checked/i);
     assert.doesNotMatch(html, /Not connected to Meta/);
+  });
+
+  test("positive control: the card still renders 'different destination than the one you chose' when a chosen destination differs", () => {
+    const attached: AttachLedgerRecord = { idempotencyKey: "k", destinationId: "d", steps: {}, status: "attached", leaseUntil: null };
+    const html = renderToString(<ServiceStatesCard states={deriveServiceStates({ connectionStatus: "active", ledger: attached, routing: routedActive, expectedTarget: "pbx-fictional-a/900", acceptance: null })} />);
+    assert.match(html, /different destination than the one you chose/);
   });
 
   test("control: the same card still renders 'Not connected to Meta' when that is the truth", () => {

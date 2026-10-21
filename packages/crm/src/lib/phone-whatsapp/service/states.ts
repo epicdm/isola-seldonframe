@@ -52,7 +52,8 @@ export function deriveServiceStates(i: {
   let routing: RoutingState = "unknown";
   if (i.routing) {
     if (!i.routing.didActive || !i.routing.destinationActive) routing = "not_routed";
-    else if (!i.expectedTarget && !i.ledger) routing = "routed_by_staff";
+    // Only for a staff-linked line (no connect-flow record) with nothing chosen here; an unreadable target is unknown, never "routed" (Codex review).
+    else if (!i.expectedTarget && !i.ledger && (connection === "linked_by_staff" || connection === "unknown")) routing = i.routing.destinationTarget ? "routed_by_staff" : "unknown";
     else if (i.expectedTarget && i.routing.destinationTarget === i.expectedTarget) routing = "verified";
     else routing = "routed_other_destination";
   }
