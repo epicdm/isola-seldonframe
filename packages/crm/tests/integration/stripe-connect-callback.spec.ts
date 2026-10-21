@@ -347,6 +347,8 @@ describe("Stripe Connect callback: signed state, bound to the session that start
     const { default: Page } = await import("@/app/(dashboard)/settings/payments/page");
     return renderToStaticMarkup(await Page());
   };
+  // The page's static subtitle also contains "Connect Stripe", so match the BUTTON, not the words (Law 11).
+  const CONNECT_BUTTON = /<button[^>]*>\s*(Connect|Reconnect) Stripe\s*<\/button>/;
   const NOT_AVAILABLE = "Stripe connection is temporarily unavailable while we complete a security update. Existing payment methods are not affected.";
 
   test("LAW 26: with no STRIPE_CONNECT_CLIENT_ID, /settings/payments says the Stripe connection is temporarily unavailable and shows no Connect button", async () => {
@@ -357,7 +359,7 @@ describe("Stripe Connect callback: signed state, bound to the session that start
       const html = await renderPaymentsPage();
       assert.ok(html.includes(NOT_AVAILABLE), "temporary-unavailability notice rendered");
       assert.ok(!/not available for this workspace/i.test(html), "never reads as permanently unsupported");
-      assert.ok(!html.includes("Connect Stripe"), "no Connect Stripe button");
+      assert.ok(!CONNECT_BUTTON.test(html), "no Connect Stripe button");
       assert.ok(!/<form/i.test(html), "no form that would call the start action");
     } finally {
       process.env.STRIPE_CONNECT_CLIENT_ID = saved;
@@ -368,7 +370,7 @@ describe("Stripe Connect callback: signed state, bound to the session that start
     as(ATTACKER, ORG_ATTACKER, null);
     assert.ok(process.env.STRIPE_CONNECT_CLIENT_ID, "control precondition: client id set");
     const html = await renderPaymentsPage();
-    assert.ok(html.includes("Connect Stripe"), "Connect Stripe button rendered");
+    assert.ok(CONNECT_BUTTON.test(html), "Connect Stripe button rendered");
     assert.ok(!html.includes(NOT_AVAILABLE));
   });
 
