@@ -21,6 +21,26 @@ describe("sessionCoversToolkits", () => {
     const broken = { toolkits: async () => { throw new Error("boom"); } };
     assert.equal(await sessionCoversToolkits(broken, ["gmail"]), false);
   });
+  test("follows the pagination cursor: a toolkit on page 2 still counts (no false drift)", async () => {
+    const seenCursors: Array<string | undefined> = [];
+    const paged = {
+      toolkits: async (opts?: { cursor?: string }) => {
+        seenCursors.push(opts?.cursor);
+        return opts?.cursor === "c2"
+          ? { items: [{ slug: "googledocs" }] }
+          : { items: [{ slug: "gmail" }], cursor: "c2" };
+      },
+    };
+    assert.equal(await sessionCoversToolkits(paged, ["gmail", "googledocs"]), true);
+    assert.deepEqual(seenCursors, [undefined, "c2"]);
+  });
+  test("control: a toolkit absent from every page is still drift", async () => {
+    const paged = {
+      toolkits: async (opts?: { cursor?: string }) =>
+        opts?.cursor === "c2" ? { items: [{ slug: "slack" }] } : { items: [{ slug: "gmail" }], cursor: "c2" },
+    };
+    assert.equal(await sessionCoversToolkits(paged, ["gmail", "googledocs"]), false);
+  });
   test("false when items is absent", async () => {
     assert.equal(await sessionCoversToolkits({ toolkits: async () => ({}) }, ["gmail"]), false);
   });

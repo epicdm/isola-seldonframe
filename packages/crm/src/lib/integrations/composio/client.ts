@@ -133,19 +133,30 @@ export async function ensureSession(
  * True when a (reused) session's toolkit allowlist includes every requested
  * toolkit. Composio fixes a session's toolkits at create time, so a session
  * cached before a toolkit was added to the catalog must be recreated rather than
- * reused. Any error reading the list → false (caller recreates). Exported for
- * unit tests.
+ * reused. Follows the listing's pagination cursor (stopping early once every
+ * requested toolkit is seen, capped at MAX_TOOLKIT_PAGES). Any error reading the
+ * list → false (caller recreates). Exported for unit tests.
  */
+const MAX_TOOLKIT_PAGES = 20;
 export async function sessionCoversToolkits(
-  session: { toolkits: () => Promise<{ items?: Array<{ slug: string }> }> },
+  session: {
+    toolkits: (options?: { cursor?: string }) => Promise<{
+      items?: Array<{ slug: string }>;
+      cursor?: string;
+    }>;
+  },
   requested: readonly string[],
 ): Promise<boolean> {
+  const missing = new Set(requested.map((t) => t.trim().toLowerCase()));
   try {
-    const details = await session.toolkits();
-    const have = new Set(
-      (details.items ?? []).map((it) => it.slug.trim().toLowerCase()),
-    );
-    return requested.every((t) => have.has(t.trim().toLowerCase()));
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_TOOLKIT_PAGES && missing.size > 0; page++) {
+      const details = await session.toolkits(cursor ? { cursor } : undefined);
+      for (const it of details.items ?? []) missing.delete(it.slug.trim().toLowerCase());
+      cursor = details.cursor;
+      if (!cursor) break;
+    }
+    return missing.size === 0;
   } catch {
     return false;
   }
