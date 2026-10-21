@@ -26,10 +26,11 @@ const ORG_SECOND = "b0000000-0000-4000-8000-000000000a02"; // a second workspace
 const COOKIE = "sf_stripe_connect";
 const SECRET = ["fixture", "signing", "secret", "NOT", "REAL", "0001"].join("-");
 
-const ctx: { userId: string | null; userOrgId: string | null; activeOrg: string | null } = { userId: null, userOrgId: null, activeOrg: null };
+const ctx: { userId: string | null; userOrgId: string | null; activeOrg: string | null; host: string | null } = { userId: null, userOrgId: null, activeOrg: null, host: null };
 const setCookies: Array<{ name: string; value: string; opts: Record<string, unknown> }> = [];
 const exchangeCalls: string[] = [];
 const externalFetchCalls: string[] = [];
+let exchangeFails = false;
 
 describe("Stripe Connect callback: signed state, bound to the session that started it", { skip: !enabled && "set STRIPE_CONNECT_DB_TEST=scratch with a scratch database" }, () => {
   let db: typeof import("@/db").db;
@@ -97,7 +98,7 @@ describe("Stripe Connect callback: signed state, bound to the session that start
           set: (name: string, value: string, opts: Record<string, unknown> = {}) => { setCookies.push({ name, value, opts }); },
           delete: () => undefined,
         }),
-        headers: async () => new Headers(),
+        headers: async () => new Headers(ctx.host ? { host: ctx.host } : {}),
       },
     });
     const realFetch = globalThis.fetch;
@@ -106,6 +107,7 @@ describe("Stripe Connect callback: signed state, bound to the session that start
       if (url === "https://connect.stripe.com/oauth/token") {
         const code = new URLSearchParams(String(init?.body ?? "")).get("code") ?? "";
         exchangeCalls.push(code);
+        if (exchangeFails) return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400, headers: { "content-type": "application/json" } });
         return new Response(JSON.stringify({ stripe_user_id: `acct_fixture_${code}`, access_token: "fixture-access-NOT-REAL", stripe_publishable_key: "pk_test_fixture" }), { status: 200, headers: { "content-type": "application/json" } });
       }
       const host = new URL(url).hostname;
@@ -131,7 +133,9 @@ describe("Stripe Connect callback: signed state, bound to the session that start
     // Scratch database; only the fixture workspaces' rows are cleared between cases.
     await exec(sql`delete from stripe_connections where org_id in (${ORG_ATTACKER}::uuid, ${ORG_VICTIM}::uuid, ${ORG_SECOND}::uuid)`);
     exchangeCalls.length = 0;
+    exchangeFails = false;
     as(null, null, null);
+    ctx.host = null;
   });
 
   test("control: the fixture ids under test are genuinely distinct (user vs org, attacker vs victim)", () => {
@@ -269,6 +273,51 @@ describe("Stripe Connect callback: signed state, bound to the session that start
     const r = await callback({ code: "anon1", state }, cookie);
     assert.equal(outcome(r), "?error=connect_failed");
     assert.deepEqual(exchangeCalls, []);
+    assert.equal(await totalConnections(), 0);
+  });
+
+  test("START ON ANOTHER HOST: the user is sent to /settings/payments on the callback host and no state is minted", async () => {
+    as(ATTACKER, ORG_ATTACKER, null);
+    ctx.host = "other-app-host.fixture.test";
+    setCookies.length = 0;
+    let target: string | null = null;
+    try { await startStripeConnectAction(); } catch (e) {
+      const digest = String((e as { digest?: string }).digest ?? "");
+      if (!digest.startsWith("NEXT_REDIRECT")) throw e;
+      target = digest.split(";")[2];
+    }
+    assert.equal(target, "https://app.fixture.test/settings/payments");
+    assert.equal(setCookies.filter((c) => c.name === COOKIE).length, 0);
+    // control: the same start on the callback host proceeds to Stripe and mints the cookie
+    ctx.host = "app.fixture.test";
+    const { cookie } = await start();
+    assert.ok(cookie, "state cookie minted on the callback host");
+  });
+
+  test("EMPTY SECRET: with no AUTH_SECRET/NEXTAUTH_SECRET the callback refuses even a cookie signed earlier, and start refuses to mint", async () => {
+    as(ATTACKER, ORG_ATTACKER, null);
+    const nonce = "s".repeat(43);
+    const cookie = await signedCookie({ nonce, orgId: ORG_ATTACKER, userId: ATTACKER, exp: Date.now() + 60_000 });
+    const saved = { a: process.env.AUTH_SECRET, n: process.env.NEXTAUTH_SECRET };
+    delete process.env.AUTH_SECRET; delete process.env.NEXTAUTH_SECRET;
+    try {
+      const r = await callback({ code: "nosec1", state: nonce }, cookie);
+      assert.equal(outcome(r), "?error=connect_failed");
+      assert.deepEqual(exchangeCalls, []);
+      await assert.rejects(() => startStripeConnectAction(), /secret is not configured/);
+    } finally {
+      process.env.AUTH_SECRET = saved.a; if (saved.n !== undefined) process.env.NEXTAUTH_SECRET = saved.n;
+    }
+    assert.equal(await totalConnections(), 0);
+  });
+
+  test("EXCHANGE FAILURE: Stripe rejects the code → connect_failed and no row", async () => {
+    as(ATTACKER, ORG_ATTACKER, null);
+    const { state, cookie } = await start();
+    exchangeFails = true;
+    const r = await callback({ code: "bad1", state }, cookie);
+    assert.equal(outcome(r), "?error=connect_failed");
+    assert.deepEqual(exchangeCalls, ["bad1"]);
     assert.equal(await totalConnections(), 0);
   });
 

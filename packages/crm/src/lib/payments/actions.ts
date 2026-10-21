@@ -1,7 +1,7 @@
 "use server";
 
 import { and, desc, eq, sql } from "drizzle-orm";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { buildStripeConnectUrl, createCheckoutSession } from "@seldonframe/payments";
 import { db } from "@/db";
@@ -33,6 +33,16 @@ export async function startStripeConnectAction() {
   const secret = resolveStripeConnectStateSecret();
   if (!secret) {
     throw new Error("Stripe Connect state secret is not configured");
+  }
+  // Stripe returns to the callback on NEXT_PUBLIC_APP_URL's host, and the state cookie is
+  // host-only, so the flow can only complete when it starts on that host. Started anywhere
+  // else, send the user to the same page on the callback host instead of minting a state
+  // that could never be honoured.
+  const callbackOrigin = new URL(getAppBaseUrl());
+  const requestHeaders = await headers();
+  const requestHost = (requestHeaders.get("x-forwarded-host")?.split(",")[0]?.trim() || requestHeaders.get("host") || "").toLowerCase();
+  if (requestHost && requestHost !== callbackOrigin.host.toLowerCase()) {
+    redirect(`${callbackOrigin.origin}/settings/payments`);
   }
   const state = newStripeConnectNonce();
   const signedState = signStripeConnectState(

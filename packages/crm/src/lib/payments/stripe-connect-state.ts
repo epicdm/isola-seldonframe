@@ -6,8 +6,10 @@
 // httpOnly cookie carries `{ nonce, orgId, userId, exp }` HMAC-signed with
 // AUTH_SECRET (NEXTAUTH_SECRET fallback). The callback trusts nothing from the
 // query string except the nonce, and only when it equals the signed cookie's.
-// The callback always clears the cookie, so a state is honoured at most once
-// per browser.
+// The callback clears the cookie on every outcome, so a browser that follows
+// the response cannot present it again. This is not a server-side nonce ledger:
+// a client that keeps the cookie can present it again until it expires, but only
+// from the same user's session in the same workspace (the binding is signed).
 //
 // Format: `${base64url(json)}.${base64url(hmacSha256(base64url(json), secret))}`,
 // compared in constant time.
