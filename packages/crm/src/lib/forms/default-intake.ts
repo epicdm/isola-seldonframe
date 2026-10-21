@@ -11,6 +11,11 @@
 //      falls back to another form. A form's slug (even "intake") is not consent
 //      to publish it.
 
+/** Page search param the workspace-default route passes to the public form page to
+ *  re-bind pre-rendered HTML to the rendered form's own slug (harmless if a visitor
+ *  sets it: the island is only ever bound to that same form). */
+export const BIND_DATA_ISLAND_PARAM = "sf_bind_island";
+
 /** organizations.settings key holding the owner-chosen default form id. */
 export const DEFAULT_INTAKE_FORM_SETTING = "defaultIntakeFormId";
 

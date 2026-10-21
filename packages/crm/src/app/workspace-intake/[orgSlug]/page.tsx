@@ -9,6 +9,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { loadDefaultIntakeForm } from "@/lib/forms/default-intake-server";
+import { BIND_DATA_ISLAND_PARAM } from "@/lib/forms/default-intake";
 import PublicIntakePage, { generateMetadata as generateFormMetadata } from "@/app/forms/[id]/[formSlug]/page";
 
 async function resolveDefaultSlug(orgSlug: string): Promise<string | null> {
@@ -34,5 +35,8 @@ export default async function WorkspaceDefaultIntakePage({ params }: { params: P
   if (!formSlug) {
     notFound();
   }
-  return PublicIntakePage({ params: Promise.resolve({ id: orgSlug, formSlug }), bindDataIslandSlug: true });
+  return PublicIntakePage({
+    params: Promise.resolve({ id: orgSlug, formSlug }),
+    searchParams: Promise.resolve({ [BIND_DATA_ISLAND_PARAM]: "1" }),
+  });
 }

@@ -10,7 +10,7 @@ import { getPublicOrgThemeBySlug } from "@/lib/theme/actions";
 import type { Metadata } from "next";
 import { resolvePlatformBranding } from "@/lib/branding/platform";
 import { LicenseNoticeLink } from "@/components/legal/license-notice-link";
-import { bindIntakeDataIslandFormSlug } from "@/lib/forms/default-intake";
+import { BIND_DATA_ISLAND_PARAM, bindIntakeDataIslandFormSlug } from "@/lib/forms/default-intake";
 // 2026-05-18 (later) — agency-wide branding REMOVED from public-facing
 // intake pages. The agency's chrome substitution only applies to the
 // SMB operator's admin dashboard; their CUSTOMERS (the people filling
@@ -39,14 +39,15 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function PublicIntakePage({
   params,
-  bindDataIslandSlug = false,
+  searchParams,
 }: {
   params: Promise<{ id: string; formSlug: string }>;
-  /** Set only by the workspace-default route (app/workspace-intake): re-bind the
-   *  pre-rendered HTML's submission target to this form; fail closed if it can't. */
-  bindDataIslandSlug?: boolean;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id: orgSlug, formSlug } = await params;
+  // Set by the workspace-default route (app/workspace-intake): re-bind the pre-rendered
+  // HTML's submission target to THIS form (never another), failing closed if it can't.
+  const bindDataIslandSlug = (await searchParams)?.[BIND_DATA_ISLAND_PARAM] === "1";
 
   const [org] = await db
     .select({ id: organizations.id, name: organizations.name })
