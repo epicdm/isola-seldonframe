@@ -3,14 +3,12 @@
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { contacts, deals, organizations, pipelines, type PipelineStage } from "@/db/schema";
+import { contacts, deals, pipelines, type PipelineStage } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { assertWritable } from "@/lib/demo/server";
-import { emitSeldonEvent } from "@/lib/events/bus";
-import { inferClientLifecycleFromStatus, recordDealStageLearning } from "@/lib/soul/learning";
+import { recordDealStageLearning } from "@/lib/soul/learning";
 import { ensureDefaultPipelineForOrg } from "@/lib/deals/pipeline-defaults";
-import { trackEvent } from "@/lib/analytics/track";
-import { logBrainEvent } from "@/lib/analytics/brain";
+import { moveDealToStage } from "@/lib/deals/stage-move";
 
 export async function listDeals(orgIdOverride?: string) {
   // v1.24.0 — accept orgId override for operator-portal mirror.
@@ -179,9 +177,10 @@ export async function quickCreateDealAction(input: {
 
   const stages = Array.isArray(pipeline.stages) ? pipeline.stages : [];
   const fallbackStage = stages[0] ?? { name: "New", probability: 0 };
-  const targetStage = input.stage
-    ? stages.find((s) => s.name === input.stage) ?? fallbackStage
-    : fallbackStage;
+  // EPIC 2026-10-21: a named stage must exist in this pipeline — refused, never silently replaced by the first stage.
+  const namedStage = input.stage ? stages.find((s) => s.name === input.stage) : undefined;
+  if (input.stage && !namedStage) return { ok: false, error: "Unknown stage." };
+  const targetStage = namedStage ?? fallbackStage;
 
   const [created] = await db
     .insert(deals)
@@ -215,6 +214,11 @@ export async function quickCreateDealAction(input: {
   };
 }
 
+/**
+ * Kanban drag/drop. EPIC 2026-10-21: the body moved to lib/deals/stage-move.ts so the REST API, the MCP tools and
+ * the Personal Line integration go through exactly this path (validation against the deal's pipeline,
+ * compare-and-set, deal.stage_changed with the actor). Same side effects as before.
+ */
 export async function moveDealStageAction(dealId: string, stage: string, probability: number) {
   assertWritable();
 
@@ -224,115 +228,11 @@ export async function moveDealStageAction(dealId: string, stage: string, probabi
     throw new Error("Unauthorized");
   }
 
-  const [existingDeal] = await db
-    .select({ stage: deals.stage })
-    .from(deals)
-    .where(and(eq(deals.orgId, orgId), eq(deals.id, dealId)))
-    .limit(1);
-
-  if (!existingDeal) {
-    throw new Error("Deal not found");
+  const result = await moveDealToStage({ orgId, dealId, stage, probability, actor: { kind: "user" } });
+  if (!result.ok) {
+    if (result.error === "deal_not_found") throw new Error("Deal not found");
+    if (result.error === "unknown_stage") throw new Error("Unknown stage");
+    if (result.error === "conflict") throw new Error("Deal changed, refresh and try again");
+    throw new Error("Could not move deal");
   }
-
-  await db
-    .update(deals)
-    .set({
-      stage,
-      probability,
-      updatedAt: new Date(),
-      closedAt: probability === 100 || stage.toLowerCase().includes("won") || stage.toLowerCase().includes("lost") ? new Date() : null,
-    })
-    .where(and(eq(deals.orgId, orgId), eq(deals.id, dealId)));
-
-  const [updatedDeal] = await db
-    .select({ createdAt: deals.createdAt, value: deals.value, source: contacts.source })
-    .from(deals)
-    .leftJoin(contacts, eq(contacts.id, deals.contactId))
-    .where(and(eq(deals.orgId, orgId), eq(deals.id, dealId)))
-    .limit(1);
-
-  await recordDealStageLearning({
-    orgId,
-    stage,
-    probability,
-    source: updatedDeal?.source ?? undefined,
-    value: Number(updatedDeal?.value ?? 0),
-    createdAt: updatedDeal?.createdAt ?? undefined,
-  });
-
-  await inferClientLifecycleFromStatus({
-    orgId,
-    status: stage,
-    source: updatedDeal?.source ?? undefined,
-    lifetimeValue: Number(updatedDeal?.value ?? 0),
-  });
-
-  await emitSeldonEvent("deal.stage_changed", {
-    dealId,
-    from: existingDeal.stage,
-    to: stage,
-  }, { orgId: orgId });
-
-  // May 1, 2026 — Measurement Layer 2 + 3.
-  //
-  // Layer 2: stage-change funnel event.
-  // Layer 3: Brain "deal_progression" outcome with the stage
-  // transition + value as context. Outcome bucket: 'won', 'lost', or
-  // 'progressed' (any other transition). Drives per-vertical learning
-  // about which sources / agent touchpoints / configurations move
-  // deals to won at higher rates.
-  const dealValue = Number(updatedDeal?.value ?? 0);
-  const stageLower = stage.toLowerCase();
-  trackEvent(
-    "deal_stage_changed",
-    {
-      deal_id: dealId,
-      from_stage: existingDeal.stage,
-      to_stage: stage,
-      probability,
-      deal_value_cents: Math.round(dealValue * 100),
-      contact_source: updatedDeal?.source ?? null,
-    },
-    { orgId }
-  );
-
-  // Brain context — fetch the org's vertical for cross-workspace
-  // learning. Best-effort; the logBrainEvent call itself is fire-
-  // and-forget so this whole branch can fail without surfacing.
-  void (async () => {
-    try {
-      const [org] = await db
-        .select({ soul: organizations.soul })
-        .from(organizations)
-        .where(eq(organizations.id, orgId))
-        .limit(1);
-      const soul = (org?.soul as Record<string, unknown> | null) ?? null;
-      const outcome = stageLower.includes("won")
-        ? "won"
-        : stageLower.includes("lost")
-          ? "lost"
-          : "progressed";
-      logBrainEvent({
-        orgId,
-        vertical:
-          typeof soul?.industry === "string" ? (soul.industry as string) : null,
-        eventType: "deal_progression",
-        context: {
-          from_stage: existingDeal.stage,
-          to_stage: stage,
-          probability,
-          deal_value_cents: Math.round(dealValue * 100),
-          contact_source: updatedDeal?.source ?? null,
-        },
-        outcome,
-        outcomeValueCents:
-          outcome === "won" ? Math.round(dealValue * 100) : 0,
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(
-        `[brain] deal_progression context fetch failed: ${message}`
-      );
-    }
-  })();
 }

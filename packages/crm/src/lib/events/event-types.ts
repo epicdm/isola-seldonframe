@@ -46,6 +46,11 @@ export const BUILT_IN_EVENT_TYPE_SUGGESTIONS = [
   "portal.resource_viewed",
   "call.missed",
   "call.completed",
+  // EPIC 2026-10-21 — Personal Line lifecycle (signed plsvc ingress, lib/personal-line/lifecycle.ts)
+  "pl.signup_started",
+  "pl.line_created",
+  "pl.app_activated",
+  "pl.first_call",
 ] as const;
 
 const EVENT_TYPE_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;

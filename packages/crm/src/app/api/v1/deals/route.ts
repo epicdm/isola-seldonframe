@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { contacts, deals, pipelines } from "@/db/schema";
 import { guardApiRequest } from "@/lib/api/guard";
+import { findStage } from "@/lib/deals/stages";
 
 export async function GET(request: Request) {
   const guard = await guardApiRequest(request);
@@ -35,6 +36,20 @@ export async function POST(request: Request) {
 
   if (!pipeline) return NextResponse.json({ error: "No pipeline" }, { status: 400 });
 
+  // EPIC 2026-10-21: the stage must be a stage of the pipeline the deal is created in. Omitted = the pipeline's
+  // first stage (was the literal "New", which most pipelines — EPIC's included — do not have).
+  const stages = Array.isArray(pipeline.stages) ? pipeline.stages : [];
+  let stage: string;
+  if (body?.stage !== undefined) {
+    if (typeof body.stage !== "string" || !findStage(stages, body.stage)) {
+      return NextResponse.json({ error: "unknown_stage", message: `"${String(body.stage)}" is not a stage of the default pipeline.`, stages: stages.map((s) => s.name) }, { status: 422 });
+    }
+    stage = body.stage;
+  } else {
+    if (stages.length === 0) return NextResponse.json({ error: "Pipeline has no stages" }, { status: 400 });
+    stage = stages[0].name;
+  }
+
   const [row] = await db
     .insert(deals)
     .values({
@@ -43,7 +58,7 @@ export async function POST(request: Request) {
       pipelineId: pipeline.id,
       title: body.title,
       value: String(body.value ?? 0),
-      stage: body.stage ?? "New",
+      stage,
       probability: Number(body.probability ?? 0),
     })
     .returning();

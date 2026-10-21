@@ -407,6 +407,20 @@
       "when": 1792540800000,
       "tag": "0080_workspace_admin_actions_operator_session_cutoff",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1792627200000,
+      "tag": "0081_external_identities",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792627200001,
+      "tag": "0082_integration_event_inbox",
+      "breakpoints": true
     }
   ]
 }

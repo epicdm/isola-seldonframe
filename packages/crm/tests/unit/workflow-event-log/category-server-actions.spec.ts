@@ -9,7 +9,7 @@
 // Files covered:
 //   lib/bookings/actions.ts  (6 sites)
 //   lib/contacts/actions.ts  (2 sites)
-//   lib/deals/actions.ts     (1 site)
+//   lib/deals/stage-move.ts  (1 site; was lib/deals/actions.ts)
 //   lib/emails/actions.ts    (5 sites)
 //   lib/forms/actions.ts     (2 sites)
 //   lib/landing/actions.ts   (5 sites)
@@ -81,9 +81,11 @@ describe("SLICE 1-a — contacts/actions.ts (2 sites)", () => {
   });
 });
 
-describe("SLICE 1-a — deals/actions.ts (1 site)", () => {
-  test("line 146 deal.stage_changed — orgId", () => {
-    assertOrgIdExpr("src/lib/deals/actions.ts", 146, "orgId");
+// EPIC 2026-10-21: the kanban move body (and its one emit) moved to lib/deals/stage-move.ts so every stage writer
+// shares it; asserted by (event + enclosing function), not by line.
+describe("SLICE 1-a — deals stage move (1 site, lib/deals/stage-move.ts)", () => {
+  test("deal.stage_changed (moveDealToStage) — orgId", () => {
+    assertEmitOrgId("src/lib/deals/stage-move.ts", { event: "deal.stage_changed", inFunction: "moveDealToStage" }, "orgId");
   });
 });
 

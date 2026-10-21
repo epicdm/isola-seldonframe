@@ -234,3 +234,8 @@ export * from "./eval-run-jobs";
 // of platform-admin actions on a tenant workspace (ownership transfer, rollback,
 // internal entitlement). Additive.
 export * from "./workspace-admin-actions";
+
+// EPIC 2026-10-21 (migrations 0081 + 0082): Personal Line lifecycle — trusted external subject -> contact link,
+// signed-event inbox and per-subject facts / deal projection. Additive.
+export * from "./external-identities";
+export * from "./integration-events";

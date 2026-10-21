@@ -1,0 +1,241 @@
+// ROUTE-LEVEL test of POST /api/webhooks/personal-line/[orgId] — the exported route handler itself, production wiring:
+// real HMAC verification, real parser, real drizzle store on a SCRATCH Postgres (full schema), real link, real
+// moveDealToStage (the kanban path), real emitSeldonEvent -> workflow_event_log. No seam except the env/key file.
+// The four lifecycle bodies are the EXACT bytes plsvc's emitter produced in its own route-level run
+// (PL_LIFECYCLE_FIXTURE_IN = plsvc test/pl-lifecycle-emitter.test.ts output); they are re-signed here with the test key
+// (same signature scheme — the vector test in both repos proves it). Every refusal has its positive twin (Law 19).
+//
+// Opt-in, same guard as the other DB specs: refuses unless NEON_LOCAL_HOST is set AND PL_LIFECYCLE_DB_TEST=scratch.
+import assert from "node:assert/strict";
+import { createHmac, randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test, { before, describe } from "node:test";
+
+import { and, eq, sql } from "drizzle-orm";
+
+const enabled = process.env.PL_LIFECYCLE_DB_TEST === "scratch" && !!process.env.NEON_LOCAL_HOST;
+const KEY = "lifecycle-test-key-0123456789abcdef-0123"; // fictional test value, not a credential
+const EPIC = "2a62ca68-5d6b-41bd-aea5-28a0aaba7fc8";
+const FOREIGN = "bbbbbbbb-0000-4000-8000-0000000000f1";
+const NOSTAGE = "cccccccc-0000-4000-8000-0000000000c1";
+const STAGES = [
+  { name: "Lead", color: "#0284c7", probability: 0 },
+  { name: "Signup started", color: "#9333ea", probability: 0 },
+  { name: "Line created", color: "#d97706", probability: 0 },
+  { name: "App activated", color: "#ea580c", probability: 0 },
+  { name: "First call", color: "#0d9488", probability: 0 },
+  { name: "Paid plan", color: "#16a34a", probability: 100 },
+  { name: "Lost", color: "#71717a", probability: 0 },
+];
+const sign = (raw: string, ts = Math.floor(Date.now() / 1000), key = KEY) => createHmac("sha256", key).update(`${ts}.${raw}`).digest("base64url");
+
+describe("Personal Line lifecycle ingress -> Default pipeline (route level, scratch DB)", { skip: !enabled && "set PL_LIFECYCLE_DB_TEST=scratch with a scratch database" }, () => {
+  let POST: (r: Request, c: { params: Promise<{ orgId: string }> }) => Promise<Response>;
+  let db: typeof import("@/db").db;
+  let S: typeof import("@/db/schema");
+  let produced: Record<string, string>;
+  let orphanDealId = "";
+  const keyFile = path.join(tmpdir(), `pl-lifecycle-key-${process.pid}`);
+
+  const post = (orgId: string, raw: string, headers?: Record<string, string> | null) =>
+    POST(new Request(`http://uplink.test/api/webhooks/personal-line/${orgId}`, {
+      method: "POST", body: raw,
+      headers: { "content-type": "application/json", ...(headers === null ? {} : headers ?? { "x-pl-sf-kid": "v1", "x-pl-sf-ts": String(Math.floor(Date.now() / 1000)), "x-pl-sf-sig": sign(raw) }) },
+    }), { params: Promise.resolve({ orgId }) });
+  const body = (type: string, subject: string, over: Record<string, unknown> = {}) => {
+    const base = JSON.parse(produced[type]);
+    return JSON.stringify({ ...base, event_id: randomUUID(), subject_id: subject, ...over });
+  };
+  const count = async (q: ReturnType<typeof sql>) => Number(((await db.execute(q)) as any).rows?.[0]?.n ?? (await db.execute(q) as any)[0]?.n);
+  const dealsOf = async (orgId: string) => db.select().from(S.deals).where(eq(S.deals.orgId, orgId));
+  const plDealOf = async (orgId: string, subject: string) => (await dealsOf(orgId)).filter((d) => (d.customFields as any)?.plSubjectId === subject);
+  const stageEvents = async (orgId: string) => {
+    const r: any = await db.execute(sql`select payload from workflow_event_log where org_id = ${orgId}::uuid and event_type = 'deal.stage_changed' order by emitted_at`);
+    return (r.rows ?? r).map((x: any) => x.payload);
+  };
+
+  before(async () => {
+    produced = JSON.parse(readFileSync(String(process.env.PL_LIFECYCLE_FIXTURE_IN), "utf8"));
+    assert.deepEqual(Object.keys(produced).sort(), ["pl.app_activated", "pl.first_call", "pl.line_created", "pl.signup_started"]);
+    writeFileSync(keyFile, KEY + "\n");
+    ({ db } = await import("@/db"));
+    S = await import("@/db/schema");
+    for (const [id, slug] of [[EPIC, "epic-pl"], [FOREIGN, "foreign-ws"], [NOSTAGE, "nostage-ws"]] as const) {
+      await db.execute(sql`delete from organizations where id = ${id}::uuid`);
+      await db.insert(S.organizations).values({ id, name: slug, slug });
+      const [u] = await db.insert(S.users).values({ orgId: id, name: `${slug} owner`, email: `${slug}@example.test` }).returning({ id: S.users.id });
+      await db.update(S.organizations).set({ ownerId: u.id }).where(eq(S.organizations.id, id));
+    }
+    const [p] = await db.insert(S.pipelines).values({ orgId: EPIC, name: "Default pipeline", stages: STAGES, isDefault: true }).returning({ id: S.pipelines.id });
+    await db.insert(S.pipelines).values({ orgId: FOREIGN, name: "Default pipeline", stages: STAGES, isDefault: true });
+    await db.insert(S.pipelines).values({ orgId: NOSTAGE, name: "Default pipeline", stages: STAGES.filter((s) => s.name !== "Line created"), isDefault: true });
+    // the orphaned synthetic "Proposal" deal: must survive everything below untouched
+    const [c] = await db.insert(S.contacts).values({ orgId: EPIC, firstName: "SYNTHETIC intake", source: "intake" }).returning({ id: S.contacts.id });
+    const [d] = await db.insert(S.deals).values({ orgId: EPIC, contactId: c.id, pipelineId: p.id, title: "SYNTHETIC - Personal Line sandbox deal", value: "1.00", stage: "Proposal", probability: 10 }).returning({ id: S.deals.id });
+    orphanDealId = d.id;
+    // a self-entered contact carrying the subscriber's phone: must NEVER be adopted
+    await db.insert(S.contacts).values({ orgId: EPIC, firstName: "Form", phone: `+${JSON.parse(produced["pl.signup_started"]).wa_id}`, source: "intake" });
+    ({ POST } = await import("@/app/api/webhooks/personal-line/[orgId]/route"));
+  });
+
+  const configure = () => {
+    process.env.PL_LIFECYCLE_KEY_FILE = keyFile;
+    process.env.PL_LIFECYCLE_KID = "v1";
+    process.env.PL_LIFECYCLE_TENANT_ORGS = `epic=${EPIC},nostage=${NOSTAGE}`;
+  };
+
+  test("NOT CONFIGURED (deployed dark): 503 and nothing written; positive twin: the same signed body is accepted once configured", async () => {
+    for (const k of ["PL_LIFECYCLE_KEY_FILE", "PL_LIFECYCLE_KID", "PL_LIFECYCLE_TENANT_ORGS"]) delete process.env[k];
+    const raw = body("pl.signup_started", "subj_dark");
+    assert.equal((await post(EPIC, raw)).status, 503);
+    assert.equal(await count(sql`select count(*)::int n from integration_event_inbox where external_id = 'subj_dark'`), 0);
+    configure();
+    assert.equal((await post(EPIC, raw)).status, 200);
+  });
+
+  test("FORGED: unsigned, wrong key, wrong kid, tampered body, expired timestamp -> 401, nothing recorded; positive twin = the full journey below", async () => {
+    configure();
+    const raw = body("pl.signup_started", "subj_forged");
+    const ts = Math.floor(Date.now() / 1000);
+    const cases: Array<[Record<string, string> | null, string]> = [
+      [null, raw],
+      [{ "x-pl-sf-kid": "v1", "x-pl-sf-ts": String(ts), "x-pl-sf-sig": sign(raw, ts, "another-key-0123456789abcdef-0123456789") }, raw],
+      [{ "x-pl-sf-kid": "v2", "x-pl-sf-ts": String(ts), "x-pl-sf-sig": sign(raw, ts) }, raw],
+      [{ "x-pl-sf-kid": "v1", "x-pl-sf-ts": String(ts), "x-pl-sf-sig": sign(raw, ts) }, raw.replace('"epic"', '"epic" ')],
+      [{ "x-pl-sf-kid": "v1", "x-pl-sf-ts": String(ts - 3600), "x-pl-sf-sig": sign(raw, ts - 3600) }, raw],
+    ];
+    for (const [h, b] of cases) assert.equal((await post(EPIC, b, h)).status, 401);
+    assert.equal(await count(sql`select count(*)::int n from integration_event_inbox where external_id = 'subj_forged'`), 0);
+  });
+
+  test("THE JOURNEY (plsvc's own bytes): one contact, one deal, Signup started -> Line created -> App activated -> First call, each move a deal.stage_changed attributed to the integration", async () => {
+    configure();
+    const subject = JSON.parse(produced["pl.signup_started"]).subject_id;
+    const before = (await stageEvents(EPIC)).length;
+    const expect = ["Signup started", "Line created", "App activated", "First call"];
+    for (const [i, type] of ["pl.signup_started", "pl.line_created", "pl.app_activated", "pl.first_call"].entries()) {
+      const r = await post(EPIC, produced[type]);
+      assert.equal(r.status, 200, type);
+      const ds = await plDealOf(EPIC, subject);
+      assert.equal(ds.length, 1, `one deal after ${type}`);
+      assert.equal(ds[0].stage, expect[i]);
+    }
+    const evs = (await stageEvents(EPIC)).slice(before);
+    assert.deepEqual(evs.map((e: any) => [e.from, e.to, e.actor?.kind, e.actor?.name]), [
+      ["Signup started", "Line created", "integration", "personal_line"],
+      ["Line created", "App activated", "integration", "personal_line"],
+      ["App activated", "First call", "integration", "personal_line"],
+    ]);
+    const [deal] = await plDealOf(EPIC, subject);
+    assert.equal((deal.customFields as any).plAccountId, JSON.parse(produced["pl.line_created"]).pl_account_id);
+    // the contact is NEW (source personal_line), linked by identity; the self-entered one with the same phone is not adopted
+    const ident: any = await db.execute(sql`select contact_id from external_identities where org_id = ${EPIC}::uuid and external_id = ${subject}`);
+    const contactId = (ident.rows ?? ident)[0].contact_id;
+    assert.equal(deal.contactId, contactId);
+    const [ct] = await db.select().from(S.contacts).where(eq(S.contacts.id, contactId));
+    assert.equal(ct.source, "personal_line");
+    // first call: the timeline shows the CALL time; detection time is kept separately
+    const fc = JSON.parse(produced["pl.first_call"]);
+    const acts = await db.select().from(S.activities).where(and(eq(S.activities.orgId, EPIC), eq(S.activities.contactId, contactId)));
+    assert.equal(acts.length, 4);
+    const fcAct = acts.find((a) => (a.metadata as any).event_type === "pl.first_call")!;
+    assert.equal(new Date(fcAct.completedAt!).toISOString(), fc.facts.first_call_at);
+    assert.equal((fcAct.metadata as any).detected_at, fc.facts.first_call_detected_at);
+    assert.notEqual(fc.facts.first_call_at, fc.facts.first_call_detected_at);
+  });
+
+  test("REPLAY: every body delivered again -> 200 duplicate, nothing new (no contact, deal, activity or stage event)", async () => {
+    configure();
+    const snap = async () => [await count(sql`select count(*)::int n from contacts where org_id = ${EPIC}::uuid`), (await dealsOf(EPIC)).length,
+      await count(sql`select count(*)::int n from activities where org_id = ${EPIC}::uuid`), (await stageEvents(EPIC)).length];
+    const s0 = await snap();
+    for (const type of Object.keys(produced)) {
+      const r = await post(EPIC, produced[type]);
+      assert.equal(r.status, 200);
+      assert.equal((await r.json()).status, "duplicate");
+    }
+    assert.deepEqual(await snap(), s0);
+  });
+
+  test("OUT OF ORDER: first call arrives first -> deal created AT First call; the older events never move it back", async () => {
+    configure();
+    const ev0 = (await stageEvents(EPIC)).length;
+    assert.equal((await post(EPIC, body("pl.first_call", "subj_ooo"))).status, 200);
+    assert.equal((await plDealOf(EPIC, "subj_ooo"))[0].stage, "First call");
+    for (const t of ["pl.signup_started", "pl.line_created", "pl.app_activated"]) {
+      const r = await post(EPIC, body(t, "subj_ooo"));
+      assert.equal(r.status, 200);
+      assert.match((await r.json()).deal, /^kept:not_forward/);
+    }
+    const ds = await plDealOf(EPIC, "subj_ooo");
+    assert.equal(ds.length, 1);
+    assert.equal(ds[0].stage, "First call");
+    assert.equal((await stageEvents(EPIC)).length, ev0);
+  });
+
+  test("MANUAL STAGES ARE NEVER AUTOMATED: an operator's Paid plan / Lost card stays put; no event type reaches them", async () => {
+    configure();
+    for (const [subj, manual] of [["subj_paid", "Paid plan"], ["subj_lost", "Lost"]] as const) {
+      await post(EPIC, body("pl.signup_started", subj));
+      const [d] = await plDealOf(EPIC, subj);
+      await db.update(S.deals).set({ stage: manual }).where(eq(S.deals.id, d.id));   // the operator's own move
+      for (const t of ["pl.line_created", "pl.app_activated", "pl.first_call"]) await post(EPIC, body(t, subj));
+      assert.equal((await plDealOf(EPIC, subj))[0].stage, manual);
+    }
+    const { STAGE_FOR } = await import("@/lib/personal-line/lifecycle");
+    const targets = Object.values(STAGE_FOR).map((x) => x.stage);
+    assert.ok(!targets.includes("Paid plan") && !targets.includes("Lost") && !targets.includes("Lead"));
+    // positive twin: an unconstrained subject IS moved by the same events
+    await post(EPIC, body("pl.signup_started", "subj_free")); await post(EPIC, body("pl.line_created", "subj_free"));
+    assert.equal((await plDealOf(EPIC, "subj_free"))[0].stage, "Line created");
+  });
+
+  test("CONCURRENT first events for one subject -> exactly one deal, at the furthest stage", async () => {
+    configure();
+    const rs = await Promise.all([post(EPIC, body("pl.signup_started", "subj_race")), post(EPIC, body("pl.line_created", "subj_race")), post(EPIC, body("pl.app_activated", "subj_race"))]);
+    assert.deepEqual(rs.map((r) => r.status), [200, 200, 200]);
+    const ds = await plDealOf(EPIC, "subj_race");
+    assert.equal(ds.length, 1);
+    assert.equal(ds[0].stage, "App activated");
+    assert.equal(await count(sql`select count(*)::int n from external_identities where org_id = ${EPIC}::uuid and external_id = 'subj_race'`), 1);
+  });
+
+  test("FOREIGN / UNKNOWN TENANT: unknown tenant -> 403; EPIC's tenant aimed at another workspace's path -> 403; nothing written there", async () => {
+    configure();
+    assert.equal((await post(EPIC, body("pl.signup_started", "subj_t1", { tenant: "other" }))).status, 403);
+    assert.equal((await post(FOREIGN, body("pl.signup_started", "subj_t2"))).status, 403);
+    assert.equal((await post(NOSTAGE, body("pl.signup_started", "subj_t3"))).status, 403);   // epic's tenant, allowlisted path of ANOTHER tenant
+    assert.equal((await dealsOf(FOREIGN)).length, 0);
+    assert.equal(await count(sql`select count(*)::int n from integration_event_inbox where external_id in ('subj_t1','subj_t2','subj_t3')`), 0);
+    // positive twin: the second allowlisted tenant on its own path is accepted
+    assert.equal((await post(NOSTAGE, body("pl.signup_started", "subj_t4", { tenant: "nostage" }))).status, 200);
+  });
+
+  test("UNKNOWN STAGE / TYPE: a type outside the four (e.g. plan_purchased) -> 422; a pipeline without the target stage -> event recorded, NO deal write", async () => {
+    configure();
+    const pp = JSON.stringify({ ...JSON.parse(body("pl.signup_started", "subj_pp")), type: "pl.plan_purchased" });
+    assert.equal((await post(EPIC, pp)).status, 422);
+    const r = await post(NOSTAGE, body("pl.line_created", "subj_ns", { tenant: "nostage" }));
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).deal, "stage_missing:Line created");
+    assert.equal((await plDealOf(NOSTAGE, "subj_ns")).length, 0);
+    assert.equal(await count(sql`select count(*)::int n from integration_event_inbox where external_id = 'subj_ns' and outcome = 'stage_missing:Line created'`), 1);
+  });
+
+  test("a detection time is never accepted as the event time (first_call occurred_at must equal first_call_at or be null)", async () => {
+    configure();
+    const fc = JSON.parse(produced["pl.first_call"]);
+    const lie = body("pl.first_call", "subj_lie", { occurred_at: fc.detected_at });
+    assert.equal((await post(EPIC, lie)).status, 422);
+    const unknownTime = body("pl.first_call", "subj_unk", { occurred_at: null, facts: { first_call_at: null, first_call_detected_at: fc.facts.first_call_detected_at } });
+    assert.equal((await post(EPIC, unknownTime)).status, 200);
+  });
+
+  test("the orphaned synthetic 'Proposal' deal is untouched by all of the above", async () => {
+    const [d] = await db.select().from(S.deals).where(eq(S.deals.id, orphanDealId));
+    assert.equal(d.stage, "Proposal");
+    assert.equal(d.probability, 10);
+  });
+});

@@ -33,6 +33,10 @@
         "to": {
           "rawType": "string",
           "nullable": false
+        },
+        "actor?": {
+          "rawType": "{ kind: \"user\" | \"api\" | \"integration\"; name?: string; ref?: string | null }",
+          "nullable": true
         }
       }
     },
