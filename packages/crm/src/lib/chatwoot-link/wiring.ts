@@ -23,13 +23,14 @@ export function makeChatwootLinkStore(database: Db = db): ChatwootLinkStore {
         .limit(1);
       return row ?? null;
     },
-    async linkActivities(orgId, contactId, limit) {
+    async linkActivities(orgId, contactId, limit, offset) {
       return database
         .select({ id: activities.id, orgId: activities.orgId, contactId: activities.contactId, metadata: activities.metadata })
         .from(activities)
         .where(and(eq(activities.orgId, orgId), eq(activities.contactId, contactId), eq(activities.type, CHATWOOT_LINK_ACTIVITY_TYPE)))
         .orderBy(desc(activities.createdAt), desc(activities.id))
-        .limit(limit);
+        .limit(limit)
+        .offset(offset);
     },
     async insertLinkActivity(a) {
       const now = new Date();

@@ -14,13 +14,29 @@ import type { Actor } from "./service";
 
 export { canConfirmChatwootLink } from "./actor";
 
-export async function resolveChatwootActor(): Promise<Actor | null> {
+export type SessionSources = {
+  operatorPortal: () => Promise<unknown>;
+  adminToken: () => Promise<unknown>;
+  orgId: () => Promise<string | null>;
+  user: () => Promise<{ id?: string | null } | null | undefined>;
+  role: () => Promise<string | null>;
+};
+
+const REAL_SOURCES: SessionSources = {
+  operatorPortal: resolveOperatorPortalContext,
+  adminToken: resolveAdminTokenContext,
+  orgId: getOrgId,
+  user: getCurrentUser,
+  role: getCurrentWorkspaceRole,
+};
+
+export async function resolveChatwootActor(src: SessionSources = REAL_SOURCES): Promise<Actor | null> {
   const [opCtx, adminCtx] = await Promise.all([
-    resolveOperatorPortalContext().catch(() => "error" as const),
-    resolveAdminTokenContext().catch(() => "error" as const),
+    src.operatorPortal().catch(() => "error" as const),
+    src.adminToken().catch(() => "error" as const),
   ]);
-  const [orgId, user] = await Promise.all([getOrgId(), getCurrentUser()]);
-  const role = orgId && user?.id ? await getCurrentWorkspaceRole() : null;
+  const [orgId, user] = await Promise.all([src.orgId(), src.user()]);
+  const role = orgId && user?.id ? await src.role() : null;
   // A token context that could not even be resolved counts as present: confirmation fails closed.
   return actorFromSession({ tokenSession: opCtx !== null || adminCtx !== null, userId: user?.id, orgId, role });
 }

@@ -21,8 +21,8 @@ export type LinkActivityRow = { id: string; orgId: string; contactId: string | n
 export interface ChatwootLinkStore {
   /** The contact, only if it belongs to orgId. */
   getContact(orgId: string, contactId: string): Promise<LinkContact | null>;
-  /** This contact's chatwoot_link_confirmed rows in orgId, newest first. */
-  linkActivities(orgId: string, contactId: string, limit: number): Promise<LinkActivityRow[]>;
+  /** This contact's chatwoot_link_confirmed rows in orgId, newest first, one page (limit/offset). */
+  linkActivities(orgId: string, contactId: string, limit: number, offset: number): Promise<LinkActivityRow[]>;
   /** Inserts with the given id: the signature is bound to it. */
   insertLinkActivity(a: { id: string; orgId: string; contactId: string; userId: string; subject: string; metadata: Record<string, unknown> }): Promise<void>;
 }
@@ -61,10 +61,13 @@ export type ConfirmResult =
   | { ok: false; code: "not_found" | "unavailable" | "forbidden" | "not_a_candidate" | "chatwoot_unreachable" | "invalid" };
 
 const MAX_CONTACTS = 5;
-// How many chatwoot_link_confirmed rows of ONE contact are examined, newest first. Rows written by other paths never verify; this bounds
-// the work if someone floods a contact with them (the effect of a flood is fail-closed: the link is hidden, candidates show again).
-const LINK_SCAN_LIMIT = 200;
-const MAX_CONVERSATIONS_PER_CONTACT = 5;
+// The contact's chatwoot_link_confirmed rows are read newest first, a page at a time, until one verifies or history ends. Rows written by
+// other paths never verify. LINK_SCAN_MAX_PAGES only bounds the work under a deliberate flood of thousands of rows on one contact; past it
+// the result is fail-closed (no link shown, candidates show again), never a wrong link.
+const LINK_SCAN_PAGE = 200;
+const LINK_SCAN_MAX_PAGES = 50;
+const MAX_CONVERSATIONS_PER_CONTACT = 10;
+const CHATWOOT_CONVERSATIONS_CAP = 25; // v4.18 Contacts::ConversationsController::RESULTS_PER_PAGE: a full page may hide older ones
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Digits of a phone number, with a leading NANP "1" dropped from 11-digit numbers so "+1 767 295 6737" equals "767-295-6737". */
@@ -84,10 +87,13 @@ export async function getChatwootLinkState(orgId: string, contactId: string, dep
   if (!deps.target || !deps.key || !UUID.test(contactId)) return { state: "unavailable" };
   const contact = await deps.store.getContact(orgId, contactId);
   if (!contact) return { state: "unavailable" };
-  const rows = await deps.store.linkActivities(orgId, contactId, LINK_SCAN_LIMIT);
-  for (const row of rows) {
-    const rec = verifyChatwootLink(row, { orgId, contactId, accountId: deps.target.accountId }, deps.key);
-    if (rec) return linked(deps.target, rec);
+  for (let page = 0; page < LINK_SCAN_MAX_PAGES; page++) {
+    const rows = await deps.store.linkActivities(orgId, contactId, LINK_SCAN_PAGE, page * LINK_SCAN_PAGE);
+    for (const row of rows) {
+      const rec = verifyChatwootLink(row, { orgId, contactId, accountId: deps.target.accountId }, deps.key);
+      if (rec) return linked(deps.target, rec);
+    }
+    if (rows.length < LINK_SCAN_PAGE) break;
   }
   return { state: "unlinked" };
 }
@@ -133,7 +139,9 @@ async function lookupCandidates(contact: LinkContact, reader: ChatwootReader): P
   if (matched.size > MAX_CONTACTS) incomplete = true;
   const out: Candidate[] = [];
   for (const [chatwootContactId, m] of [...matched.entries()].sort((a, b) => a[0] - b[0]).slice(0, MAX_CONTACTS)) {
-    const convs = (await reader.contactConversations(chatwootContactId))
+    const all = await reader.contactConversations(chatwootContactId);
+    if (all.length >= CHATWOOT_CONVERSATIONS_CAP || all.length > MAX_CONVERSATIONS_PER_CONTACT) incomplete = true;
+    const convs = all
       .sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0) || b.displayId - a.displayId)
       .slice(0, MAX_CONVERSATIONS_PER_CONTACT);
     for (const c of convs) {

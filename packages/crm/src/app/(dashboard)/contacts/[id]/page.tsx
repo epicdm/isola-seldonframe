@@ -292,7 +292,13 @@ export default async function ContactRecordPage({
       </div>
 
       {chatwootLink.state !== "unavailable" ? (
-        <ChatwootLinkCard contactId={contact.id} initial={chatwootLink} canConfirm={chatwootCanConfirm} />
+        <ChatwootLinkCard
+          // keyed by the server's answer, so a refreshed page with a newer confirmation remounts instead of keeping stale state
+          key={`${contact.id}:${chatwootLink.state}:${chatwootLink.state === "linked" ? `${chatwootLink.conversationId}:${chatwootLink.confirmedAt}` : ""}`}
+          contactId={contact.id}
+          initial={chatwootLink}
+          canConfirm={chatwootCanConfirm}
+        />
       ) : null}
 
       <ContactRecordDetail

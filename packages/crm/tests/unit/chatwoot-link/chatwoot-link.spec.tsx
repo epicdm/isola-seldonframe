@@ -34,6 +34,7 @@ import {
   type LinkActivityRow,
   type LinkContact,
 } from "@/lib/chatwoot-link/service";
+import { resolveChatwootActor, type SessionSources } from "@/lib/chatwoot-link/session";
 import { makeChatwootLinkDeps } from "@/lib/chatwoot-link/wiring";
 
 const ORG_A = "aaaaaaaa-0000-4000-8000-0000000000a1"; // the workspace mapped to Chatwoot account 2
@@ -41,6 +42,7 @@ const ORG_B = "bbbbbbbb-0000-4000-8000-0000000000b2"; // another workspace, NOT 
 const CONTACT_A = "aaaaaaaa-1111-4000-8000-0000000000c1"; // in ORG_A, phone + email match Chatwoot contact 501
 const CONTACT_A2 = "aaaaaaaa-1111-4000-8000-0000000000c2"; // in ORG_A, no match anywhere
 const CONTACT_B = "bbbbbbbb-1111-4000-8000-0000000000c3"; // in ORG_B, same phone as CONTACT_A
+const CONTACT_A3 = "aaaaaaaa-1111-4000-8000-0000000000c4"; // in ORG_A, email matches Chatwoot contact 504, which has 11 conversations
 const USER_ADMIN = "aaaaaaaa-2222-4000-8000-0000000000d1";
 const TOKEN = "cw-test-token-fictional-0123456789";
 const AUTH_SECRET = "test-auth-secret-fictional-0123456789";
@@ -57,6 +59,7 @@ const CW_CONTACTS = [
   { id: 501, name: "Test Customer", phone_number: "+15550100123", email: "customer@example.test" },
   { id: 502, name: "Other Person", phone_number: "+15550100123999", email: null }, // contains the digits: an ILIKE hit, NOT an exact match
   { id: 503, name: "Test Customer", phone_number: "+15550100999", email: "someone-else@example.test" }, // same NAME only: never a candidate
+  { id: 504, name: "Busy Customer", phone_number: null, email: "busy@example.test" },
 ];
 const CW_CONVERSATIONS: Record<number, unknown[]> = {
   501: [
@@ -66,6 +69,7 @@ const CW_CONVERSATIONS: Record<number, unknown[]> = {
   ],
   502: [{ id: 77, account_id: 2, inbox_id: 11, status: "open", last_activity_at: 1_760_000_100 }],
   503: [{ id: 88, account_id: 2, inbox_id: 11, status: "open", last_activity_at: 1_760_000_200 }],
+  504: Array.from({ length: 11 }, (_, i) => ({ id: 200 + i, account_id: 2, inbox_id: 11, status: "resolved", last_activity_at: 1_740_000_000 + i })),
 };
 
 function handle(req: IncomingMessage, res: import("node:http").ServerResponse) {
@@ -110,14 +114,15 @@ function memStore() {
     { id: CONTACT_A, orgId: ORG_A, firstName: "Test", lastName: "Customer", email: "Customer@Example.test", phone: "(555) 010-0123" },
     { id: CONTACT_A2, orgId: ORG_A, firstName: "No", lastName: "Match", email: null, phone: "555 010 0456" },
     { id: CONTACT_B, orgId: ORG_B, firstName: "Same", lastName: "Phone", email: null, phone: "+1 555 010 0123" },
+    { id: CONTACT_A3, orgId: ORG_A, firstName: "Busy", lastName: null, email: "busy@example.test", phone: null },
   ];
   const acts: Array<LinkActivityRow & { type: string; userId: string; subject: string }> = [];
   const store: ChatwootLinkStore = {
     async getContact(orgId, id) {
       return contacts.find((c) => c.orgId === orgId && c.id === id) ?? null;
     },
-    async linkActivities(orgId, contactId, limit) {
-      return acts.filter((a) => a.orgId === orgId && a.contactId === contactId && a.type === CHATWOOT_LINK_ACTIVITY_TYPE).slice().reverse().slice(0, limit);
+    async linkActivities(orgId, contactId, limit, offset) {
+      return acts.filter((a) => a.orgId === orgId && a.contactId === contactId && a.type === CHATWOOT_LINK_ACTIVITY_TYPE).slice().reverse().slice(offset, offset + limit);
     },
     async insertLinkActivity(a) {
       acts.push({ id: a.id, orgId: a.orgId, contactId: a.contactId, metadata: a.metadata, type: CHATWOOT_LINK_ACTIVITY_TYPE, userId: a.userId, subject: a.subject });
@@ -381,11 +386,11 @@ describe("Codex review 2026-10-21 regressions", () => {
     assert.equal(convOf(await getChatwootLinkState(ORG_A, CONTACT_A, d)), 17);
   });
 
-  test("FLOOD: a genuine link followed by 20 unsigned rows of the same type is still shown", async () => {
+  test("FLOOD: a genuine link followed by 450 unsigned rows of the same type (past two scan pages) is still shown", async () => {
     const { store } = memStore();
     const d = depsFor(ORG_A, store);
     assert.ok((await confirmChatwootLink(admin(), { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d)).ok);
-    for (let i = 0; i < 20; i++) await store.insertLinkActivity({ id: randomUUID(), orgId: ORG_A, contactId: CONTACT_A, userId: USER_ADMIN, subject: "noise", metadata: {} });
+    for (let i = 0; i < 450; i++) await store.insertLinkActivity({ id: randomUUID(), orgId: ORG_A, contactId: CONTACT_A, userId: USER_ADMIN, subject: "noise", metadata: {} });
     assert.equal(convOf(await getChatwootLinkState(ORG_A, CONTACT_A, d)), 41);
   });
 
@@ -418,6 +423,44 @@ describe("Codex review 2026-10-21 regressions", () => {
     assert.equal(actorFromSession({ tokenSession: false, userId: null, orgId: ORG_A, role: "owner" }), null);
     const { store, acts } = memStore();
     const d = depsFor(ORG_A, store);
+    assert.deepEqual(await confirmChatwootLink(mixed!, { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d), { ok: false, code: "forbidden" });
+    assert.equal(acts.length, 0);
+    assert.ok((await confirmChatwootLink(plain!, { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d)).ok);
+  });
+
+  test("CONVERSATION CAP: a match with more conversations than are listed is flagged incomplete (control: CONTACT_A's two are complete)", async () => {
+    const { store } = memStore();
+    const busy = await findChatwootCandidates(admin(), CONTACT_A3, depsFor(ORG_A, store));
+    assert.ok(busy.ok);
+    if (!busy.ok) return;
+    assert.equal(busy.candidates.length, 10);
+    assert.equal(busy.incomplete, true);
+    const a = await findChatwootCandidates(admin(), CONTACT_A, depsFor(ORG_A, store));
+    assert.ok(a.ok && a.incomplete === false && a.candidates.length === 2);
+  });
+
+  test("REAL RESOLVER: resolveChatwootActor with mixed / token-only / member / owner / failing sources (control: plain owner confirms)", async () => {
+    const src = (o: Partial<{ op: unknown; admin: unknown; opThrows: boolean; orgId: string | null; userId: string | null; role: string | null }>): SessionSources => ({
+      operatorPortal: async () => { if (o.opThrows) throw new Error("bad cookie"); return o.op ?? null; },
+      adminToken: async () => o.admin ?? null,
+      orgId: async () => (o.orgId === undefined ? ORG_A : o.orgId),
+      user: async () => (o.userId === null ? null : { id: o.userId ?? USER_ADMIN }),
+      role: async () => (o.role === undefined ? "owner" : o.role),
+    });
+    const plain = await resolveChatwootActor(src({}));
+    assert.equal(canConfirmChatwootLink(plain), true);
+    assert.equal(plain?.orgId, ORG_A);
+    assert.equal(canConfirmChatwootLink(await resolveChatwootActor(src({ admin: { orgId: ORG_B } }))), false, "admin-token cookie + NextAuth owner");
+    assert.equal(canConfirmChatwootLink(await resolveChatwootActor(src({ op: { orgId: ORG_B } }))), false, "operator-portal cookie + NextAuth owner");
+    assert.equal(canConfirmChatwootLink(await resolveChatwootActor(src({ opThrows: true }))), false, "a token context that cannot be resolved counts as present");
+    assert.equal(canConfirmChatwootLink(await resolveChatwootActor(src({ role: "member" }))), false);
+    assert.equal(canConfirmChatwootLink(await resolveChatwootActor(src({ role: null }))), false, "no role resolves to member");
+    assert.equal(await resolveChatwootActor(src({ userId: null })), null);
+    assert.equal(await resolveChatwootActor(src({ orgId: null })), null);
+    // the resolved actor drives the real core: mixed refused, plain accepted, same harness
+    const { store, acts } = memStore();
+    const d = depsFor(ORG_A, store);
+    const mixed = await resolveChatwootActor(src({ admin: { orgId: ORG_A } }));
     assert.deepEqual(await confirmChatwootLink(mixed!, { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d), { ok: false, code: "forbidden" });
     assert.equal(acts.length, 0);
     assert.ok((await confirmChatwootLink(plain!, { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d)).ok);

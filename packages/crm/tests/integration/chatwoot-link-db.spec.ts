@@ -133,4 +133,16 @@ describe("real SQL store: workspace scoping is in the query", () => {
     const s2 = await getChatwootLinkState(ORG_A, CONTACT_A, d);
     assert.equal(s2.state === "linked" ? s2.conversationId : null, 17);
   });
+
+  test("FLOOD by SQL: 450 newer unsigned rows of the type (past two 200-row pages) do not hide the genuine link", async () => {
+    const d = deps();
+    await pool.query(
+      "insert into activities (org_id, contact_id, user_id, type, subject, metadata, created_at) select $1, $2, $3, $4, 'noise', '{}'::jsonb, now() + interval '2 minutes' + (g || ' seconds')::interval from generate_series(1, 450) g",
+      [ORG_A, CONTACT_A, USER_A, CHATWOOT_LINK_ACTIVITY_TYPE],
+    );
+    const [{ n }] = (await pool.query("select count(*)::int as n from activities where contact_id = $1 and type = $2 and subject = 'noise'", [CONTACT_A, CHATWOOT_LINK_ACTIVITY_TYPE])).rows;
+    assert.equal(n, 450, "control: the flood rows exist");
+    const s = await getChatwootLinkState(ORG_A, CONTACT_A, d);
+    assert.equal(s.state === "linked" ? s.conversationId : null, 17);
+  });
 });
