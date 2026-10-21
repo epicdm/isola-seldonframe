@@ -142,6 +142,20 @@ describe("server actions refuse a client-supplied workspace the caller cannot ac
     assert.equal(await orgRow(ORG_B), before);
   });
 
+  test("createLiveSellCheckoutAction: own and agency workspaces pass to the Stripe step (positive controls); foreign and missing -> workspace_not_found, no proposal", async () => {
+    const input = (ws: string) => ({ prospectName: "Prospect Co", prospectFirstName: "Pat", prospectEmail: "pat@scope.test", previewWorkspaceId: ws });
+    const proposalsBefore = await n(sql`select count(*)::int as n from proposals`);
+    as(USER_A);
+    // No Stripe connection in the fixture: an authorized workspace stops at the Stripe step, after the scope check.
+    assert.deepEqual(await start.createLiveSellCheckoutAction(input(ORG_A)), { ok: false, error: "stripe_not_connected" });
+    as(USER_AG);
+    assert.deepEqual(await start.createLiveSellCheckoutAction(input(ORG_C)), { ok: false, error: "stripe_not_connected" });
+    as(USER_A);
+    assert.deepEqual(await start.createLiveSellCheckoutAction(input(ORG_B)), { ok: false, error: "workspace_not_found" });
+    assert.deepEqual(await start.createLiveSellCheckoutAction(input(MISSING_ORG)), { ok: false, error: "workspace_not_found" });
+    assert.equal(await n(sql`select count(*)::int as n from proposals`), proposalsBefore);
+  });
+
   test("setContactPortalAccessAction: own and agency workspaces flip (positive controls); foreign -> org_not_found, contact untouched", async () => {
     as(USER_A);
     assert.deepEqual(await admin.setContactPortalAccessAction({ orgId: ORG_A, contactId: CONTACT_A, enabled: false }), { ok: true, enabled: false });

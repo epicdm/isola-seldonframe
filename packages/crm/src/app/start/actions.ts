@@ -73,12 +73,13 @@ export async function createLiveSellCheckoutAction(
   // The agency org is the user's primary org (the one they log in as).
   const agencyOrgId = user.orgId;
 
-  // Verify the prospect workspace belongs to this operator's managed set.
-  // We don't do a full membership check here — the workspace picker on the
-  // client side already filters to listManagedOrganizationsForUser results.
-  // A malicious POST could only point at another workspace; createProposal
-  // would still record it. That's acceptable — the operator is authenticated
-  // and the Stripe charge goes to *their* connected account anyway.
+  // The prospect workspace comes from the client: only one this operator may act
+  // in (same rules as getOrgId). A foreign id is refused like a missing one —
+  // otherwise a paid checkout could drive the Stripe webhook to take another
+  // workspace out of preview and email its onboarding link to a chosen address.
+  if (!(await userCanAccessOrg(session.user.id, input.previewWorkspaceId))) {
+    return { ok: false, error: "workspace_not_found" };
+  }
 
   // Find the agency's active Stripe connected account.
   const [conn] = await db
