@@ -1,6 +1,13 @@
-// Public pilot platform pin — PATH test through the real executeTurn and the
-// real lib/ai/client resolution (getAIClient / resolveRuntimeAiClient), with
-// only the database and the network faked.
+// Public pilot platform pin — tests the real executeTurn and the real
+// lib/ai/client resolution (getAIClient / resolveRuntimeAiClient), with only the
+// database and the network faked.
+//
+// SCOPE: this spec calls executeTurn directly with a SUPPLIED
+// trustedRelayToolContext binding. It does not exercise the public turn route's
+// relay verification (HMAC, freshness, nonce, UPLINK_RELAY_* scope, stored
+// binding) — that code is unchanged by this delta and is the only place the
+// binding is constructed (route.ts ~376). The binding here stands in for one
+// that route has already verified.
 //
 // Defect: a workspace BYOK key (needed for Studio Test) made getAIClient
 // resolve provider "anthropic", so every metered public-pilot turn hit the
@@ -164,9 +171,10 @@ beforeEach(() => {
   setPilotEnv();
 });
 
-// The verified relay binding the public route builds (route.ts) only after the
+// Stand-in for the binding the public route builds (route.ts) only after the
 // relay proof's HMAC/freshness/expected agent and the configured relay scope
-// (UPLINK_RELAY_WORKSPACE_ID / UPLINK_RELAY_AGENT_SLUG) all matched.
+// (UPLINK_RELAY_WORKSPACE_ID / UPLINK_RELAY_AGENT_SLUG) all matched. Supplied
+// directly here; the route's verification itself is not under test.
 function relayContext(workspaceId: string, agentId: string) {
   return {
     kind: "chatwoot" as const,
@@ -247,6 +255,20 @@ describe("public pilot turn — platform pin only for the approved concierge in 
     assertRefusedWithoutProviderCall(
       await pilotTurn(PILOT_AGENT, PILOT_ORG, relayContext(PILOT_ORG, CONCIERGE_AGENT)),
       "same-workspace agent, binding for the concierge",
+    );
+  });
+
+  test("(6c) binding names the concierge agentId but a DIFFERENT workspaceId — NOT pinned, fails closed as today", async () => {
+    // The concierge row lives in the pilot workspace; only the binding's
+    // workspaceId differs. Proves the workspaceId comparison is load-bearing:
+    // deleting it from runtime.ts would pin this turn (red).
+    assert.notEqual(OTHER_ORG, PILOT_ORG, "control: the two workspace ids genuinely differ");
+    setWorkspace({ orgId: PILOT_ORG, agentId: CONCIERGE_AGENT, byok: true });
+    const binding = relayContext(OTHER_ORG, CONCIERGE_AGENT);
+    assert.equal(binding.binding.agentId, CONCIERGE_AGENT, "control: the agent field DOES match");
+    assertRefusedWithoutProviderCall(
+      await pilotTurn(CONCIERGE_AGENT, PILOT_ORG, binding),
+      "concierge, binding for another workspace",
     );
   });
 
