@@ -46,7 +46,7 @@ async function resolveCompileClient(orgId: string): Promise<{ client: Anthropic;
   return { client: resolution.client, model: resolution.model ?? DEFAULT_SONNET_MODEL };
 }
 
-const NO_KEY_REASON = "no model key configured";
+const NO_KEY_REASON = "no compatible model key configured";
 
 class SoulCompileNoKeyError extends Error {
   constructor() {
@@ -55,22 +55,26 @@ class SoulCompileNoKeyError extends Error {
   }
 }
 
-// Short, secret-free reason for the operator: error class + message, key-shaped text removed.
+// Short, secret-free reason for the operator. Built only from allowlisted parts (never a free-text
+// error message, which can echo a key, header or file contents): the provider HTTP status and error
+// type, or the error class name.
 function compileErrorReason(error: unknown) {
   if (error instanceof SoulCompileNoKeyError) return NO_KEY_REASON;
-  const name = error instanceof Error ? error.name || "Error" : "Error";
-  const message = error instanceof Error ? error.message : String(error);
-  return `${name}: ${message}`
-    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]")
-    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
-    .replace(/\s+/g, " ")
-    .slice(0, 200);
+  const e = (error ?? {}) as { status?: unknown; error?: { error?: { type?: unknown } }; name?: unknown; constructor?: { name?: unknown } };
+  if (typeof e.status === "number" && Number.isInteger(e.status)) {
+    const type = e.error?.error?.type;
+    const safeType = typeof type === "string" && /^[a-z_]{1,40}$/.test(type) ? ` ${type}` : "";
+    return `model provider error (HTTP ${e.status}${safeType})`;
+  }
+  const className = [e.constructor?.name, e.name].find((n) => typeof n === "string" && /^[A-Za-z]{1,40}$/.test(n) && n !== "Error" && n !== "Object");
+  return `compile error${className ? ` (${className})` : ""}`;
 }
 
 // Fail visibly: the sources this compile covered become 'failed' with the reason in metadata.compileError.
 async function recordCompileFailure(orgId: string, sourceIds: string[], error: unknown) {
   const reason = compileErrorReason(error);
   console.error(`[soul-wiki] compile failed org=${orgId} sources=${sourceIds.length}: ${reason}`);
+  if (sourceIds.length === 0) return;
   try {
     await db
       .update(soulSources)
@@ -102,6 +106,8 @@ function extractResponseText(response: Awaited<ReturnType<Anthropic["messages"][
 }
 
 export async function compileSoulWiki(orgId: string) {
+  let sourceIds: string[] = [];
+  try {
   const sources = await db
     .select({ id: soulSources.id, type: soulSources.type, title: soulSources.title, rawContent: soulSources.rawContent })
     .from(soulSources)
@@ -110,8 +116,8 @@ export async function compileSoulWiki(orgId: string) {
   if (sources.length === 0) {
     return;
   }
+  sourceIds = sources.map((source) => source.id);
 
-  try {
   const [org] = await db
     .select({ soul: organizations.soul })
     .from(organizations)
@@ -156,7 +162,7 @@ export async function compileSoulWiki(orgId: string) {
     .set({ status: "compiled", metadata: sql`${soulSources.metadata} - 'compileError'`, updatedAt: new Date() })
     .where(eq(soulSources.orgId, orgId));
   } catch (error) {
-    await recordCompileFailure(orgId, sources.map((source) => source.id), error);
+    await recordCompileFailure(orgId, sourceIds, error);
     throw error;
   }
 }
@@ -206,6 +212,7 @@ Write the "${category.title}" article now. Use only information from the sources
 }
 
 export async function incrementalCompile(orgId: string, newSourceId: string) {
+  try {
   const [newSource] = await db
     .select({ id: soulSources.id, type: soulSources.type, title: soulSources.title, rawContent: soulSources.rawContent })
     .from(soulSources)
@@ -216,7 +223,6 @@ export async function incrementalCompile(orgId: string, newSourceId: string) {
     return;
   }
 
-  try {
   const existingArticles = await db
     .select({ id: soulWiki.id, slug: soulWiki.slug, sourceIds: soulWiki.sourceIds, content: soulWiki.content })
     .from(soulWiki)
@@ -300,7 +306,7 @@ Return the updated article:`,
     .set({ status: "compiled", metadata: sql`${soulSources.metadata} - 'compileError'`, updatedAt: new Date() })
     .where(eq(soulSources.id, newSource.id));
   } catch (error) {
-    await recordCompileFailure(orgId, [newSource.id], error);
+    await recordCompileFailure(orgId, [newSourceId], error);
     throw error;
   }
 }

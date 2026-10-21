@@ -21,7 +21,7 @@ const U = (n: number) => `a7000000-0000-4000-8000-00000000000${n}`;
 const O = (n: number) => `b7000000-0000-4000-8000-00000000000${n}`;
 const BYOK_ORG = O(1), NOKEY_ORG = O(2), PLATFORM_ORG = O(3), BADKEY_ORG = O(4);
 const BYOK_KEY = ["sk", "ant", "fixture", "byok", "workspace"].join("-");
-const BAD_KEY = ["sk", "ant", "fixture", "rejected", "key"].join("-");
+const BAD_KEY = ["fixture", "rejected", "workspace", "credential"].join("-"); // deliberately NOT sk- shaped
 const PLATFORM_FILE_KEY = ["fixture", "platform", "file", "key"].join("-");
 const PLATFORM_BASE_URL = "https://platform-model.fixture.test/anthropic";
 const PLATFORM_MODEL = "fixture-platform-model";
@@ -148,7 +148,7 @@ describe("Soul Knowledge compile: workspace key + visible failure (scratch Postg
     await ingestAs(U(2), NOKEY_ORG, "Nokey Co sells synthetic fixtures.");
     const [failed] = await settle(NOKEY_ORG, ["pending"]);
     assert.equal(failed.status, "failed", JSON.stringify(failed));
-    assert.equal(failed.metadata.compileError, "no model key configured");
+    assert.equal(failed.metadata.compileError, "no compatible model key configured");
     assert.equal(failed.metadata.wordCount, 5, "the failure reason is merged, ingest metadata kept");
     assert.equal(calls.length, before, "no model call was attempted");
     assert.equal(await wikiCount(NOKEY_ORG), 0);
@@ -181,11 +181,19 @@ describe("Soul Knowledge compile: workspace key + visible failure (scratch Postg
       // control: the platform model is genuinely distinct from the default, so the assertion above cannot pass by accident
       assert.notEqual(PLATFORM_MODEL, DEFAULT_SONNET_MODEL);
 
-      // Recompile All on the same workspace uses the same resolved model.
+      // Recompile All on the same workspace uses the same resolved model, and it completes (persisted, not just requested):
+      // mark the source with a fixture-only status so settle() waits for the recompile's own final write.
+      await db.execute(sql`update soul_sources set status = 'fixture-recompiling' where org_id = ${PLATFORM_ORG}::uuid`);
+      const t0 = new Date();
       const before2 = calls.length;
       await recompileAs(U(3), PLATFORM_ORG);
-      for (let i = 0; i < 150 && calls.length - before2 < 8; i++) await new Promise((r) => setTimeout(r, 100));
-      assert.ok(calls.slice(before2).length === 8 && calls.slice(before2).every((c) => c.model === PLATFORM_MODEL));
+      const [recompiled] = await settle(PLATFORM_ORG, ["fixture-recompiling"]);
+      assert.equal(recompiled.status, "compiled", JSON.stringify(recompiled));
+      const made2 = calls.slice(before2);
+      assert.equal(made2.length, 8);
+      assert.ok(made2.every((c) => c.model === PLATFORM_MODEL && c.apiKey === PLATFORM_FILE_KEY));
+      const fresh = await rows<{ n: string }>(sql`select count(*)::text as n from soul_wiki where org_id = ${PLATFORM_ORG}::uuid and last_compiled_at >= ${t0.toISOString()}::timestamptz`);
+      assert.equal(Number(fresh[0].n), 8, "all 8 articles were rewritten by the recompile");
     } finally {
       delete process.env.MODEL_API_KEY_FILE;
       delete process.env.MODEL_BASE_URL;
@@ -193,25 +201,35 @@ describe("Soul Knowledge compile: workspace key + visible failure (scratch Postg
     }
   });
 
-  test("(d) the provider rejects the key: 'failed' with the provider error, and the reason never carries the key", async () => {
-    await ingestAs(U(4), BADKEY_ORG, "Badkey Co sells synthetic fixtures.");
-    const [source] = await settle(BADKEY_ORG, ["pending"]);
-    assert.equal(source.status, "failed", JSON.stringify(source));
-    const reason = String(source.metadata.compileError);
-    assert.match(reason, /^Error: 401 .*authentication_error/, "the provider status and error type reach the operator");
-    assert.equal(reason.includes(BAD_KEY), false, reason);
-    assert.match(reason, /\[redacted\]/, "control: the provider message did contain the key, and it was removed");
-    assert.ok(reason.length <= 200);
+  test("(d) the provider rejects the key: 'failed' with an allowlisted reason; neither the stored reason nor the log carries the key", async () => {
+    const logged: string[] = [];
+    const spy = mock.method(console, "error", (...args: unknown[]) => { logged.push(args.map(String).join(" ")); });
+    try {
+      const before = calls.length;
+      await ingestAs(U(4), BADKEY_ORG, "Badkey Co sells synthetic fixtures.");
+      const [source] = await settle(BADKEY_ORG, ["pending"]);
+      assert.equal(source.status, "failed", JSON.stringify(source));
+      const reason = String(source.metadata.compileError);
+      assert.equal(reason, "model provider error (HTTP 401 authentication_error)");
+      // control: the key really reached the provider, whose error message echoed it back (see the fetch fake)
+      assert.equal(calls[before]?.apiKey, BAD_KEY);
+      assert.equal(reason.includes(BAD_KEY), false);
+      const compileLines = logged.filter((l) => l.includes("[soul-wiki]"));
+      assert.equal(compileLines.length, 1, "control: the failure was logged");
+      assert.equal(compileLines.some((l) => l.includes(BAD_KEY)), false, compileLines.join("\n"));
+    } finally {
+      spy.mock.restore();
+    }
   });
 
   test("(e) incrementalCompile (install/seed/event callers) also fails visibly with no key", async () => {
     await db.execute(sql`update organizations set integrations = '{}'::jsonb where id = ${NOKEY_ORG}::uuid`);
     const [row] = await rows<{ id: string }>(sql`insert into soul_sources (org_id, type, title, raw_content, metadata, status)
       values (${NOKEY_ORG}::uuid, 'text', 'incremental', 'Incremental fixture text.', '{"wordCount":3}'::jsonb, 'pending') returning id::text`);
-    await assert.rejects(incrementalCompile(NOKEY_ORG, row.id), /no model key configured/);
+    await assert.rejects(incrementalCompile(NOKEY_ORG, row.id), /no compatible model key configured/);
     const s = (await sourcesOf(NOKEY_ORG)).find((r) => r.id === row.id)!;
     assert.equal(s.status, "failed");
-    assert.equal(s.metadata.compileError, "no model key configured");
+    assert.equal(s.metadata.compileError, "no compatible model key configured");
     // control: the earlier compiled source of the same workspace was not touched by this incremental failure
     assert.ok((await sourcesOf(NOKEY_ORG)).some((r) => r.id !== row.id && r.status === "compiled"));
   });
