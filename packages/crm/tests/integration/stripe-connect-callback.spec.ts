@@ -292,6 +292,19 @@ describe("Stripe Connect callback: signed state, bound to the session that start
     ctx.host = "app.fixture.test";
     const { cookie } = await start();
     assert.ok(cookie, "state cookie minted on the callback host");
+    // the callback host with its default port, or in a different case, is the same host
+    for (const h of ["app.fixture.test:443", "APP.Fixture.test"]) {
+      ctx.host = h;
+      const again = await start();
+      assert.ok(again.cookie, `state cookie minted for host ${h}`);
+    }
+    // a non-default port is a different origin: redirected, nothing minted
+    ctx.host = "app.fixture.test:8443";
+    setCookies.length = 0;
+    let t2: string | null = null;
+    try { await startStripeConnectAction(); } catch (e) { t2 = String((e as { digest?: string }).digest ?? "").split(";")[2] ?? null; }
+    assert.equal(t2, "https://app.fixture.test/settings/payments");
+    assert.equal(setCookies.filter((c) => c.name === COOKIE).length, 0);
   });
 
   test("EMPTY SECRET: with no AUTH_SECRET/NEXTAUTH_SECRET the callback refuses even a cookie signed earlier, and start refuses to mint", async () => {

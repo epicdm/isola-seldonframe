@@ -1,4 +1,4 @@
-// Signed, expiring, single-use state for the Stripe Connect (Standard OAuth)
+// Signed, expiring state for the Stripe Connect (Standard OAuth)
 // flow — Port def-uplink-stripe-connect-callback-unsigned-state-workspace-hijack-2026-10-21.
 //
 // Same construction as the MCP connect flow (lib/agents/mcp/oauth-state-cookie.ts):

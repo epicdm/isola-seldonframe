@@ -40,8 +40,16 @@ export async function startStripeConnectAction() {
   // that could never be honoured.
   const callbackOrigin = new URL(getAppBaseUrl());
   const requestHeaders = await headers();
-  const requestHost = (requestHeaders.get("x-forwarded-host")?.split(",")[0]?.trim() || requestHeaders.get("host") || "").toLowerCase();
-  if (requestHost && requestHost !== callbackOrigin.host.toLowerCase()) {
+  const requestHost = requestHeaders.get("x-forwarded-host")?.split(",")[0]?.trim() || requestHeaders.get("host") || "";
+  // Parse the request host with the callback's scheme so a default port (":443") compares equal.
+  const isCallbackHost = (raw: string) => {
+    try {
+      return new URL(`${callbackOrigin.protocol}//${raw}`).host === callbackOrigin.host;
+    } catch {
+      return false;
+    }
+  };
+  if (requestHost && !isCallbackHost(requestHost)) {
     redirect(`${callbackOrigin.origin}/settings/payments`);
   }
   const state = newStripeConnectNonce();
