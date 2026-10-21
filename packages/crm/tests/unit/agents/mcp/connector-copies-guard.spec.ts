@@ -156,7 +156,7 @@ describe("P1-2 conversation-time MCP client refuses redirects", () => {
 
   test("a 307 on tools/call is refused and never followed", async () => {
     const s = fakeServer(307);
-    const client = createRuntimeMcpClient("https://mcp.example.com/mcp", "k", s.base);
+    const client = createRuntimeMcpClient("https://mcp.example.com/mcp", "k", s.base, async () => [{ address: "93.184.216.34", family: 4 }]);
     await assert.rejects(client.callTool("search_records", {}), /redirect_refused/);
     assert.deepEqual(s.seen.map((x) => x.method), ["initialize", "notifications/initialized", "tools/call"], "no request after the 307");
     assert.ok(s.seen.every((x) => x.redirect === "manual"));
@@ -164,7 +164,7 @@ describe("P1-2 conversation-time MCP client refuses redirects", () => {
 
   test("control: a 200 tools/call succeeds through the same client", async () => {
     const s = fakeServer(200);
-    const client = createRuntimeMcpClient("https://mcp.example.com/mcp", "k", s.base);
+    const client = createRuntimeMcpClient("https://mcp.example.com/mcp", "k", s.base, async () => [{ address: "93.184.216.34", family: 4 }]);
     await client.callTool("search_records", {});
     assert.equal(s.seen.at(-1)?.method, "tools/call");
   });
