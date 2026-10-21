@@ -48,7 +48,7 @@ function Line({ phoneNumberId, canWrite }: { phoneNumberId: string; canWrite: bo
   return (
     <div className="space-y-3" data-testid="service-line">
       <p className="text-sm font-medium">Number {phoneNumberId}</p>
-      <ServiceStatesCard states={s} observedAt={view.observedAt} />
+      <ServiceStatesCard states={s} observedAt={view.observedAt} eligibility={view.eligibility} routingHealth={view.routingHealth} />
       {view.current ? <p className="text-sm">Calls go to: <strong>{view.current.label}</strong></p> : null}
       {canSetUp ? (
         <div className="space-y-2 rounded-md border p-3 text-sm" data-testid="service-setup">

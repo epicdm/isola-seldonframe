@@ -1,6 +1,7 @@
 // Presentational only (no data access, no actions): the four SEPARATE states of a number's calling service. "Connected to Meta" is one row among four and
 // is never worded as "ready". Not yet wired into the page: wiring is the next increment, behind the same exposure flags.
 import type { ServiceStates } from "@/lib/phone-whatsapp/service/states";
+import type { RoutingHealth } from "@/lib/phone-whatsapp/service/routing-observations";
 
 const TEXT = {
   connection: {
@@ -52,17 +53,33 @@ const NEXT: Record<ServiceStates["next"], string> = {
 
 const utc = (iso: string) => `${iso.slice(0, 16).replace("T", " ")} UTC`;
 
-export function ServiceStatesCard({ states, observedAt = null }: { states: ServiceStates; observedAt?: string | null }) {
-  const rows = [
+const HEALTH_TONE: Record<RoutingHealth["state"], string> = { verified: "ok", faults: "attention", configured_unverified: "unknown", not_measured: "unknown", unknown: "unknown" };
+
+type Eligibility = { tone: "ok" | "attention" | "unknown"; headline: string };
+
+// Heading: "verified" appears only when routing health is a recorded passing WhatsApp call (staff-linked) or all four states are good (self-serve).
+function heading(states: ServiceStates, observedAt: string | null, eligibility: Eligibility | null, h: RoutingHealth | null): string {
+  if (h) {
+    if (h.state === "verified" && states.connection === "linked_by_staff" && eligibility?.tone === "ok") return `WhatsApp calling verified as of ${utc(h.observedAt!)}`;
+    if (h.state === "faults") return "Calling for this number is not operational";
+    return "Calling for this number is managed by EPIC staff; WhatsApp calling is not verified";
+  }
+  if (states.ready) return observedAt ? `Calling service verified ready as of ${utc(observedAt)}` : "Calling service verified ready";
+  return states.next === "staff_managed" ? "Calling for this number is managed by EPIC staff" : states.next === "recheck" ? "Calling service status could not be checked" : "Calling service is not ready yet";
+}
+
+export function ServiceStatesCard({ states, observedAt = null, eligibility = null, routingHealth = null }: { states: ServiceStates; observedAt?: string | null; eligibility?: Eligibility | null; routingHealth?: RoutingHealth | null }) {
+  const rows: Array<readonly [string, readonly [string, string]]> = [
     ["Connection to Meta", TEXT.connection[states.connection]],
+    ...(eligibility ? [["Calling eligibility", [eligibility.headline, eligibility.tone]] as const] : []),
     ["Calling service setup", TEXT.setup[states.setup]],
-    ["Routing", TEXT.routing[states.routing]],
-    ["Acceptance call", TEXT.acceptance[states.acceptance]],
-  ] as const;
+    ["Routing", routingHealth ? [routingHealth.text, HEALTH_TONE[routingHealth.state]] as const : TEXT.routing[states.routing]],
+    ["Acceptance call", routingHealth ? (routingHealth.state === "verified" ? ["Recorded by EPIC staff (see Routing)", "ok"] as const : ["No WhatsApp acceptance call recorded yet", "attention"] as const) : TEXT.acceptance[states.acceptance]],
+  ];
   return (
     <section className="crm-card space-y-2 p-4" data-testid="service-states" aria-label="Calling service status">
       <h2 className="text-lg font-semibold">
-        {states.ready ? (observedAt ? `Calling service verified ready as of ${utc(observedAt)}` : "Calling service verified ready") : states.next === "staff_managed" ? "Calling for this number is managed by EPIC staff" : states.next === "recheck" ? "Calling service status could not be checked" : "Calling service is not ready yet"}
+        {heading(states, observedAt, eligibility, routingHealth)}
       </h2>
       {states.ready ? (
         <p className="text-xs text-muted-foreground" data-testid="service-ready-scope">

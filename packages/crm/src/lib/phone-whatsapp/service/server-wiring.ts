@@ -9,6 +9,7 @@ import { sameOrigin } from "../connect/origin";
 import { isPhoneWhatsappEnabled } from "../exposure";
 import { getServiceDeps } from "../server";
 import { makeProvisionerClient, signBody } from "./provisioner-client";
+import { routingObservationsFor } from "./routing-observations";
 import { activeLinesOf, appendAcceptance, appendCallEvent, claimantsOf, connectionStatusOf, makeAgentDirectory, makeAttachLedger, readAcceptance, readCallEvents, readDestinationCatalog } from "./stores";
 import type { DestinationOption } from "./destinations";
 import type { ServiceDeps, StoredAttestation } from "./orchestrate";
@@ -45,6 +46,8 @@ export function makeServiceDeps(): ServiceDeps | null {
     appendCallEvent,
     acceptance: readAcceptance as ServiceDeps["acceptance"],
     appendAcceptance: (ws, phone, a: StoredAttestation) => appendAcceptance(ws, phone, a),
+    // Operator-set configuration only (same pattern as the fixed destinations): EPIC staff edit it; no tenant route, form or settings write reaches it.
+    routingObservations: (ws, phone) => routingObservationsFor(ws, phone, process.env.PHONE_ROUTING_OBSERVATIONS_JSON),
   };
 }
 

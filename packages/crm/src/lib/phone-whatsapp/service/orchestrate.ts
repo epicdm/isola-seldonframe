@@ -5,6 +5,8 @@ import { evaluateAcceptance, pairedCalls, type Attestation, type CdrFact, type M
 import { attachService, targetString, type AttachLedger, type AttachLedgerRecord, type AttachResult, type Provisioner } from "./attach";
 import { selectableDestinations, type AgentDirectory, type DestinationOption } from "./destinations";
 import { deriveServiceStates, type ServiceStates } from "./states";
+import { deriveRoutingHealth, type RoutingHealth, type RoutingObservation } from "./routing-observations";
+import { eligibilityFact } from "../view-model";
 import type { LineEvidence } from "../types";
 
 export type StoredAttestation = Attestation & { evidence: { callId: string; cdrStartedAt: string; billedSeconds: number; routingVerifiedAt: string; routedTarget: string } };
@@ -23,6 +25,8 @@ export type ServiceDeps = {
   appendCallEvent(ws: string, phone: string, ev: MetaCallEvent): Promise<void>;
   acceptance(ws: string, phone: string): Promise<StoredAttestation[]>;
   appendAcceptance(ws: string, phone: string, a: StoredAttestation): Promise<void>;
+  /** EPIC-staff recorded routing observations for this workspace + number (operator-set config; no tenant write path). Absent = none. */
+  routingObservations?(ws: string, phone: string): RoutingObservation[];
 };
 
 const digits = (s: string | null | undefined) => (s ?? "").replace(/\D/g, "");
@@ -68,6 +72,10 @@ export type ServiceView = {
   missing: string[];
   /** When the routing facts behind these states were read. "Ready" is a statement about the configuration verified at this time only. */
   observedAt: string | null;
+  /** The same eligibility checks as the detailed card, from the same evidence. */
+  eligibility: { tone: "ok" | "attention" | "unknown"; headline: string };
+  /** Staff-linked lines only: routing health from a recorded observation, never inferred (null for self-serve lines, whose routing row is unchanged). */
+  routingHealth: RoutingHealth | null;
 };
 
 export async function serviceView(ws: string, phone: string, deps: ServiceDeps): Promise<ServiceView> {
@@ -84,7 +92,17 @@ export async function serviceView(ws: string, phone: string, deps: ServiceDeps):
     ...a, why: version && a.destinationVersion === version ? "routing is not currently verified for this destination" : "accepted for an earlier route; it is not proof for the current route",
   }));
   const selectable = (await selectableDestinations(catalog, ws, deps.agents)).map(({ id, label, kind }) => ({ id, label, kind }));
-  return { states, selectable, current: f.dest ? { destinationId: f.dest.id, label: f.dest.label, version: versionOf(f.dest) } : null, acceptance: { current, historical }, missing: states.acceptance === "not_applicable" ? [] : ev.missing, observedAt: f.evidence?.observedAt ?? null };
+  const el = f.evidence ? eligibilityFact(f.evidence.meta, f.evidence.calling, f.evidence.observedAt) : null;
+  const eligibility = el ? { tone: el.tone, headline: el.headline } : { tone: "unknown" as const, headline: "Calling eligibility could not be checked right now" };
+  const m = f.evidence?.magnus;
+  const routingHealth = staffLine ? deriveRoutingHealth({
+    magnusRead: !!m?.ok,
+    routed: !!m?.ok && !!m.did?.activated && !!m.destination?.activated,
+    readAt: f.evidence?.observedAt ?? null,
+    currentDestination: m?.ok && m.destination?.count === 1 ? m.destination.value : null,
+    observations: deps.routingObservations?.(ws, phone) ?? [],
+  }) : null;
+  return { eligibility, routingHealth, states, selectable, current: f.dest ? { destinationId: f.dest.id, label: f.dest.label, version: versionOf(f.dest) } : null, acceptance: { current, historical }, missing: states.acceptance === "not_applicable" ? [] : ev.missing, observedAt: f.evidence?.observedAt ?? null };
 }
 
 export async function attach(ws: string, phone: string, destinationId: string, deps: ServiceDeps): Promise<AttachResult> {

@@ -100,7 +100,7 @@ function checksFor(meta: MetaFacts, calling: CallingFacts): EligibilityCheck[] {
   return checks;
 }
 
-function eligibilityFact(meta: MetaFacts, calling: CallingFacts, observedAt: string): Fact & { checks: EligibilityCheck[] } {
+export function eligibilityFact(meta: MetaFacts, calling: CallingFacts, observedAt: string): Fact & { checks: EligibilityCheck[] } {
   const checks = checksFor(meta, calling);
   const bad = checks.filter((c) => c.tone === "attention").length;
   const unk = checks.filter((c) => c.tone === "unknown").length;
