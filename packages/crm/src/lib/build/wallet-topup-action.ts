@@ -12,6 +12,7 @@
 import { getOrgId } from "@/lib/auth/helpers";
 import { createWalletTopupCheckout } from "@/lib/build/wallet-topup";
 import { buildWalletTopupCheckoutDeps } from "@/lib/build/wallet-topup-deps";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type TopUpWalletResult =
   | { ok: true; url: string }
@@ -25,6 +26,7 @@ export type TopUpWalletResult =
 export async function topUpWalletAction(input: {
   amountCents: number;
 }): Promise<TopUpWalletResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, reason: "unauthorized" };
 

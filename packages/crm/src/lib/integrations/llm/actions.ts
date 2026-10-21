@@ -23,6 +23,7 @@ import { organizations } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { encryptValue } from "@/lib/encryption";
 import { assertWritable } from "@/lib/demo/server";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type LlmProviderStatus = {
   provider: "anthropic" | "openai";
@@ -40,6 +41,7 @@ export async function getLlmIntegrationSettings(): Promise<{
   anthropic: LlmProviderStatus;
   openai: LlmProviderStatus;
 } | null> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return null;
 
@@ -153,6 +155,7 @@ async function persistLlmKey(formData: FormData): Promise<SaveLlmKeyResult> {
 }
 
 export async function saveLlmKeyAction(formData: FormData): Promise<void> {
+  await requireWorkspaceAdmin();
   const result = await persistLlmKey(formData);
   if (!result.ok) {
     if (result.error === "You must be signed in to save a key.") {
@@ -172,6 +175,7 @@ export async function saveLlmKeyAction(formData: FormData): Promise<void> {
  * browser to /settings/integrations/llm out from under the modal.
  */
 export async function saveLlmKeyInPlaceAction(formData: FormData): Promise<SaveLlmKeyResult> {
+  await requireWorkspaceAdmin();
   return persistLlmKey(formData);
 }
 
@@ -180,6 +184,7 @@ const RemoveSchema = z.object({
 });
 
 export async function removeLlmKeyAction(formData: FormData): Promise<void> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) {

@@ -7,8 +7,10 @@ import { getOrgId } from "@/lib/auth/helpers";
 import type { OrgSoul } from "@/lib/soul/types";
 import { exportSoulConfig, importSoulConfig } from "@seldonframe/core/virality";
 import { assertWritable } from "@/lib/demo/server";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export async function exportSoulAction() {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -29,6 +31,7 @@ export async function exportSoulAction() {
 }
 
 export async function importSoulAction(jsonString: string) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

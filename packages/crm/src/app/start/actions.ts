@@ -27,6 +27,8 @@ import { normalizeTierId } from "@/lib/billing/features";
 // ─── constants ────────────────────────────────────────────────────────────────
 
 import { LIVE_SELL_MONTHLY_PRICE_CENTS } from "./constants";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { requireWorkspaceAdminFor } from "@/lib/auth/require-workspace-role";
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -60,6 +62,7 @@ export type LiveSellCheckoutResult = {
 export async function createLiveSellCheckoutAction(
   input: LiveSellCheckoutInput,
 ): Promise<ActionResult<LiveSellCheckoutResult>> {
+  await requireWorkspaceAdmin();
   const session = await auth();
   if (!session?.user?.id) return { ok: false, error: "unauthorized" };
 
@@ -80,6 +83,8 @@ export async function createLiveSellCheckoutAction(
   if (!(await userCanAccessOrg(session.user.id, input.previewWorkspaceId))) {
     return { ok: false, error: "workspace_not_found" };
   }
+  await requireWorkspaceAdminFor(input.previewWorkspaceId);
+  await requireWorkspaceAdminFor(agencyOrgId);
 
   // Find the agency's active Stripe connected account.
   const [conn] = await db
@@ -240,10 +245,12 @@ export async function applyOnboardingMiniFormAction(input: {
   hours_text?: string;
   google_reviews_url?: string;
 }): Promise<ActionResult<void>> {
+  await requireWorkspaceAdmin();
   const session = await auth();
   if (!session?.user?.id) return { ok: false, error: "unauthorized" };
   // The orgId comes from the client: only a workspace this user may act in.
   if (!(await userCanAccessOrg(session.user.id, input.orgId))) return { ok: false, error: "org_not_found" };
+  await requireWorkspaceAdminFor(input.orgId);
 
   try {
     // buildChangePlan + applyChangePlan no-op on missing keys, so passing

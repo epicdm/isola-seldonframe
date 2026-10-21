@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { assertWritable } from "@/lib/demo/server";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export async function getHiddenBlocks(): Promise<string[]> {
   const orgId = await getOrgId();
@@ -23,6 +24,7 @@ export async function getHiddenBlocks(): Promise<string[]> {
 }
 
 export async function toggleBlockVisibilityAction(blockSlug: string) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

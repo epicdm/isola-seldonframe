@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
-import { resolveV1Identity } from "@/lib/auth/v1-identity";
+import { resolveV1Identity, userCanWriteWorkspace } from "@/lib/auth/v1-identity";
 import { assertWritable, demoApiBlockedResponse, isDemoReadonly } from "@/lib/demo/server";
 import { logEvent } from "@/lib/observability/log";
 import { applyPipelineStagesFromSoul } from "@/lib/soul/apply-pipeline-stages";
@@ -39,6 +39,11 @@ export async function POST(request: Request) {
   } else {
     if (!requestedId) {
       return NextResponse.json({ error: "workspace_id is required." }, { status: 400 });
+    }
+    // EPIC 2026-10-21: a user identity must manage the workspace as owner/admin before its soul is replaced. This path
+    // previously had NO access check: any signed-in user could overwrite any workspace's soul by id.
+    if (!(await userCanWriteWorkspace(identity.userId, requestedId))) {
+      return NextResponse.json({ error: "You do not manage this workspace." }, { status: 403 });
     }
     orgId = requestedId;
   }

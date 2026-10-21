@@ -50,6 +50,7 @@ import {
   type GoLiveBlocker,
 } from "@/lib/marketplace/buyer/buyer-onboarding";
 import { buyerAgentPath } from "@/lib/marketplace/buyer/buyer-routes";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 // ─── shared org-scoped load ──────────────────────────────────────────────────
 
@@ -115,6 +116,7 @@ export async function markStepDoneAction(
   deploymentId: string,
   kind: OnboardingStepKind,
 ): Promise<MarkStepDoneActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const loaded = await loadOwnedDeployment(deploymentId);
   if (!loaded.ok) return loaded;
@@ -163,6 +165,7 @@ export async function saveBusinessInfoAction(
   deploymentId: string,
   input: BusinessInfoInput,
 ): Promise<SaveBusinessInfoActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const loaded = await loadOwnedDeployment(deploymentId);
   if (!loaded.ok) return loaded;
@@ -221,6 +224,7 @@ export type GoLiveActionResult =
 export async function goLiveAction(
   deploymentId: string,
 ): Promise<GoLiveActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const loaded = await loadOwnedDeployment(deploymentId);
   if (!loaded.ok) return loaded;
@@ -311,6 +315,7 @@ export async function runBuyerTestTurnAction(
   deploymentId: string,
   input: BuyerTestTurnInput,
 ): Promise<RunBuyerTestTurnResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const loaded = await loadOwnedDeployment(deploymentId);
   if (!loaded.ok) return loaded;
@@ -435,6 +440,7 @@ export type OpenBuyerBillingPortalResult =
 export async function openBuyerBillingPortalAction(
   deploymentId: string,
 ): Promise<OpenBuyerBillingPortalResult> {
+  await requireWorkspaceAdmin();
   const loaded = await loadOwnedDeployment(deploymentId);
   if (!loaded.ok) return loaded.error === "unauthorized"
     ? { ok: false, reason: "unauthorized" }

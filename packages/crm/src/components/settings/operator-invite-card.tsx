@@ -26,6 +26,8 @@ export function OperatorInviteCard({ orgSlug, orgName, portalOrigin }: OperatorI
   const [pending, startTransition] = useTransition();
   const [email, setEmail] = useState("");
   const [invitedByName, setInvitedByName] = useState("");
+  // EPIC 2026-10-21: invites grant STAFF by default; admin must be chosen deliberately.
+  const [role, setRole] = useState<"staff" | "admin">("staff");
   const [state, setState] = useState<
     | { kind: "idle" }
     | { kind: "sent"; sentTo: string; expiresAt: string }
@@ -49,6 +51,7 @@ export function OperatorInviteCard({ orgSlug, orgName, portalOrigin }: OperatorI
         orgSlug,
         email: email.trim(),
         invitedByName: invitedByName.trim() || undefined,
+        role,
       });
       if (res.ok) {
         setState({ kind: "sent", sentTo: res.sentTo, expiresAt: res.expiresAt });
@@ -76,9 +79,10 @@ export function OperatorInviteCard({ orgSlug, orgName, portalOrigin }: OperatorI
         <div className="space-y-1">
           <h2 className="text-sm font-semibold">Invite a workspace operator</h2>
           <p className="text-xs text-muted-foreground">
-            Send a single-use magic link to a person you want to manage{" "}
-            {orgName}. They&apos;ll get full access to the branded admin portal
-            (contacts, deals, bookings — all scoped to this workspace).
+            Send a single-use magic link to a person who works in {orgName}.
+            Staff can work with contacts, conversations, activities, deals and
+            bookings. Admins can also change settings, integrations, agents and
+            automations. Only the owner manages billing and the team.
           </p>
         </div>
       </header>
@@ -106,6 +110,18 @@ export function OperatorInviteCard({ orgSlug, orgName, portalOrigin }: OperatorI
             placeholder="Maxime at Acme AI"
             className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
           />
+        </label>
+        <label className="space-y-1.5 text-xs font-medium">
+          <span>Role</span>
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value === "admin" ? "admin" : "staff")}
+            disabled={pending}
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          >
+            <option value="staff">Staff</option>
+            <option value="admin">Admin</option>
+          </select>
         </label>
       </div>
 
@@ -155,7 +171,9 @@ function humanizeReason(reason: string): string {
     case "not_signed_in":
       return "Your session expired. Sign in again.";
     case "not_authorized_for_workspace":
-      return "Only the workspace owner, the agency owner or an existing admin can invite operators here.";
+      return "Only the workspace owner or the agency owner can invite people here.";
+    case "invalid_role":
+      return "Choose Staff or Admin.";
     case "workspace_not_found":
       return "That workspace was not found.";
     case "invite_failed":

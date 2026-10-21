@@ -8,8 +8,10 @@
 import { getOrgId } from "@/lib/auth/helpers";
 import { requestPayout, type PayoutResult } from "@/lib/build/payout";
 import { buildPayoutDeps } from "@/lib/build/payout-deps";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export async function requestPayoutAction(): Promise<PayoutResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { status: "disabled" };
   return requestPayout({ orgId }, buildPayoutDeps());

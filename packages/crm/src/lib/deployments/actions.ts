@@ -67,6 +67,9 @@ import { resolveBuilderTelephony } from "@/lib/telephony/config";
 import { createTwilioTelephonyClient } from "@/lib/telephony/twilio-client";
 import { provisionVoiceNumber } from "@/lib/telephony/provision-voice-number";
 import { ensureBuilderSubaccount, buildSfManagedDeps } from "@/lib/telephony/sf-managed";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { getOrgIdAsWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 export type CreateDeploymentActionResult =
   | { ok: true; id: string }
@@ -132,6 +135,9 @@ export async function createDeploymentAction(
   },
   _deps?: Partial<CreateDeploymentActionDeps>,
 ): Promise<CreateDeploymentActionResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = await serverSideDeps(_deps);
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -279,6 +285,9 @@ export async function generateClientContextAction(
   input: { description: string },
   _deps?: Partial<GenerateClientContextDeps>,
 ): Promise<GenerateClientContextActionResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = await serverSideDeps(_deps);
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -345,6 +354,9 @@ export async function activateDeploymentAction(
   input: { deploymentId: string; phoneNumber: string },
   _deps?: Partial<UpdateDeploymentDeps & ResolveDeploymentOutboundDep & { findDeploymentById: (id: string) => Promise<import("@/db/schema/deployments").Deployment | null> }>,
 ): Promise<ActivateDeploymentActionResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = await serverSideDeps(_deps);
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -435,9 +447,11 @@ export async function activateOutboundDeploymentAction(
       }
   >,
 ): Promise<ActivateOutboundDeploymentActionResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = await serverSideDeps(_deps);
   assertWritable();
 
-  const resolveOrgId = _deps?.getOrgId ?? getOrgId;
+  const resolveOrgId = _deps?.getOrgId ?? getOrgIdAsWorkspaceAdmin;
   const orgId = await resolveOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -489,6 +503,9 @@ export async function pauseDeploymentAction(
   input: { deploymentId: string },
   _deps?: Partial<UpdateDeploymentDeps & { findDeploymentById: (id: string) => Promise<import("@/db/schema/deployments").Deployment | null> }>,
 ): Promise<PauseDeploymentActionResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = await serverSideDeps(_deps);
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -554,6 +571,7 @@ export async function provisionDeploymentNumberAction(input: {
   deploymentId: string;
   areaCode: string;
 }): Promise<ProvisionDeploymentNumberActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -798,6 +816,9 @@ export async function cancelDeploymentAction(
   input: { deploymentId: string },
   _deps?: Partial<UpdateDeploymentDeps & { findDeploymentById: (id: string) => Promise<import("@/db/schema/deployments").Deployment | null> }>,
 ): Promise<CancelDeploymentActionResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = await serverSideDeps(_deps);
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -946,9 +967,11 @@ export async function setBookingPolicyAction(
     }
   >,
 ): Promise<SetBookingPolicyActionResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = await serverSideDeps(_deps);
   assertWritable();
 
-  const resolveOrgId = _deps?.getOrgId ?? getOrgId;
+  const resolveOrgId = _deps?.getOrgId ?? getOrgIdAsWorkspaceAdmin;
   const orgId = await resolveOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -1007,9 +1030,11 @@ export async function setDeploymentCustomizationAction(
     }
   >,
 ): Promise<SetDeploymentCustomizationActionResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = await serverSideDeps(_deps);
   assertWritable();
 
-  const resolveOrgId = _deps?.getOrgId ?? getOrgId;
+  const resolveOrgId = _deps?.getOrgId ?? getOrgIdAsWorkspaceAdmin;
   const orgId = await resolveOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -1065,6 +1090,7 @@ export type InviteClientToPortalActionResult =
 export async function inviteClientToPortalAction(input: {
   deploymentId: string;
 }): Promise<InviteClientToPortalActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -1146,9 +1172,11 @@ export async function setSubAccountUsageCapAction(
     revalidate?: (path: string) => void;
   },
 ): Promise<SetSubAccountUsageCapActionResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = await serverSideDeps(_deps);
   assertWritable();
 
-  const resolveOrgId = _deps?.getOrgId ?? getOrgId;
+  const resolveOrgId = _deps?.getOrgId ?? getOrgIdAsWorkspaceAdmin;
   const callerOrgId = await resolveOrgId();
   if (!callerOrgId) return { ok: false, error: "unauthorized" };
 

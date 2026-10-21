@@ -13,6 +13,7 @@ import {
   isOperatorPortalUserId,
   resolveOperatorPortalContext,
 } from "./operator-portal-context";
+import { loadWorkspaceRole, type WorkspaceRole } from "./workspace-role";
 
 /**
  * Server components and route handlers can authenticate via THREE sources:
@@ -73,12 +74,17 @@ export async function getOrgId() {
   const cookieStore = await cookies();
   const activeOrgId = cookieStore.get("sf_active_org_id")?.value;
 
+  // EPIC 2026-10-21: the HOME workspace (users.org_id) is re-checked on every request. An invited person's home row
+  // grants nothing once their membership is removed (lib/auth/workspace-role.ts), so they get no workspace at all.
+  const homeOrgIfStillHeld = async () =>
+    user.orgId && (await loadWorkspaceRole(user.orgId, { userId: user.id })) ? user.orgId : null;
+
   if (!activeOrgId) {
-    return user.orgId ?? null;
+    return homeOrgIfStillHeld();
   }
 
   if (activeOrgId === user.orgId) {
-    return activeOrgId;
+    return homeOrgIfStillHeld();
   }
 
   const [memberOrg] = await db
@@ -128,7 +134,7 @@ export async function getOrgId() {
     }
   }
 
-  return user.orgId ?? null;
+  return homeOrgIfStillHeld();
 }
 
 export async function requireAuth() {
@@ -163,7 +169,15 @@ export async function requireAuth() {
   redirect("/login");
 }
 
-export async function getCurrentWorkspaceRole() {
+/**
+ * EPIC 2026-10-21: the caller's role in the active workspace, read fresh on every call (lib/auth/workspace-role.ts).
+ * "owner" | "admin" | "staff", or null when there is no session or no standing in the workspace.
+ *   - admin-token sessions are workspace admin (unchanged; no users row exists for the synthetic id);
+ *   - operator-portal (magic-link) sessions carry the role resolveOperatorPortalContext just re-read for that email;
+ *     an agency SUPPORT session is admin (unchanged);
+ *   - NextAuth users resolve through loadWorkspaceRole (membership row, ownership, agency ownership, legacy home owner).
+ */
+export async function getCurrentWorkspaceRole(): Promise<WorkspaceRole | null> {
   const user = await getCurrentUser();
   const orgId = await getOrgId();
 
@@ -178,39 +192,30 @@ export async function getCurrentWorkspaceRole() {
     return "admin";
   }
 
-  // v1.25.0 — operator-portal sessions are workspace-admin equivalent
-  // for the workspace they're scoped to. Same skip-the-lookup pattern.
+  // Operator-portal sessions: the role was resolved per request in resolveOperatorPortalContext (a removed member has
+  // no context at all, so never reaches here).
   if (isOperatorPortalUserId(user.id)) {
-    return "admin";
+    const role = (user as { role?: string }).role;
+    return role === "owner" || role === "admin" || role === "staff" ? role : null;
   }
 
-  if (user.orgId === orgId) {
-    const [dbUser] = await db.select({ role: users.role }).from(users).where(eq(users.id, user.id)).limit(1);
-    return dbUser?.role ?? user.role ?? "member";
-  }
-
-  const [member] = await db
-    .select({ role: orgMembers.role })
-    .from(orgMembers)
-    .where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, user.id)))
-    .limit(1);
-
-  return member?.role ?? user.role ?? "member";
+  return (await loadWorkspaceRole(orgId, { userId: user.id }))?.role ?? null;
 }
 
 /**
  * True when this user may act in `orgId`: the same admission rules getOrgId()
- * applies when switching the active workspace (the user's home workspace, an
- * org_members row, organizations.ownerId / parentUserId, or ownership of the
- * partner agency the workspace is attached to). For server actions that receive
- * an orgId from the client: a workspace the caller cannot switch into is treated
- * exactly like one that does not exist.
+ * applies when switching the active workspace (an org_members row,
+ * organizations.ownerId / parentUserId, ownership of the partner agency the
+ * workspace is attached to, or a home workspace the user still holds a role in).
+ * For server actions that receive an orgId from the client: a workspace the
+ * caller cannot switch into is treated exactly like one that does not exist.
  */
 export async function userCanAccessOrg(userId: string, orgId: string): Promise<boolean> {
   if (!userId || !orgId) return false;
 
+  // EPIC 2026-10-21: a home workspace counts only while the user still holds a role there (removal ends it).
   const [home] = await db.select({ orgId: users.orgId }).from(users).where(eq(users.id, userId)).limit(1);
-  if (home?.orgId === orgId) return true;
+  if (home?.orgId === orgId) return Boolean(await loadWorkspaceRole(orgId, { userId }));
 
   const [member] = await db
     .select({ orgId: orgMembers.orgId })

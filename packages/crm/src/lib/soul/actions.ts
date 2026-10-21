@@ -9,6 +9,8 @@ import { generateSoul } from "@/lib/soul/generate";
 import type { OrgSoul, SoulWizardInput } from "@/lib/soul/types";
 import { assertWritable } from "@/lib/demo/server";
 import { trackTelemetryEvent } from "@seldonframe/core/telemetry";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { requireWorkspaceAdminFor } from "@/lib/auth/require-workspace-role";
 
 async function getCurrentOrgId() {
   const session = await auth();
@@ -19,6 +21,8 @@ async function getCurrentOrgId() {
 
   const [dbUser] = await db.select().from(users).where(eq(users.id, session.user.id)).limit(1);
 
+  // EPIC 2026-10-21: these actions write the HOME workspace, so the role is checked THERE, not on the active one.
+  if (dbUser?.orgId) await requireWorkspaceAdminFor(dbUser.orgId);
   return dbUser?.orgId ?? null;
 }
 
@@ -27,6 +31,7 @@ export async function generateSoulPreviewAction(input: SoulWizardInput) {
 }
 
 export async function saveSoulAction(soul: OrgSoul) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getCurrentOrgId();
@@ -88,6 +93,7 @@ export async function saveSoulAction(soul: OrgSoul) {
 }
 
 export async function updateSoulCustomContextAction(input: { customContext: string }) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getCurrentOrgId();
@@ -135,6 +141,7 @@ export async function updateSoulBusinessProfileAction(input: {
   offerType?: string;
   customContext?: string;
 }) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getCurrentOrgId();
@@ -243,6 +250,7 @@ export async function saveSuggestedFieldsAction(input: {
   contact: Array<{ key: string; label: string; type: string; options?: string[] }>;
   deal: Array<{ key: string; label: string; type: string; options?: string[] }>;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getCurrentOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };

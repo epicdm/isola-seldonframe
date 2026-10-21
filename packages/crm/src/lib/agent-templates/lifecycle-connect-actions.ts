@@ -24,6 +24,8 @@ import { getComposioToolkit } from "@/lib/integrations/composio/catalog";
 import { requiredToolkitSlugs } from "@/app/(dashboard)/studio/agents/[id]/lifecycle/connected-toolkits";
 import type { AgentBlueprint } from "@/db/schema/agents";
 import { buildPopupCallbackUrl, resolveConnectReturnTo } from "@/lib/integrations/connect-popup";
+import { getOrgIdAsWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 export type ConnectLifecycleToolkitResult =
   | { ok: true; redirectUrl: string }
@@ -59,7 +61,7 @@ export type ConnectLifecycleToolkitDeps = {
 
 function defaultConnectLifecycleToolkitDeps(): ConnectLifecycleToolkitDeps {
   return {
-    getOrgId,
+    getOrgId: getOrgIdAsWorkspaceAdmin,
     getCurrentUser,
     loadTemplate: async ({ templateId, orgId }) => {
       const [row] = await db
@@ -99,6 +101,8 @@ export async function connectLifecycleToolkitAction(
   input: { templateId: string; toolkit: string; mode?: "popup" | "redirect"; returnTo?: string },
   deps: ConnectLifecycleToolkitDeps = defaultConnectLifecycleToolkitDeps(),
 ): Promise<ConnectLifecycleToolkitResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  deps = (await serverSideDeps(deps)) ?? defaultConnectLifecycleToolkitDeps();
   assertWritable();
 
   const orgId = await deps.getOrgId();

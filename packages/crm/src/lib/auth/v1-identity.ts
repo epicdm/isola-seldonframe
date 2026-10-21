@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { orgMembers, organizations, users } from "@/db/schema";
 import { resolveWorkspaceBearer } from "@/lib/auth/workspace-token";
+import { isWorkspaceAdminRole, loadWorkspaceRole } from "@/lib/auth/workspace-role";
 
 export type V1Identity =
   | { kind: "workspace"; orgId: string; tokenId: string }
@@ -82,7 +83,10 @@ export async function resolveOrgIdFromIdentity(identity: V1Identity): Promise<st
     .from(users)
     .where(eq(users.id, identity.userId))
     .limit(1);
-  return row?.orgId ?? null;
+  // EPIC 2026-10-21: a user's PRIMARY workspace is their write target only while they hold owner/admin there (every
+  // caller writes: soul ingest, and resolveOrgIdForWrite's default). A staff member or a removed invitee gets none.
+  if (!row?.orgId) return null;
+  return isWorkspaceAdminRole((await loadWorkspaceRole(row.orgId, { userId: identity.userId }))?.role) ? row.orgId : null;
 }
 
 // Verifies a user identity is authorized to write to a specific workspace.
@@ -90,6 +94,17 @@ export async function resolveOrgIdFromIdentity(identity: V1Identity): Promise<st
 // (3) users.orgId (primary org, may predate org_members), (4) org_members entry.
 // Matches the vectors used by listManagedOrganizations + /switch-workspace.
 export async function userCanWriteWorkspace(
+  userId: string,
+  orgId: string
+): Promise<boolean> {
+  // EPIC 2026-10-21: every route behind this check WRITES (or reads the full snapshot of) the workspace through the
+  // builder API — theme, landing, intake, soul, packs, booking config, forms, bearer revoke. Admission is unchanged
+  // (the four paths below) AND the caller must now hold owner/admin there: a staff member is refused.
+  if (!(await userIsAdmittedToWorkspace(userId, orgId))) return false;
+  return isWorkspaceAdminRole((await loadWorkspaceRole(orgId, { userId }))?.role);
+}
+
+async function userIsAdmittedToWorkspace(
   userId: string,
   orgId: string
 ): Promise<boolean> {

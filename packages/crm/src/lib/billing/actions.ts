@@ -10,6 +10,7 @@ import { getOrgSubscription } from "@/lib/billing/subscription";
 import { assertWritable } from "@/lib/demo/server";
 import { getPlan } from "@/lib/billing/plans";
 import { isWorkspaceOwnerLike } from "@/lib/workspace/workspace-owner";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 function getAppBaseUrl() {
   return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
@@ -128,6 +129,7 @@ async function createStripeBillingPortalUrl(params: { secretKey: string; custome
 }
 
 export async function selectPlanAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const session = await auth();
@@ -213,6 +215,7 @@ export async function selectPlanAction(formData: FormData) {
 }
 
 export async function createBillingPortalSessionAction() {
+  await requireWorkspaceAdmin();
   const session = await auth();
   const userId = session?.user?.id;
 

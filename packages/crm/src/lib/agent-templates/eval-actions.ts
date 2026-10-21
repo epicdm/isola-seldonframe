@@ -56,6 +56,7 @@ import {
 import { recordEvalRun } from "@/lib/agents/evals/eval-runs-store";
 import { resolveEvalJobStatus } from "@/lib/agents/evals/eval-job-staleness";
 import { persistTemplateEvalRun } from "@/lib/agents/evals/persist-template-run";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 /** One scenario's verdict, shaped for the UI: did it pass the hard gates, and if
  *  not, which check NAMES failed (safety / mustNotDo / criteria — the gates, not
@@ -114,6 +115,7 @@ export type StartEvalRunResult =
  * `after()`. Thin wrapper — see the file header; the work is in runAgentEvals.
  */
 export async function runAgentEvalsAction(agentTemplateId: string): Promise<StartEvalRunResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -280,6 +282,7 @@ export type GetEvalRunJobResult =
 /** Org-scoped poll read for an eval run job — the "Run evals" button's
  *  ~2s poll while `status === "running"` (mirrors getSupervisedRunAction). */
 export async function getEvalRunJobAction(jobId: string): Promise<GetEvalRunJobResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 

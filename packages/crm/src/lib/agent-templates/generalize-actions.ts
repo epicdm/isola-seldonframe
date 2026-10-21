@@ -27,6 +27,7 @@ import {
   applyTemplateGeneralizationTx,
   type ApplyGeneralizationTxResult,
 } from "./apply-generalization-tx";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 async function requireOrgAndUser(): Promise<{ orgId: string } | { error: "unauthorized" }> {
   const orgId = await getOrgId();
@@ -47,6 +48,7 @@ export type ProposeTemplateGeneralizationResult =
 export async function proposeTemplateGeneralizationAction(input: {
   templateId: string;
 }): Promise<ProposeTemplateGeneralizationResult> {
+  await requireWorkspaceAdmin();
   const auth = await requireOrgAndUser();
   if ("error" in auth) return { ok: false, error: auth.error };
 
@@ -109,6 +111,7 @@ export async function applyTemplateGeneralizationAction(input: {
   templateId: string;
   rows: AcceptedGeneralizationRow[];
 }): Promise<ApplyTemplateGeneralizationResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const auth = await requireOrgAndUser();

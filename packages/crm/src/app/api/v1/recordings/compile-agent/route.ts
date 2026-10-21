@@ -37,6 +37,7 @@ import {
   updateAgentTemplate,
   type TemplateBlueprintPatch,
 } from "@/lib/agent-templates/store";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -52,6 +53,8 @@ function parseBody(body: unknown): { sessionId: string; token: string; approve: 
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const env = { SF_RECORD_TO_AGENT: process.env.SF_RECORD_TO_AGENT };
   if (!isRecordToAgentOn(env)) {
     return new Response(null, { status: 404 });

@@ -18,8 +18,8 @@
 //
 // Returns aggregate { totalRun, passed, failed, passRate, results[] }.
 
-"use server";
-
+// EPIC 2026-10-21 (staff-access correction): no longer a "use server" module. Every export here takes its workspace as an
+// argument and is called only by server code; as server actions they were client-callable with any orgId.
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import {

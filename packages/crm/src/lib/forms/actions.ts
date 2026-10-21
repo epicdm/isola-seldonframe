@@ -12,6 +12,7 @@ import { emitSeldonEvent } from "@/lib/events/bus";
 import { dispatchWebhook } from "@/lib/utils/webhooks";
 import { assertWritable } from "@/lib/demo/server";
 import type { IntakeFormField } from "@/db/schema/intake-forms";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 function toSlug(value: string) {
   return (
@@ -80,6 +81,7 @@ export async function listForms() {
 }
 
 export async function createSuggestedFormAction() {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -106,6 +108,7 @@ export async function createSuggestedFormAction() {
 }
 
 export async function createFormAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -148,6 +151,7 @@ export async function createFormAction(formData: FormData) {
 }
 
 export async function updateFormAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -202,6 +206,7 @@ export async function updateFormAction(formData: FormData) {
 /** Owner picks the workspace's public default intake form (or none).
  *  Only an active, public-eligible form of this workspace is accepted. */
 export async function setDefaultIntakeFormAction(formData: FormData): Promise<void> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

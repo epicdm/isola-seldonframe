@@ -16,6 +16,8 @@ import {
   sendPortalInviteMagicLinkEmail,
 } from "@/lib/emails/portal-invite-magic-link";
 import { getEffectiveBrandingForWorkspace } from "@/lib/partner-agencies/branding";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { requireWorkspaceAdminFor } from "@/lib/auth/require-workspace-role";
 
 /**
  * Operator-side: toggle portal access for a contact. Used by the
@@ -31,6 +33,7 @@ export async function setContactPortalAccessAction(input: {
   contactId: string;
   enabled: boolean;
 }): Promise<{ ok: true; enabled: boolean } | { ok: false; reason: string }> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const session = await auth();
@@ -48,6 +51,7 @@ export async function setContactPortalAccessAction(input: {
     .limit(1);
   // A workspace this user cannot act in is refused exactly like a missing one.
   if (!orgRow || !(await userCanAccessOrg(session.user.id, input.orgId))) return { ok: false, reason: "org_not_found" };
+  await requireWorkspaceAdminFor(input.orgId);
 
   // Plan gate. Free tier can't enable portal access at all (the toggle
   // shows disabled in the UI; we re-check server-side as defense in
@@ -98,6 +102,7 @@ export async function sendPortalInviteAction(input: {
   orgSlug: string;
   email: string;
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const session = await auth();
@@ -125,6 +130,7 @@ export async function sendPortalInviteAction(input: {
     );
     return { ok: true };
   }
+  await requireWorkspaceAdminFor(org.id);
 
   const planGate = await checkPortalPlanGate(org.id);
   if (!planGate.allowed) {
@@ -243,6 +249,7 @@ export async function uploadPortalDocumentAction(
   | { ok: true; documentId: string }
   | { ok: false; reason: string }
 > {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const session = await auth();
@@ -269,6 +276,7 @@ export async function uploadPortalDocumentAction(
     .where(eq(organizations.id, orgId))
     .limit(1);
   if (!orgRow || !(await userCanAccessOrg(session.user.id, orgId))) return { ok: false, reason: "org_not_found" };
+  await requireWorkspaceAdminFor(orgId);
 
   const gate = await checkPortalPlanGate(orgId);
   if (!gate.allowed) {
@@ -339,6 +347,7 @@ export async function deletePortalDocumentAction(input: {
   documentId: string;
   orgId: string;
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const session = await auth();
@@ -357,6 +366,7 @@ export async function deletePortalDocumentAction(input: {
     .where(eq(organizations.id, input.orgId))
     .limit(1);
   if (!orgRow || !(await userCanAccessOrg(session.user.id, input.orgId))) return { ok: false, reason: "org_not_found" };
+  await requireWorkspaceAdminFor(input.orgId);
 
   const [doc] = await db
     .select({ id: portalDocuments.id, blobPath: portalDocuments.blobPath })

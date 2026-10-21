@@ -15,10 +15,12 @@ import { getOrgId } from "@/lib/auth/helpers";
 import { assertWritable } from "@/lib/demo/server";
 import { MODULE_IDS, type ModuleId } from "@/lib/workspace/modules";
 import { setModuleEnabled } from "@/lib/workspace/surface";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 const moduleIdSchema = z.enum(MODULE_IDS as [ModuleId, ...ModuleId[]]);
 
 export async function toggleModuleAction(formData: FormData): Promise<void> {
+  await requireWorkspaceAdmin();
   await assertWritable();
 
   const orgId = await getOrgId();

@@ -25,6 +25,7 @@ import {
   isOperatorTokenRevoked,
   verifyOperatorToken,
 } from "@/lib/operator-portal/session";
+import { loadWorkspaceRole, type WorkspaceRole } from "./workspace-role";
 
 const OPERATOR_PORTAL_USER_ID_PREFIX = "__sf_operator_portal__:";
 
@@ -46,7 +47,8 @@ export type OperatorPortalContext = {
     email: string;
     name: string;
     orgId: string;
-    role: "admin" | "operator";
+    /** EPIC 2026-10-21: the workspace role re-read for this request (was a fixed "admin"). */
+    role: WorkspaceRole;
     /** v1.20+ — set when this is an agency support session. */
     supportOriginUserId: string | null;
     // ── NextAuth-shape fields (operator session has no plan/billing) ─
@@ -92,6 +94,17 @@ export async function resolveOperatorPortalContext(): Promise<OperatorPortalCont
   if (isOperatorTokenRevoked(verified, orgRow.operatorSessionsValidAfter)) return null;
   // Codex r1: a platform admin's tenant access is only ever the audited support session; any other session for it is refused.
   if (!verified.supportOriginUserId && isEmailInAllowlist(verified.email, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) return null;
+  // EPIC 2026-10-21: the person's standing in THIS workspace is re-read on every request — a removed member's session is
+  // dead on its next request, and a role change applies at once. An agency support session is admin (unchanged; it is
+  // the audited 2-hour platform path, not a membership).
+  let role: WorkspaceRole;
+  if (verified.supportOriginUserId) {
+    role = "admin";
+  } else {
+    const resolved = await loadWorkspaceRole(orgRow.id, { email: verified.email });
+    if (!resolved) return null;
+    role = resolved.role;
+  }
 
   return {
     user: {
@@ -101,7 +114,7 @@ export async function resolveOperatorPortalContext(): Promise<OperatorPortalCont
       email: verified.email,
       name: verified.email.split("@")[0] ?? "Operator",
       orgId: verified.orgId,
-      role: "admin",
+      role,
       supportOriginUserId: verified.supportOriginUserId ?? null,
       // Defaults for the NextAuth-shape fields. Plan/billing aren't
       // resolvable from the operator session alone; downstream code

@@ -1,5 +1,5 @@
-"use server";
-
+// EPIC 2026-10-21 (staff-access correction): no longer a "use server" module. Nothing here is imported by a client; the
+// workspace-id-taking export helper must not be a client-callable server action. runSeldonItAction calls the action server-side.
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import type { Dirent } from "node:fs";
@@ -10,6 +10,7 @@ import { brainEvents, organizations } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { hashWorkspaceId } from "@/lib/brain-manifest";
 import { assertWritable } from "@/lib/demo/server";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 const BRAIN_WIKI_ROOT = process.env.BRAIN_WIKI_ROOT?.trim() || "/brain/wiki";
 const WORKSPACES_ROOT = path.join(BRAIN_WIKI_ROOT, "workspaces");
@@ -517,6 +518,7 @@ export async function exportWorkspaceAsAgentForWorkspace(input: {
 }
 
 export async function exportWorkspaceAsAgentAction(input?: { workspaceId?: string | null }): Promise<PortableAgentExportResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

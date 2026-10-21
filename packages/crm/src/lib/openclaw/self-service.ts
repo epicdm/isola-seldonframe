@@ -1,4 +1,4 @@
-import { and, eq, or } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { auth } from "@/auth";
 import { db } from "@/db";
 import { orgMembers, organizations } from "@/db/schema";
@@ -106,7 +106,9 @@ export async function requireManagedWorkspaceForUser(workspaceId: string, userId
     })
     .from(organizations)
     .innerJoin(orgMembers, eq(orgMembers.orgId, organizations.id))
-    .where(and(eq(organizations.id, normalizedWorkspaceId), eq(orgMembers.userId, userId)))
+    // EPIC 2026-10-21: every caller installs, generates, invites or revokes (builder API) — owner/admin members only;
+    // a staff membership no longer qualifies.
+    .where(and(eq(organizations.id, normalizedWorkspaceId), eq(orgMembers.userId, userId), inArray(orgMembers.role, ["owner", "admin"])))
     .limit(1);
 
   if (!memberWorkspace?.id) {

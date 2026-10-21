@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { activities, bookings, contacts, paymentRecords, stripeConnections, users } from "@/db/schema";
 import { emitSeldonEvent } from "@/lib/events/bus";
 import { deleteGoogleCalendarBookingEvent, syncBookingWithGoogleCalendar } from "@/lib/bookings/google-calendar-sync";
-import { createBookingCheckoutSession } from "@/lib/payments/actions";
+import { createBookingCheckoutSession } from "@/lib/payments/payments-internal";
 import { dispatchWebhook } from "@/lib/utils/webhooks";
 import { trackEvent } from "@/lib/analytics/track";
 

@@ -8,6 +8,7 @@ import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import { writeEvent } from "@/lib/brain";
 import { assertWritable } from "@/lib/demo/server";
 import { getPortalSessionForOrg } from "@/lib/portal/auth";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 type RecordSeldonFeedbackResult = {
   ok: boolean;
@@ -36,9 +37,12 @@ function toSha256(value: string) {
 }
 
 export async function recordSeldonFeedbackAction(formData: FormData): Promise<RecordSeldonFeedbackResult> {
+  // EPIC 2026-10-21 (Codex r4): the builder path needs owner/admin; the END-CLIENT path (customer portal chat) is
+  // authenticated by the portal session below, so the role guard does not apply to it.
+  // Defensive: anything that is not real form data is never end-client mode, so the builder guard applies (fail closed).
+  const endClientMode = typeof (formData as { get?: unknown } | null)?.get === "function" && String(formData.get("end_client_mode") ?? "") === "true";
+  if (!endClientMode) await requireWorkspaceAdmin();
   assertWritable();
-
-  const endClientMode = String(formData.get("end_client_mode") ?? "") === "true";
   const orgSlug = String(formData.get("orgSlug") ?? "").trim();
   const sessionId = String(formData.get("sessionId") ?? "").trim();
   const messageId = String(formData.get("messageId") ?? "").trim();

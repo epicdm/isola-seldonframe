@@ -46,6 +46,11 @@ export type ToolExecuteContext = {
   /** Verified by the public turn route's short-lived relay HMAC. The proof is
    *  forwarded only in MCP request metadata, never to the model or persisted. */
   trustedRelayToolContext?: TrustedRelayToolContext;
+  /** EPIC 2026-10-21: true ONLY when server code runs this turn for a signed-in staff member's own request (a staff
+   *  work surface). It does not carry an identity: the ask_employee connector still reads the staff id from the
+   *  session at call time (mcp/staff-header.ts). Customer, public, voice, SMS and cron turns never set it, so the
+   *  bridge refuses there. */
+  staffSurface?: boolean;
   /** voice-only — the caller's phone number from the inbound call's caller ID
    *  (From / P-Asserted-Identity SIP headers). Set by the voice webhook after
    *  the workspace resolves; undefined for anonymous/blocked callers and for
@@ -2020,8 +2025,21 @@ async function defaultMcpDeps(): Promise<
     // legacy plain-string secret (postiz/rube) passes through unchanged.
     getSecret: async (orgId, serviceName) => resolveConnectorBearer(orgId, serviceName),
     // Never follows a redirect (SSRF: a bound server 3xx-ing a tools/call inward).
-    makeClient: (endpoint, bearer) => createRuntimeMcpClient(endpoint, bearer),
+    makeClient: (endpoint, bearer, headers) => createRuntimeMcpClient(endpoint, bearer, fetch, undefined, headers),
+    resolveStaffId: resolveSessionStaffIdForConnector,
   };
+}
+
+/** EPIC 2026-10-21: the ask_employee staff id, from the SESSION at call time (never tool input). Outside a request
+ *  scope (voice, SMS, cron) there is no session: cookies() throws, which resolves to null and the bridge refuses. */
+export async function resolveSessionStaffIdForConnector(orgId: string): Promise<string | null> {
+  try {
+    const { resolveAskEmployeeCaller } = await import("@/lib/auth/require-workspace-role");
+    const caller = await resolveAskEmployeeCaller({ orgId });
+    return caller.ok ? caller.staffId : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Lazily-built default Composio wrap deps (real session adapter + inline

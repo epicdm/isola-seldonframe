@@ -24,6 +24,7 @@ import type { OrgSoul } from "@/lib/soul/types";
 import type { OrgTheme } from "@/lib/theme/types";
 import type { OrganizationIntegrations } from "@/db/schema";
 import type { SeldonSessionMessage } from "@/db/schema/seldon-sessions";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type SeldonResultAction = {
   label: string;
@@ -771,6 +772,7 @@ ${trimmedWikiContext}
 }
 
 export async function getSeldonPageData() {
+  await requireWorkspaceAdmin();
   const user = await getCurrentUser();
   const orgId = await getOrgId();
 
@@ -842,6 +844,7 @@ export async function getSeldonPageData() {
 }
 
 export async function saveSeldonBlockAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -889,6 +892,7 @@ export async function saveSeldonBlockAction(formData: FormData) {
 }
 
 export async function disableSeldonBlockAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -919,10 +923,15 @@ export async function disableSeldonBlockAction(formData: FormData) {
 }
 
 export async function runSeldonItAction(_prev: SeldonRunState, formData: FormData): Promise<SeldonRunState> {
+  // EPIC 2026-10-21: the builder path needs a workspace owner/admin. The END-CLIENT path (customer portal self-service,
+  // app/api/v1/portal/self-service) is authenticated by the portal session below and scope-guarded; it is not a
+  // workspace-member path, so the role guard does not apply to it.
+  // Defensive: anything that is not real form data is never end-client mode, so the builder guard applies (fail closed).
+  const endClientMode = typeof (formData as { get?: unknown } | null)?.get === "function" && String(formData.get("end_client_mode") ?? "") === "true";
+  if (!endClientMode) await requireWorkspaceAdmin();
   assertWritable();
 
   const builderMode = String(formData.get("builder_mode") ?? "") === "true";
-  const endClientMode = String(formData.get("end_client_mode") ?? "") === "true";
   const orgSlugFromForm = String(formData.get("orgSlug") ?? "").trim();
   const portalTokenFromForm = String(formData.get("portalToken") ?? "").trim();
   const targetOrgIdFromForm = String(formData.get("target_org_id") ?? "").trim();

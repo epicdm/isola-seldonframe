@@ -8,10 +8,12 @@ import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { parseServiceLinks } from "@/lib/portal/service-links";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export async function savePortalServiceLinksAction(input: {
   links: Array<{ label: string; url: string }>;
 }): Promise<{ ok: true; saved: number } | { ok: false; error: string }> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 

@@ -14,8 +14,10 @@ import { getOrgId } from "@/lib/auth/helpers";
 import { assertWritable } from "@/lib/demo/server";
 
 import { DrizzleWorkspaceTestModeStore } from "./store-drizzle";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export async function setWorkspaceTestModeAction(formData: FormData): Promise<void> {
+  await requireWorkspaceAdmin();
   await assertWritable();
   const orgId = await getOrgId();
   if (!orgId) throw new Error("Unauthorized");

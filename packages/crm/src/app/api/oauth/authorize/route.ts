@@ -13,10 +13,12 @@ import { buildAuthorizationCodeRecord } from "@/lib/oauth/issue-authorization-co
 import { listWorkspacesForUser } from "@/lib/oauth/workspace-picker";
 import { checkRateLimit } from "@/lib/utils/rate-limit";
 import { isAllowedAuthorizeFetchSite } from "@/lib/oauth/fetch-metadata-guard";
+import { workspaceAdminRouteRefusalFor } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  // EPIC 2026-10-21 (Codex r2): authority is checked against the SUBMITTED workspace below, not the active one.
   if (process.env.SF_OAUTH_ENABLED !== "true") {
     return new NextResponse(null, { status: 404 });
   }
@@ -72,6 +74,9 @@ export async function POST(request: Request) {
   if (!workspaces.some((ws) => ws.orgId === orgId)) {
     return NextResponse.json({ error: "invalid_org_selection" }, { status: 403 });
   }
+  // EPIC 2026-10-21: an OAuth grant mints a workspace credential — owner/admin of the SUBMITTED workspace only.
+  const targetRefusal = await workspaceAdminRouteRefusalFor(orgId);
+  if (targetRefusal) return targetRefusal;
 
   const record = buildAuthorizationCodeRecord({
     clientId,

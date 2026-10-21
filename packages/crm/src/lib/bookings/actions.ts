@@ -8,7 +8,7 @@ import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import { ensureDefaultPipelineForOrg } from "@/lib/deals/pipeline-defaults";
 import { assertWritable } from "@/lib/demo/server";
 import { emitSeldonEvent } from "@/lib/events/bus";
-import { createBookingCheckoutSession } from "@/lib/payments/actions";
+import { createBookingCheckoutSession } from "@/lib/payments/payments-internal";
 import { createBookingForCustomer } from "./create-for-customer";
 import { resolveBookingContactIdentity } from "./contact-identity";
 import { recordBookingOutcomeLearning } from "@/lib/soul/learning";
@@ -67,6 +67,8 @@ import {
   utcMomentForLocalTime,
   weekdayKeys,
 } from "./workspace-rules";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { orgIdForCallerRead } from "@/lib/auth/require-workspace-role";
 
 function deriveEndsAt(startsAt: Date, durationMinutes: number) {
   return new Date(startsAt.getTime() + durationMinutes * 60_000);
@@ -579,6 +581,7 @@ export type UpdateWorkspaceBookingRulesInput = {
 export async function updateWorkspaceBookingRulesAction(
   input: UpdateWorkspaceBookingRulesInput,
 ): Promise<{ ok: true; rules: WorkspaceBookingRules; timezone: string | null }> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -647,6 +650,7 @@ function isValidIanaTimezone(tz: string): boolean {
 }
 
 export async function createAppointmentTypeAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -704,6 +708,7 @@ export async function createAppointmentTypeAction(formData: FormData) {
 // validation still lives in the typed action below — this just unpacks
 // the form fields and threads them through.
 export async function editAppointmentTypeAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -739,6 +744,7 @@ export async function createBookingTypeForSeldonAction(input: {
   description?: string;
   price?: number;
 }) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -802,6 +808,7 @@ export async function updateBookingTypeAction(input: {
   bufferAfterMinutes?: number;
   maxBookingsPerDay?: number;
 }) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -869,7 +876,8 @@ export async function updateBookingTypeAction(input: {
 
 export async function listAppointmentTypes(orgIdOverride?: string) {
   // v1.24.0 — accept orgId override for operator-portal mirror.
-  const orgId = orgIdOverride ?? (await getOrgId());
+  // EPIC 2026-10-21: a caller-supplied workspace counts only if the caller holds a role there (re-read per call).
+  const orgId = await orgIdForCallerRead(orgIdOverride);
 
   if (!orgId) {
     return [];
@@ -890,7 +898,8 @@ export async function listAppointmentTypes(orgIdOverride?: string) {
 
 export async function listBookings(orgIdOverride?: string) {
   // v1.24.0 — accept orgId override for operator-portal mirror.
-  const orgId = orgIdOverride ?? (await getOrgId());
+  // EPIC 2026-10-21: a caller-supplied workspace counts only if the caller holds a role there (re-read per call).
+  const orgId = await orgIdForCallerRead(orgIdOverride);
 
   if (!orgId) {
     return [];

@@ -5,6 +5,7 @@ import { signIn } from "@/auth";
 import { assertWritable } from "@/lib/demo/server";
 import { resolveInboxUrl } from "@/lib/utils/email-inbox";
 import { isSafeInternalRedirect } from "@/lib/auth/signup-redirect";
+import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 export type MagicLinkActionState = {
   error?: string;
@@ -82,6 +83,8 @@ export async function sendMagicLinkAction(
   formData: FormData,
   deps?: MagicLinkActionDeps,
 ): Promise<MagicLinkActionState> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  deps = await serverSideDeps(deps);
   const signInImpl = deps?.signIn ?? (signIn as MagicLinkActionDeps["signIn"]);
   const assertWritableImpl = deps?.assertWritable ?? assertWritable;
   try {

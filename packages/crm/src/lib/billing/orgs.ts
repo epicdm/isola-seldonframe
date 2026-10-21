@@ -24,6 +24,7 @@ import {
   resolveAdminTokenContext,
 } from "@/lib/auth/admin-token";
 import { logEvent } from "@/lib/observability/log";
+import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 const FREE_WORKSPACE_ALLOWANCE = 1;
 
@@ -283,6 +284,8 @@ export async function ensureWorkspaceCreationBillingForUser(
   user: Awaited<ReturnType<typeof getBillingUserById>>,
   deps: EnsureWorkspaceCreationBillingDeps = defaultEnsureWorkspaceCreationBillingDeps,
 ) {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  deps = (await serverSideDeps(deps)) ?? defaultEnsureWorkspaceCreationBillingDeps;
   const existingWorkspaces = await deps.getOwnedWorkspaceCount(user.id, user.orgId ?? null);
   const decision = await deps.enforceWorkspaceLimit({
     userId: user.id,

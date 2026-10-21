@@ -48,7 +48,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { dbClockMs } from "@/db/clock";
-import { orgMembers, organizations, partnerAgencies, users } from "@/db/schema";
+import { orgMembers, organizations, partnerAgencies, users, workspaceAdminActions } from "@/db/schema";
 import { auth } from "@/auth";
 import { selectPortalEmailTransport } from "@/lib/portal/email-transport";
 import { assertWritable } from "@/lib/demo/server";
@@ -56,7 +56,6 @@ import { resolveInboxUrl } from "@/lib/utils/email-inbox";
 import { emitSeldonEvent } from "@/lib/events/bus";
 import { trackEvent } from "@/lib/analytics/track";
 import {
-  isEmailAuthorizedForWorkspace,
   isEmailInAllowlist,
   operatorPortalOrigin,
   parseAdminAllowlist,
@@ -73,6 +72,11 @@ import {
   sendOperatorMagicLinkEmail,
 } from "@/lib/emails/operator-magic-link";
 import { getEffectiveBrandingForWorkspace } from "@/lib/partner-agencies/branding";
+import { isAssignableMemberRole, loadWorkspaceRole, readStaffPermissionUserIds, type WorkspaceRole } from "@/lib/auth/workspace-role";
+import { getCallerRoleIn } from "@/lib/auth/require-workspace-role";
+import { getCurrentUser } from "@/lib/auth/helpers";
+import { isAdminTokenUserId } from "@/lib/auth/admin-token";
+import { isOperatorPortalUserId } from "@/lib/auth/operator-portal-context";
 
 const MAGIC_LINK_TTL_MIN = 15;
 const SESSION_TTL_DAYS = 7;
@@ -112,59 +116,6 @@ async function getUserEmailById(userId: string | null, client: DbClient = db): P
     .where(eq(users.id, userId))
     .limit(1);
   return row?.email ?? null;
-}
-
-/**
- * Resolve the two human owner emails that gate operator magic-link
- * issuance for a workspace: the workspace owner and the parent-agency
- * owner. (The platform-admin allowlist is resolved separately from env.)
- *
- * Agency ownership is polymorphic (see partner-agencies schema): an agency
- * is anchored to a user (ownerUserId) or, for anonymous workspaces, to a
- * workspace (ownerWorkspaceId). We resolve a human email from whichever is
- * set — ownerUserId first, then the owning workspace's owner.
- */
-async function resolveWorkspaceOwnerEmails(
-  org: {
-    id: string;
-    ownerId: string | null;
-    parentAgencyId: string | null;
-  },
-  client: DbClient = db,
-): Promise<{ ownerEmail: string | null; agencyOwnerEmail: string | null; memberEmails: string[] }> {
-  const ownerEmail = await getUserEmailById(org.ownerId, client);
-
-  // EPIC 2026-10-08: people already added to this workspace as owner/admin members.
-  const memberRows = await client
-    .select({ email: users.email })
-    .from(orgMembers)
-    .innerJoin(users, eq(users.id, orgMembers.userId))
-    .where(and(eq(orgMembers.orgId, org.id), inArray(orgMembers.role, ["owner", "admin"])));
-  const memberEmails = memberRows.map((r) => r.email).filter((e): e is string => Boolean(e));
-
-  let agencyOwnerEmail: string | null = null;
-  if (org.parentAgencyId) {
-    const [agency] = await client
-      .select({
-        ownerUserId: partnerAgencies.ownerUserId,
-        ownerWorkspaceId: partnerAgencies.ownerWorkspaceId,
-      })
-      .from(partnerAgencies)
-      .where(eq(partnerAgencies.id, org.parentAgencyId))
-      .limit(1);
-    if (agency?.ownerUserId) {
-      agencyOwnerEmail = await getUserEmailById(agency.ownerUserId, client);
-    } else if (agency?.ownerWorkspaceId) {
-      const [ownerWs] = await client
-        .select({ ownerId: organizations.ownerId })
-        .from(organizations)
-        .where(eq(organizations.id, agency.ownerWorkspaceId))
-        .limit(1);
-      agencyOwnerEmail = await getUserEmailById(ownerWs?.ownerId ?? null, client);
-    }
-  }
-
-  return { ownerEmail, agencyOwnerEmail, memberEmails };
 }
 
 async function setOperatorSessionCookie(token: string): Promise<void> {
@@ -225,14 +176,11 @@ export async function requestOperatorMagicLinkAction(input: {
   // org-not-found path above — we never reveal whether an email is
   // authorized or a workspace exists (anti-enumeration) — but no token is
   // signed or sent. Pure decision logic + tests live in ./authorization.ts.
-  const { ownerEmail, agencyOwnerEmail, memberEmails } = await resolveWorkspaceOwnerEmails(org);
+  // EPIC 2026-10-21 (Law 20): issuance, consumption and the per-request session gate all ask the SAME resolver
+  // (loadWorkspaceRole by email), so they admit exactly the same people: owners (incl. creating operator, agency owner,
+  // legacy home owner), admins and staff.
   const adminEmails = parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS);
-  const authorized = isEmailAuthorizedForWorkspace(email, {
-    ownerEmail,
-    agencyOwnerEmail,
-    adminEmails,
-    memberEmails,
-  });
+  const authorized = Boolean(await loadWorkspaceRole(org.id, { email })) || isEmailInAllowlist(email, adminEmails);
   if (!authorized) {
     console.warn(
       `[operator-magic-link] silent_no_op: email_not_authorized org_id=${org.id} email_domain=${emailDomain}`,
@@ -351,29 +299,22 @@ export async function inviteWorkspaceOperatorAction(input: {
   orgSlug: string;
   email: string;
   invitedByName?: string;
+  /** EPIC 2026-10-21: the membership role to grant. Defaults to "staff"; "admin" must be chosen explicitly. */
+  role?: string;
 }): Promise<InviteWorkspaceOperatorResult> {
   assertWritable();
-  const session = await auth();
-  const inviterEmail = session?.user?.email?.trim().toLowerCase() ?? "";
-  if (!session?.user?.id || !inviterEmail) return { ok: false, reason: "not_signed_in" };
 
   const orgSlug = input.orgSlug.trim();
   const email = (input.email ?? "").trim().toLowerCase();
   if (!orgSlug || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, reason: "missing_required_field" };
+  const role = input.role === undefined || input.role === "" ? "staff" : input.role;
+  if (!isAssignableMemberRole(role)) return { ok: false, reason: "invalid_role" };
 
-  const org = await getOrgBySlug(orgSlug);
-  if (!org) return { ok: false, reason: "workspace_not_found" };
-
-  // Member management is an OWNER-level right (native roles: an admin has full access except billing and member management), so the
-  // inviter must be the workspace owner, the parent-agency owner or a platform admin. Existing members are deliberately NOT accepted here
-  // (they may still sign in and request their own links through requestOperatorMagicLinkAction).
-  const { ownerEmail, agencyOwnerEmail } = await resolveWorkspaceOwnerEmails(org);
-  const allowed = isEmailAuthorizedForWorkspace(inviterEmail, {
-    ownerEmail,
-    agencyOwnerEmail,
-    adminEmails: parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS),
-  });
-  if (!allowed) return { ok: false, reason: "not_authorized_for_workspace" };
+  // Member management is an OWNER-level right (native roles: an admin has full access except billing and member management).
+  // EPIC 2026-10-21: one authority for invite, remove, role change and staff permissions — resolveMemberManager below.
+  const m = await resolveMemberManager(orgSlug);
+  if (!m.ok) return m;
+  const org = m.manager.org;
   // EPIC 2026-10-20: a platform admin cannot be made a tenant member by invitation (itself, or any address that normalises to an
   // allowlisted one): that would turn platform authority into a standing tenant session. Its tenant access is the 2-hour support session.
   if (isEmailInAllowlist(email, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) {
@@ -402,9 +343,160 @@ export async function inviteWorkspaceOperatorAction(input: {
     }
   }
   if (!invitee) return { ok: false, reason: "invite_failed" };
-  await db.insert(orgMembers).values({ orgId: org.id, userId: invitee.id, role: "admin" }).onConflictDoNothing({ target: [orgMembers.orgId, orgMembers.userId] });
+  // EPIC 2026-10-21: the invite grants the chosen role (default staff, never admin implicitly). An EXISTING membership is
+  // left exactly as it is — re-inviting never silently promotes or demotes anyone; role changes go through Settings > Team.
+  await db.insert(orgMembers).values({ orgId: org.id, userId: invitee.id, role }).onConflictDoNothing({ target: [orgMembers.orgId, orgMembers.userId] });
 
   return issueOperatorMagicLink(org, orgSlug, email, input.invitedByName);
+}
+
+// ─── member management: remove, change role, staff permissions (EPIC 2026-10-21) ──────────────────────────
+//
+// One authority for inviting and managing (an OWNER-level right): whoever the per-request resolver says is OWNER of this
+// workspace — in EITHER realm (app sign-in or magic-link session) — or a platform admin on the app sign-in. Admins and
+// staff cannot manage members. Every change takes effect on the member's NEXT request,
+// in both realms, because the role is re-read per request (lib/auth/workspace-role.ts); nothing is cached in a token.
+// Each applied change is recorded in workspace_admin_actions (existing table, no DDL).
+
+export type MemberManagementResult = { ok: true } | { ok: false; reason: string };
+
+type MemberManager = { org: NonNullable<Awaited<ReturnType<typeof getOrgBySlug>>>; actorUserId: string; actorEmail: string };
+
+async function resolveMemberManager(orgSlug: string): Promise<{ ok: true; manager: MemberManager } | { ok: false; reason: string }> {
+  const caller = await getCurrentUser();
+  const actorEmail = String(caller?.email ?? "").trim().toLowerCase();
+  if (!caller?.id || !actorEmail || isAdminTokenUserId(caller.id)) return { ok: false, reason: "not_signed_in" };
+  const org = await getOrgBySlug((orgSlug ?? "").trim());
+  if (!org) return { ok: false, reason: "workspace_not_found" };
+  // Owner of THIS workspace, read per request (magic-link sessions only ever hold a role in their own workspace).
+  if ((await getCallerRoleIn(org.id)) === "owner") {
+    const actor = isOperatorPortalUserId(caller.id)
+      ? await loadWorkspaceRole(org.id, { email: actorEmail })
+      : { userId: caller.id };
+    if (actor?.userId) return { ok: true, manager: { org, actorUserId: actor.userId, actorEmail } };
+  }
+  // A platform admin on the app sign-in (unchanged authority; never through a magic-link or support session).
+  if (!isOperatorPortalUserId(caller.id) && isEmailInAllowlist(actorEmail, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) {
+    return { ok: true, manager: { org, actorUserId: caller.id, actorEmail } };
+  }
+  return { ok: false, reason: "not_authorized_for_workspace" };
+}
+
+/** The member row a manager may change: an existing membership that is not an ownership holder. */
+async function loadManageableMember(org: MemberManager["org"], userId: string): Promise<{ ok: true; role: string } | { ok: false; reason: string }> {
+  if (!userId || !/^[0-9a-f-]{36}$/i.test(userId)) return { ok: false, reason: "member_not_found" };
+  const [member] = await db
+    .select({ role: orgMembers.role })
+    .from(orgMembers)
+    .where(and(eq(orgMembers.orgId, org.id), eq(orgMembers.userId, userId)))
+    .limit(1);
+  if (!member) return { ok: false, reason: "member_not_found" };
+  // Ownership is only ever changed by the audited ownership transfer, never here.
+  const resolved = await loadWorkspaceRole(org.id, { userId });
+  if (member.role === "owner" || org.ownerId === userId || resolved?.role === "owner") return { ok: false, reason: "cannot_change_owner" };
+  return { ok: true, role: member.role };
+}
+
+async function auditMemberChange(
+  manager: MemberManager,
+  action: "member_removed" | "member_role_changed" | "member_permission_changed",
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): Promise<void> {
+  await db.insert(workspaceAdminActions).values({
+    orgId: manager.org.id,
+    action,
+    outcome: "applied",
+    actorUserId: manager.actorUserId,
+    actorEmail: manager.actorEmail,
+    before,
+    after,
+  });
+}
+
+/**
+ * Codex r4: add or remove ONE member in settings.staffAccess.askEmployeeUserIds under a row lock (FOR UPDATE), so two
+ * concurrent changes for different members can never restore a stale list. Only that key is replaced; every other
+ * settings key is preserved by the jsonb merge. Returns whether the member held the permission before and after.
+ */
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function changeAskEmployeePermission(orgId: string, userId: string, enabled: boolean, existingTx?: Tx): Promise<{ before: boolean; after: boolean; notMember?: boolean }> {
+  const run = async (tx: Tx) => {
+    await tx.execute(sql`select id from organizations where id = ${orgId}::uuid for update`);
+    // Codex r5: membership is re-checked UNDER the lock that removal also takes, so an enable racing a removal can
+    // never re-grant the permission to someone who is no longer a member.
+    if (enabled) {
+      const [member] = await tx.select({ id: orgMembers.id }).from(orgMembers).where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, userId))).limit(1);
+      if (!member) return { before: false, after: false, notMember: true };
+    }
+    const [row] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, orgId)).limit(1);
+    const current = readStaffPermissionUserIds(row?.settings, "askEmployee");
+    const next = enabled ? Array.from(new Set([...current, userId])) : current.filter((id) => id !== userId);
+    if (next.length !== current.length || next.some((id, i) => id !== current[i])) {
+      await tx
+        .update(organizations)
+        .set({
+          settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('staffAccess', coalesce(${organizations.settings} -> 'staffAccess', '{}'::jsonb) || jsonb_build_object('askEmployeeUserIds', ${JSON.stringify(next)}::jsonb))`,
+        })
+        .where(eq(organizations.id, orgId));
+    }
+    return { before: current.includes(userId), after: next.includes(userId) };
+  };
+  return existingTx ? run(existingTx) : db.transaction(run);
+}
+
+/** Owner-only: remove a member. Their sessions (magic-link and app sign-in) are refused from their next request. */
+export async function removeWorkspaceMemberAction(input: { orgSlug: string; userId: string }): Promise<MemberManagementResult> {
+  assertWritable();
+  const m = await resolveMemberManager(input.orgSlug);
+  if (!m.ok) return m;
+  const target = await loadManageableMember(m.manager.org, input.userId);
+  if (!target.ok) return target;
+  // One transaction under the workspace row lock: the membership goes and every staff permission the member held is
+  // dropped together, so a later re-invite starts with every permission OFF (Codex r5: no race with an enable).
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select id from organizations where id = ${m.manager.org.id}::uuid for update`);
+    await tx.delete(orgMembers).where(and(eq(orgMembers.orgId, m.manager.org.id), eq(orgMembers.userId, input.userId)));
+    await changeAskEmployeePermission(m.manager.org.id, input.userId, false, tx);
+  });
+  await auditMemberChange(m.manager, "member_removed", { userId: input.userId, role: target.role }, { userId: input.userId, role: null });
+  return { ok: true };
+}
+
+/** Owner-only: change a member's role between staff and admin. Applies on the member's next request. */
+export async function setWorkspaceMemberRoleAction(input: { orgSlug: string; userId: string; role: string }): Promise<MemberManagementResult> {
+  assertWritable();
+  if (!isAssignableMemberRole(input.role)) return { ok: false, reason: "invalid_role" };
+  const m = await resolveMemberManager(input.orgSlug);
+  if (!m.ok) return m;
+  const target = await loadManageableMember(m.manager.org, input.userId);
+  if (!target.ok) return target;
+  if (target.role === input.role) return { ok: true };
+  await db
+    .update(orgMembers)
+    .set({ role: input.role, updatedAt: new Date() })
+    .where(and(eq(orgMembers.orgId, m.manager.org.id), eq(orgMembers.userId, input.userId)));
+  await auditMemberChange(m.manager, "member_role_changed", { userId: input.userId, role: target.role }, { userId: input.userId, role: input.role });
+  return { ok: true };
+}
+
+/** Owner-only: switch a member's "Ask an employee" permission (default OFF). Stored in organizations.settings.staffAccess. */
+export async function setMemberAskEmployeePermissionAction(input: { orgSlug: string; userId: string; enabled: boolean }): Promise<MemberManagementResult> {
+  assertWritable();
+  const m = await resolveMemberManager(input.orgSlug);
+  if (!m.ok) return m;
+  const target = await loadManageableMember(m.manager.org, input.userId);
+  if (!target.ok) return target;
+  const changed = await changeAskEmployeePermission(m.manager.org.id, input.userId, input.enabled === true);
+  if (changed.notMember) return { ok: false, reason: "member_not_found" };
+  await auditMemberChange(
+    m.manager,
+    "member_permission_changed",
+    { userId: input.userId, askEmployee: changed.before },
+    { userId: input.userId, askEmployee: changed.after },
+  );
+  return { ok: true };
 }
 
 // ─── magic-link consumption (called by /portal/[orgSlug]/magic route) ──────
@@ -471,8 +563,8 @@ async function decideOperatorMagicLinkConsume(
   }
   // Re-authorise at consumption (a link outlives changes to who may hold it): the email must hold TENANT authority here — owner,
   // parent-agency owner or owner/admin member. Platform-admin authority alone never becomes a 7-day session.
-  const { ownerEmail, agencyOwnerEmail, memberEmails } = await resolveWorkspaceOwnerEmails(org, client);
-  if (!isEmailAuthorizedForWorkspace(verified.email, { ownerEmail, agencyOwnerEmail, memberEmails, adminEmails: [] })) {
+  // EPIC 2026-10-21 (Law 20): the same resolver as issuance and the per-request gate, read on this transaction.
+  if (!(await loadWorkspaceRole(org.id, { email: verified.email }, client))) {
     return { ok: false, reason: "not_authorized_for_workspace" };
   }
   // Codex r1: a platform admin never turns a link into a standing session, even when it also holds tenant authority here.
@@ -497,7 +589,7 @@ async function decideOperatorMagicLinkConsume(
 // ─── session reads ─────────────────────────────────────────────────────────
 
 export async function getOperatorSessionForOrg(orgSlug: string): Promise<
-  | { orgId: string; orgSlug: string; email: string; supportOriginUserId: string | null }
+  | { orgId: string; orgSlug: string; email: string; supportOriginUserId: string | null; role: WorkspaceRole }
   | null
 > {
   const org = await getOrgBySlug(orgSlug);
@@ -512,12 +604,20 @@ export async function getOperatorSessionForOrg(orgSlug: string): Promise<
   if (isOperatorTokenRevoked(verified, org.operatorSessionsValidAfter)) return null;
   // Codex r1: a platform admin's tenant access is only ever the audited support session; any other session for it is refused.
   if (!verified.supportOriginUserId && isEmailInAllowlist(verified.email, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) return null;
+  // EPIC 2026-10-21: re-read the person's standing here on every request (removal ends the session at once).
+  let role: WorkspaceRole = "admin";
+  if (!verified.supportOriginUserId) {
+    const resolved = await loadWorkspaceRole(org.id, { email: verified.email });
+    if (!resolved) return null;
+    role = resolved.role;
+  }
 
   return {
     orgId: org.id,
     orgSlug: org.slug,
     email: verified.email,
     supportOriginUserId: verified.supportOriginUserId ?? null,
+    role,
   };
 }
 

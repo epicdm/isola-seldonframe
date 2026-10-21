@@ -8,6 +8,7 @@ import { organizations } from "@/db/schema";
 import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import { canRemoveBranding, resolvePlanFromPlanId } from "@/lib/billing/entitlements";
 import { assertWritable } from "@/lib/demo/server";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 type BrandingSettings = {
   removePoweredBy?: boolean;
@@ -39,6 +40,7 @@ function readBrandingSettings(raw: unknown): BrandingSettings {
 }
 
 export async function getBrandingSettings() {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   const user = await getCurrentUser();
 
@@ -72,6 +74,7 @@ export async function getBrandingSettings() {
 }
 
 export async function saveBrandingSettingsAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

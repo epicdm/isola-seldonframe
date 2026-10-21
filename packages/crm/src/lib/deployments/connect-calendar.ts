@@ -28,6 +28,8 @@ import { getDeployment } from "./store";
 import { safeBuyerReturnTo } from "./calendar-return";
 import { createConnectLink } from "@/lib/integrations/composio/client";
 import type { Deployment } from "@/db/schema/deployments";
+import { getOrgIdAsWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 /** The two calendar toolkits a deployment may bind (catalog slugs). */
 export type CalendarToolkit = "googlecalendar" | "outlook";
@@ -86,7 +88,9 @@ export async function startCalendarConnect(
   input: { deploymentId: string; toolkit: CalendarToolkit; returnTo?: string | null },
   deps?: Partial<StartCalendarConnectDeps>,
 ): Promise<StartCalendarConnectResult> {
-  const resolveOrgId = deps?.getOrgId ?? getOrgId;
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  deps = await serverSideDeps(deps);
+  const resolveOrgId = deps?.getOrgId ?? getOrgIdAsWorkspaceAdmin;
   const loadDeployment = deps?.getDeployment ?? getDeployment;
   const connect = deps?.createConnectLink ?? createConnectLink;
 

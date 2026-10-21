@@ -32,14 +32,19 @@ import {
   type ConnectorBinding,
   type McpToolSchema,
 } from "./connectors";
+import { AskEmployeeCallerRefusedError, isAskEmployeeService, STAFF_ID_HEADER } from "./staff-header";
 
 /** Injectable seam for a wrapped MCP tool's execute(). Defaults wire the real
  *  encrypted-secret read + the real inline MCP client; tests pass fakes. */
 export type WrapMcpDeps = {
   /** Fetch the decrypted bearer for (orgId, serviceName), or null if unset. */
   getSecret: (orgId: string, serviceName: string) => Promise<string | null>;
-  /** Build an MCP client for an endpoint + bearer. */
-  makeClient: (endpoint: string, bearer: string) => McpClient;
+  /** Build an MCP client for an endpoint + bearer (+ EPIC 2026-10-21: optional per-call headers, only ever the
+   *  session-derived X-Staff-Id for the ask_employee bridge). */
+  makeClient: (endpoint: string, bearer: string, headers?: Record<string, string>) => McpClient;
+  /** EPIC 2026-10-21: the signed-in staff member's id for `orgId`, read from the SESSION at call time (never from tool
+   *  input), or null when there is none / the member was removed / the permission is off. Absent = no staff identity. */
+  resolveStaffId?: (orgId: string) => Promise<string | null>;
 };
 
 /** The permissive pass-through input schema for MCP tools (the MCP server is the
@@ -78,7 +83,16 @@ export function wrapMcpTool(
           `MCP connector "${binding.id}" has no stored credential for this workspace — re-bind it.`,
         );
       }
-      const client = deps.makeClient(endpoint, bearer);
+      // EPIC 2026-10-21: the ask_employee bridge (and only it) gets X-Staff-Id, taken from the session at call time; the
+      // tool input is never consulted. No staff-driven turn / no staff session / removed member / permission off ->
+      // refused before any request leaves. Every other connector: no extra header, byte-for-byte as before.
+      let headers: Record<string, string> | undefined;
+      if (isAskEmployeeService(serviceName)) {
+        const staffId = ctx.staffSurface === true && deps.resolveStaffId ? await deps.resolveStaffId(ctx.orgId) : null;
+        if (!staffId) throw new AskEmployeeCallerRefusedError();
+        headers = { [STAFF_ID_HEADER]: staffId };
+      }
+      const client = headers ? deps.makeClient(endpoint, bearer, headers) : deps.makeClient(endpoint, bearer);
       // Model args remain the tools/call arguments. The independently verified
       // Chatwoot proof travels only as MCP request metadata and can never be
       // selected or altered by the model.

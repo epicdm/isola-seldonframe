@@ -24,6 +24,8 @@ import { assertTransition } from "./status";
 // and MCP email tool. Passes userId:null (system-initiated, no human actor).
 import { sendEmailFromApi } from "@/lib/emails/api";
 import type { AgencyProposalTemplate, AgencyProfile } from "@/db/schema/agency-profile";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { requireWorkspaceAdminFor } from "@/lib/auth/require-workspace-role";
 
 // Derive User type from Drizzle schema inferSelect.
 type User = typeof users.$inferSelect;
@@ -46,6 +48,7 @@ async function loadAuthorizedProposal(id: string): Promise<LoadResult> {
     .where(eq(users.id, session.user.id))
     .limit(1);
   if (!user) return { error: "user_not_found" };
+  await requireWorkspaceAdminFor(user.orgId);
 
   const [proposal] = await db
     .select()
@@ -70,6 +73,7 @@ export async function updateProposalAction(input: {
   termsText?: string | null;
   generatedHtml?: string;
 }): Promise<ActionResult> {
+  await requireWorkspaceAdmin();
   const loaded = await loadAuthorizedProposal(input.id);
   if ("error" in loaded) return { ok: false, error: loaded.error };
   if (loaded.proposal.status !== "draft") {
@@ -130,6 +134,7 @@ export async function updateProposalAction(input: {
 export async function sendProposalAction(input: {
   id: string;
 }): Promise<ActionResult> {
+  await requireWorkspaceAdmin();
   const loaded = await loadAuthorizedProposal(input.id);
   if ("error" in loaded) return { ok: false, error: loaded.error };
   const { proposal, user } = loaded;
@@ -218,6 +223,7 @@ export async function addProposalNoteAction(input: {
   id: string;
   body: string;
 }): Promise<ActionResult> {
+  await requireWorkspaceAdmin();
   const loaded = await loadAuthorizedProposal(input.id);
   if ("error" in loaded) return { ok: false, error: loaded.error };
 
@@ -248,6 +254,7 @@ export async function addProposalNoteAction(input: {
 export async function resendProposalAction(input: {
   id: string;
 }): Promise<ActionResult> {
+  await requireWorkspaceAdmin();
   const loaded = await loadAuthorizedProposal(input.id);
   if ("error" in loaded) return { ok: false, error: loaded.error };
   const { proposal, user } = loaded;
@@ -316,6 +323,7 @@ Just following up — here's the proposal again in case it got buried. Valid thr
 export async function markProposalInactiveAction(input: {
   id: string;
 }): Promise<ActionResult> {
+  await requireWorkspaceAdmin();
   const loaded = await loadAuthorizedProposal(input.id);
   if ("error" in loaded) return { ok: false, error: loaded.error };
 
@@ -342,6 +350,7 @@ export async function markProposalInactiveAction(input: {
 export async function saveProposalTemplateAction(
   input: AgencyProposalTemplate,
 ): Promise<ActionResult> {
+  await requireWorkspaceAdmin();
   if (!input.subject.trim()) {
     return { ok: false, error: "subject_required" };
   }
@@ -358,6 +367,7 @@ export async function saveProposalTemplateAction(
     .where(eq(users.id, session.user.id))
     .limit(1);
   if (!user) return { ok: false, error: "user_not_found" };
+  await requireWorkspaceAdminFor(user.orgId);
 
   const existingProfile = (user.agencyProfile as AgencyProfile | null) ?? {};
   const updatedProfile: AgencyProfile = {

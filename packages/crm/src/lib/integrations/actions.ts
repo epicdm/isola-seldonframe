@@ -8,6 +8,7 @@ import { organizations, type OrganizationIntegrations } from "@/db/schema";
 import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import { assertWritable } from "@/lib/demo/server";
 import { decryptValue, encryptValue, redactApiKey } from "@/lib/encryption";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 type NewsletterProvider = "kit" | "mailchimp" | "beehiiv";
 type IntegrationService = "twilio" | "resend" | "kit" | "mailchimp" | "beehiiv" | "google";
@@ -72,6 +73,7 @@ function serializeResult(params: Record<string, string | undefined>) {
 }
 
 export async function getIntegrationSettings(): Promise<IntegrationViewModel | null> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -311,6 +313,7 @@ async function disconnectIntegration(orgId: string, service: string) {
 }
 
 export async function disconnectIntegrationAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -361,6 +364,7 @@ export type EmailIntegrationsViewModel = {
 };
 
 export async function getEmailIntegrationsSettings(): Promise<EmailIntegrationsViewModel | null> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -418,6 +422,7 @@ export async function getEmailIntegrationsSettings(): Promise<EmailIntegrationsV
 }
 
 export async function updateIntegrationAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -451,6 +456,7 @@ export async function updateIntegrationAction(formData: FormData) {
 }
 
 export async function saveEmailIntegrationAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -491,6 +497,7 @@ export async function saveEmailIntegrationAction(formData: FormData) {
 }
 
 export async function saveIntegrationFromWizard(service: string, credentials: Record<string, string>) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -512,6 +519,7 @@ export async function saveIntegrationFromWizard(service: string, credentials: Re
 }
 
 export async function testTwilioConnectionAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -547,6 +555,7 @@ export async function testTwilioConnectionAction(formData: FormData) {
 }
 
 export async function testResendConnectionAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   const user = await getCurrentUser();
 
@@ -612,6 +621,7 @@ export async function testResendConnectionAction(formData: FormData) {
 }
 
 export async function testKitConnectionAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -657,6 +667,7 @@ function resolveMailchimpApiRoot(apiKey: string) {
 }
 
 export async function testMailchimpConnectionAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -697,6 +708,7 @@ export async function testMailchimpConnectionAction(formData: FormData) {
 }
 
 export async function testBeehiivConnectionAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {

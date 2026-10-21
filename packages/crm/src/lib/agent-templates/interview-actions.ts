@@ -25,6 +25,7 @@ import {
 } from "@/lib/recordings/continue-interview";
 import { fillAllBindingTools } from "@/lib/agents/mcp/discover-vetted-tools";
 import { updateAgentTemplate, type TemplateBlueprintPatch } from "./store";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type { ContinueInterviewResult } from "@/lib/recordings/continue-interview";
 
@@ -88,6 +89,7 @@ export async function continueInterviewAction(input: {
   templateId: string;
   message: string;
 }): Promise<ContinueInterviewResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

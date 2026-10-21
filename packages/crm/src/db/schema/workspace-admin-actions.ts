@@ -6,7 +6,16 @@
 import { sql } from "drizzle-orm";
 import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
-export const WORKSPACE_ADMIN_ACTIONS = ["ownership_transfer", "ownership_transfer_rollback", "internal_entitlement"] as const;
+// EPIC 2026-10-21: + member management from Settings > Team (remove, role change, staff permission). TypeScript-only
+// widening: the column is plain text with no CHECK constraint (drizzle/0080), so no DDL.
+export const WORKSPACE_ADMIN_ACTIONS = [
+  "ownership_transfer",
+  "ownership_transfer_rollback",
+  "internal_entitlement",
+  "member_removed",
+  "member_role_changed",
+  "member_permission_changed",
+] as const;
 export type WorkspaceAdminAction = (typeof WORKSPACE_ADMIN_ACTIONS)[number];
 export const WORKSPACE_ADMIN_OUTCOMES = ["applied", "already_applied", "refused", "failed"] as const;
 export type WorkspaceAdminOutcome = (typeof WORKSPACE_ADMIN_OUTCOMES)[number];

@@ -4,8 +4,11 @@ import { db } from "@/db";
 import { landingPages } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { assertWritable, demoApiBlockedResponse, isDemoReadonly } from "@/lib/demo/server";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ pageId: string }> }) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const orgId = await getOrgId();
   if (!orgId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -27,6 +30,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ pag
 }
 
 export async function PUT(request: Request, { params }: { params: Promise<{ pageId: string }> }) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   if (isDemoReadonly()) {
     return demoApiBlockedResponse();
   }

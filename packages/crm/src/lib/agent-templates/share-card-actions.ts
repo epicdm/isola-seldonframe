@@ -27,6 +27,8 @@ import { assertWritable } from "@/lib/demo/server";
 import { findSessionByTemplateId } from "@/lib/recordings/session-store";
 import type { FlowModel } from "@/lib/recordings/trace-schema";
 import { scrubStepLabel, scrubStepLabels } from "@/lib/share/scrub-step-label";
+import { getOrgIdAsWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 const APP_ORIGIN =
   process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "") || "https://app.seldonframe.com";
@@ -73,7 +75,7 @@ async function defaultLoadTemplateSteps(templateId: string): Promise<string[]> {
 
 function defaultShareCardActionDeps(): ShareCardActionDeps {
   return {
-    getOrgId,
+    getOrgId: getOrgIdAsWorkspaceAdmin,
     loadOwnedTemplate: defaultLoadOwnedTemplate,
     loadTemplateSteps: defaultLoadTemplateSteps,
     mintSlug: () => crypto.randomBytes(SLUG_BYTES).toString("base64url"),
@@ -109,6 +111,8 @@ export async function previewShareCardAction(
   templateId: string,
   deps: ShareCardActionDeps = defaultShareCardActionDeps(),
 ): Promise<ShareCardPreviewResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  deps = (await serverSideDeps(deps)) ?? defaultShareCardActionDeps();
   const orgId = await deps.getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -140,6 +144,8 @@ export async function publishShareCardAction(
   steps: { label: string }[],
   deps: ShareCardActionDeps = defaultShareCardActionDeps(),
 ): Promise<PublishShareCardResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  deps = (await serverSideDeps(deps)) ?? defaultShareCardActionDeps();
   assertWritable();
   const orgId = await deps.getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -165,6 +171,8 @@ export async function unpublishShareCardAction(
   templateId: string,
   deps: ShareCardActionDeps = defaultShareCardActionDeps(),
 ): Promise<UnpublishShareCardResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  deps = (await serverSideDeps(deps)) ?? defaultShareCardActionDeps();
   assertWritable();
   const orgId = await deps.getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -186,6 +194,8 @@ export async function getShareCardStatusAction(
   templateId: string,
   deps: ShareCardActionDeps = defaultShareCardActionDeps(),
 ): Promise<ShareCardStatusResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  deps = (await serverSideDeps(deps)) ?? defaultShareCardActionDeps();
   const orgId = await deps.getOrgId();
   if (!orgId) return { ok: true, published: false, slug: null, url: null };
 

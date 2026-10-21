@@ -34,6 +34,7 @@ import { shouldVisionVerify, visionVerifyPage, buildVisionCheckLog, type VisionC
 import { reconcileReplyWithVision } from "@/lib/vision/reconcile-reply";
 import { persistReflection } from "@/lib/vision/persist-reflection";
 import { logEvent } from "@/lib/observability/log";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 
@@ -58,6 +59,8 @@ type Body = {
 };
 
 export async function POST(request: NextRequest) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   if (!isWinLadderOn({ SF_WIN_LADDER: process.env.SF_WIN_LADDER })) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }

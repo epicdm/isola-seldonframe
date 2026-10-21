@@ -8,6 +8,7 @@
 
 import { getOrgId } from "@/lib/auth/helpers";
 import { markShareUsed } from "@/lib/activation/ladder-server";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 /**
  * Fired by the share row on first copy/download of the site link or QR
@@ -16,6 +17,7 @@ import { markShareUsed } from "@/lib/activation/ladder-server";
  * win-ladder's go_live step can mark itself done from share activity alone.
  */
 export async function markShareUsedAction(): Promise<void> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return;
   await markShareUsed(orgId);

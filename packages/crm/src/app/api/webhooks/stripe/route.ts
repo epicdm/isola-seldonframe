@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { mapStripeEvent, verifyStripeWebhook } from "@seldonframe/payments";
-import { handleStripeCheckoutCompleted } from "@/lib/payments/actions";
+import { handleStripeCheckoutCompleted } from "@/lib/payments/payments-internal";
 
 export async function POST(request: Request) {
   const signature = request.headers.get("stripe-signature");

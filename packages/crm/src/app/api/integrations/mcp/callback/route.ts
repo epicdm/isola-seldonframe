@@ -14,6 +14,7 @@ import { MCP_OAUTH_COOKIE } from "@/lib/agents/mcp/oauth-state-cookie";
 import { handleMcpOauthCallback } from "@/lib/agents/mcp/oauth-callback";
 import { canonicalAppOrigin } from "@/lib/http/app-hosts";
 import { safeInternalRedirect } from "@/lib/http/redirect-target";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 
@@ -26,6 +27,8 @@ function resolveAppOrigin(): string {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const { searchParams } = request.nextUrl;
   const result = await handleMcpOauthCallback(
     { code: searchParams.get("code"), state: searchParams.get("state") },

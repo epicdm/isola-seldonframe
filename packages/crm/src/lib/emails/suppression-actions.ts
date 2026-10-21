@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getOrgId } from "@/lib/auth/helpers";
 import { assertWritable } from "@/lib/demo/server";
 import { addSuppression, removeSuppression, type SuppressionReason } from "./suppression";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 const VALID_REASONS: readonly SuppressionReason[] = ["manual", "unsubscribe", "bounce", "complaint"];
 
@@ -15,6 +16,7 @@ function toReason(value: FormDataEntryValue | null): SuppressionReason {
 }
 
 export async function addSuppressionAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) throw new Error("Unauthorized");
@@ -35,6 +37,7 @@ export async function addSuppressionAction(formData: FormData) {
 }
 
 export async function removeSuppressionAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) throw new Error("Unauthorized");

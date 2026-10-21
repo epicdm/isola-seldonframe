@@ -32,6 +32,7 @@ import { permitsVoiceStatusForce } from "@/lib/agents/voice-status-policy";
 // voice R1 — the editor's patch allow-list lives in a plain sibling module so
 // it can be unit-tested ("use server" files may export only async functions).
 import { VoiceBlueprintPatchSchema } from "./schema";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type SaveVoiceBlueprintResult =
   | { ok: true; version: number }
@@ -47,6 +48,7 @@ export async function saveVoiceBlueprintAction(input: {
   patch: Partial<AgentBlueprint>;
   publishNotes?: string;
 }): Promise<SaveVoiceBlueprintResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -81,6 +83,7 @@ export async function setVoiceStatusAction(input: {
   agentId: string;
   status: "live" | "paused" | "draft";
 }): Promise<SetVoiceStatusResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -127,6 +130,7 @@ export type AssignVoiceNumberResult =
 export async function assignVoiceNumberAction(input: {
   fromNumber: string;
 }): Promise<AssignVoiceNumberResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

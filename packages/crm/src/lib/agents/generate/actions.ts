@@ -48,6 +48,9 @@ import {
   updateAgentTemplate,
   type TemplateBlueprintPatch,
 } from "@/lib/agent-templates/store";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { getOrgIdAsWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 /**
  * Generate-by-default: turn ONE English sentence into a created, safe agent
@@ -66,6 +69,8 @@ export async function generateAgentDraftAction(
   input: { sentence: string; reviewUrl?: string },
   _deps?: Partial<GenerateDeps>,
 ): Promise<GenerateAgentDraftOutput> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = await serverSideDeps(_deps);
   assertWritable();
 
   // Resolve the org ONCE here (the production getOrgId is a multi-source session
@@ -73,7 +78,7 @@ export async function generateAgentDraftAction(
   // hand the orchestrator a memoized getOrgId — no double round-trip. Tests
   // inject their own getOrgId via _deps, in which case we never call the real one
   // and never build a real store (they pass their own lessonsStore, or none).
-  const resolveOrgId = _deps?.getOrgId ?? getOrgId;
+  const resolveOrgId = _deps?.getOrgId ?? getOrgIdAsWorkspaceAdmin;
   const orgId = await resolveOrgId();
 
   // P5.3/P5.4 — Soul-ground the author: fetch a COMPACT business summary for this
@@ -172,6 +177,7 @@ export async function recordGeneratorEditAction(input: {
   before: AgentBlueprint;
   after: AgentBlueprint;
 }): Promise<void> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

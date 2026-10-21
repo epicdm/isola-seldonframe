@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { contacts, organizations } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { assertWritable } from "@/lib/demo/server";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 const KIT_V4_BASE_URL = "https://api.kit.com/v4";
 
@@ -84,6 +85,7 @@ function readKitSettings(settings: Record<string, unknown> | null | undefined): 
 }
 
 export async function getKitIntegrationSettings() {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -115,6 +117,7 @@ export async function getKitIntegrationSettings() {
 }
 
 export async function saveKitIntegrationAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -170,6 +173,7 @@ export async function saveKitIntegrationAction(formData: FormData) {
 }
 
 export async function testKitConnectionAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   const submittedApiKey = String(formData.get("apiKey") ?? "").trim();
   let token = submittedApiKey;
 
@@ -240,7 +244,8 @@ async function sendKitSequenceSubscription(params: {
   }
 }
 
-export async function syncKitForContactEvent(params: {
+// EPIC 2026-10-21: no longer exported — a server-internal helper must not be a client-callable server action.
+async function syncKitForContactEvent(params: {
   eventType: "contact.created" | "booking.completed";
   contactId: string;
 }) {

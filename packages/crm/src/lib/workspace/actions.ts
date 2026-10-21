@@ -14,6 +14,7 @@ import {
   replaceWorkspaceNameInHtml,
 } from "@/lib/blueprint/mutate";
 import type { Blueprint } from "@/lib/blueprint/types";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 interface UpdateResult {
   ok: boolean;
@@ -31,6 +32,7 @@ interface UpdateResult {
 export async function updateWorkspaceSettingsAction(
   formData: FormData
 ): Promise<UpdateResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   await requireAuth();
   const orgId = await getOrgId();
@@ -223,6 +225,7 @@ interface MintFailure {
 export async function mintApiKeyAction(
   formData: FormData
 ): Promise<MintedApiKey | MintFailure> {
+  await requireWorkspaceAdmin();
   assertWritable();
   await requireAuth();
   const orgId = await getOrgId();
@@ -265,6 +268,7 @@ export async function mintApiKeyAction(
 export async function revokeApiKeyAction(
   formData: FormData
 ): Promise<UpdateResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const session = await requireAuth();
   const orgId = await getOrgId();

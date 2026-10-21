@@ -42,6 +42,7 @@ import {
   type SupervisedRunDeps,
 } from "@/lib/agents/lifecycle/supervised-run";
 import { resolveAgentTrigger } from "@/lib/agents/triggers/agent-trigger";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type StartSupervisedRunResult =
   | {
@@ -166,6 +167,7 @@ async function finishRunReal(
  * OLD 55s app-side timer. Returning fast unjams the queue permanently.
  */
 export async function startSupervisedRunAction(templateId: string): Promise<StartSupervisedRunResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -249,6 +251,7 @@ export type GetSupervisedRunResult =
 /** Org-scoped poll read for the live action log — the Run stage's ~1.5s
  *  poll while `status === "running"`. */
 export async function getSupervisedRunAction(runId: string): Promise<GetSupervisedRunResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 

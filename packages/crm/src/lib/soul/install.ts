@@ -1,5 +1,5 @@
-"use server";
-
+// EPIC 2026-10-21 (staff-access correction): no longer a "use server" module. Every export here takes its workspace as an
+// argument and is called only by server code; as server actions they were client-callable with any orgId.
 import { and, eq } from "drizzle-orm";
 import { buildSoulVariables, interpolateDeep, loadSoulPackage } from "@seldonframe/core/soul";
 import { db } from "@/db";
@@ -11,6 +11,7 @@ import { normalizeTheme } from "@/lib/theme/normalize-theme";
 import { assertWritable } from "@/lib/demo/server";
 import { ingestSource } from "@/lib/soul-wiki/ingest";
 import { incrementalCompile } from "@/lib/soul-wiki/compile";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 type InstallSoulInput = {
   soulId?: string;
@@ -182,6 +183,7 @@ function interpolateString(template: string, vars: Record<string, string>): stri
 }
 
 export async function installSoul(input: InstallSoulInput) {
+  if (!input?.orgId) await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = input.orgId ?? (await getOrgId());

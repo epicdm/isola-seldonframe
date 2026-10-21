@@ -13,6 +13,7 @@ import { outboundMessageTriggers, type OutboundMessageTrigger } from "@/db/schem
 import { getOrgId } from "@/lib/auth/helpers";
 import { assertWritable } from "@/lib/demo/server";
 import { getMessageSkill } from "./skills/registry";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type TriggerRowView = {
   id: string;
@@ -37,6 +38,7 @@ export type TriggerRowView = {
  * without an extra round-trip.
  */
 export async function listOutboundTriggers(): Promise<TriggerRowView[]> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return [];
 
@@ -57,6 +59,7 @@ export async function setOutboundTriggerEnabledAction(input: {
   triggerId: string;
   enabled: boolean;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -91,6 +94,7 @@ export async function saveOutboundTriggerSkillAction(input: {
   triggerId: string;
   customSkillMd: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };

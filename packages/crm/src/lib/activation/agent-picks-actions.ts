@@ -23,6 +23,7 @@ import { getOrgId } from "@/lib/auth/helpers";
 import { createAgentTemplate, updateAgentTemplate } from "@/lib/agent-templates/store";
 import type { AgentPickId } from "@/lib/activation/suggest-agents";
 import type { AgentTrigger } from "@/lib/agents/triggers/agent-trigger";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 const ALLOWED_PICK_IDS: ReadonlySet<AgentPickId> = new Set(["review-requester", "speed-to-lead"]);
 
@@ -60,6 +61,7 @@ export type EnableStarterAgentResult =
 export async function enableStarterAgentAction(
   pickId: string,
 ): Promise<EnableStarterAgentResult> {
+  await requireWorkspaceAdmin();
   if (!ALLOWED_PICK_IDS.has(pickId as AgentPickId)) {
     return { ok: false, error: "unknown_pick" };
   }

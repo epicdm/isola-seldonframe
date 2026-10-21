@@ -23,6 +23,7 @@ import {
 } from "./store";
 import { runEvalSuite, type EvalRunSummary } from "./eval-runner";
 import { BlueprintPatchSchema } from "./blueprint-patch";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type SaveBlueprintResult =
   | { ok: true; version: number }
@@ -33,6 +34,7 @@ export async function saveAgentBlueprintAction(input: {
   patch: Partial<AgentBlueprint>;
   publishNotes?: string;
 }): Promise<SaveBlueprintResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -62,6 +64,7 @@ export async function setAgentStatusAction(input: {
   agentId: string;
   status: "draft" | "test" | "live" | "paused";
 }): Promise<PublishStatusResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -84,6 +87,7 @@ export type RunEvalsResult =
 export async function runEvalsAction(input: {
   agentId: string;
 }): Promise<RunEvalsResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -106,6 +110,7 @@ export async function markConversationQualityAction(input: {
   quality: "good" | "bad" | null;
   notes?: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 

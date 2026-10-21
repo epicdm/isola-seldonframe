@@ -25,6 +25,7 @@ import { db } from "@/db";
 import { agentImproveProposals } from "@/db/schema/eval-runs";
 import type { AgentBlueprint } from "@/db/schema/agents";
 import { getOrgId } from "@/lib/auth/helpers";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type GetImproveProposalPatchResult =
   | { ok: true; patch: Partial<AgentBlueprint> }
@@ -40,6 +41,7 @@ export type GetImproveProposalPatchResult =
 export async function getImproveProposalPatchAction(
   proposalId: string,
 ): Promise<GetImproveProposalPatchResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false };
 

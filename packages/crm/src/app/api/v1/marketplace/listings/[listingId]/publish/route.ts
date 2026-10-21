@@ -4,11 +4,15 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { marketplaceListings } from "@/db/schema";
 import { assertWritable, demoApiBlockedResponse, isDemoReadonly } from "@/lib/demo/server";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
+import { workspaceAdminRouteRefusalFor } from "@/lib/auth/require-workspace-role";
 
 export async function POST(
   _req: Request,
   { params }: { params: Promise<{ listingId: string }> }
 ) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   if (isDemoReadonly()) {
     return demoApiBlockedResponse();
   }
@@ -19,6 +23,8 @@ export async function POST(
   if (!session?.user?.id || !session.user.orgId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const targetRefusal = await workspaceAdminRouteRefusalFor(session.user.orgId);
+  if (targetRefusal) return targetRefusal;
 
   const { listingId } = await params;
 

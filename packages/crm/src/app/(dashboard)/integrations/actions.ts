@@ -46,6 +46,7 @@ import {
   type VoiceIngestResult,
 } from "@/lib/agents/voice-profile/ingest-sent-mail";
 import { buildVoiceIngestDeps } from "@/lib/agents/voice-profile/build-deps";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 /** Where Composio sends the operator back after the hosted consent screen. */
 const INTEGRATIONS_BASE_URL = "https://app.seldonframe.com/integrations";
@@ -66,6 +67,7 @@ export type ListComposioConnectionsResult =
  * the page still renders the grid with everything in the "Connect" state.
  */
 export async function listComposioConnectionsAction(): Promise<ListComposioConnectionsResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -96,6 +98,7 @@ export async function connectComposioToolkitAction(
   toolkit: string,
   opts?: { returnTo?: "dashboard" },
 ): Promise<ConnectComposioToolkitResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -132,6 +135,7 @@ export type DisconnectComposioToolkitResult =
 export async function disconnectComposioToolkitAction(
   connectedAccountId: string,
 ): Promise<DisconnectComposioToolkitResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -157,6 +161,7 @@ export type SetComposioKeyResult = { ok: true } | { ok: false; error: string };
 export async function setComposioKeyAction(
   key: string,
 ): Promise<SetComposioKeyResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -214,6 +219,7 @@ export async function connectMcpConnectorAction(input: {
   connectorId: string;
   accessLevelIndex?: number;
 }): Promise<ConnectMcpConnectorResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -299,6 +305,7 @@ export type DisconnectMcpConnectorResult = { ok: true } | { ok: false; error: st
 export async function disconnectMcpConnectorAction(
   connectorId: string,
 ): Promise<DisconnectMcpConnectorResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -329,6 +336,7 @@ export type EnableComposioTriggerResult =
 export async function enableComposioTriggerAction(
   toolkit: string,
 ): Promise<EnableComposioTriggerResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -356,6 +364,7 @@ export async function enableComposioTriggerAction(
 export async function refreshVoiceProfileAction(): Promise<
   VoiceIngestResult | { ok: false; reason: "unauthorized" }
 > {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, reason: "unauthorized" };

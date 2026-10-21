@@ -42,6 +42,7 @@ import {
   defaultApplyProposalDeps,
   defaultDismissProposalDeps,
 } from "@/lib/agents/improve/deps";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type RunImproveActionResult =
   | ImproveRunResult
@@ -58,6 +59,7 @@ export type RunImproveActionResult =
  * verdict) — this action adds no logic of its own.
  */
 export async function runImproveAction(agentId: string): Promise<RunImproveActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -86,6 +88,7 @@ export type ApplyImproveProposalActionResult =
 export async function applyImproveProposalAction(
   proposalId: string,
 ): Promise<ApplyImproveProposalActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -104,6 +107,7 @@ export type DismissImproveProposalActionResult = { ok: boolean };
 export async function dismissImproveProposalAction(
   proposalId: string,
 ): Promise<DismissImproveProposalActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

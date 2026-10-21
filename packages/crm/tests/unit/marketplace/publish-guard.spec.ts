@@ -18,7 +18,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { resolvePublishGuard, type ResolvePublishGuardDeps } from "../../../src/lib/marketplace/seller-actions";
+import { resolvePublishGuard, type ResolvePublishGuardDeps } from "../../../src/lib/marketplace/publish-guard";
 import type { AgentTemplate } from "../../../src/db/schema/agent-templates";
 
 const ORG_ID = "org-1";

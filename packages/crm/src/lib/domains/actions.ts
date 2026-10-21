@@ -18,6 +18,7 @@ import { addDomain, checkDomainStatus, hasVercelDomainEnv, removeDomain } from "
 // hurting the non-onboarding domain-save path.
 import { markOnboardingComplete } from "@/lib/onboarding/state";
 import { sendOnboardingCompletionWelcomeEmail } from "@/lib/onboarding/welcome-email";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 const WORKSPACE_BASE_DOMAIN =
   process.env.WORKSPACE_BASE_DOMAIN?.trim() || "app.seldonframe.com";
@@ -114,6 +115,7 @@ function resolveDomainStatus(payload: Record<string, unknown>) {
 }
 
 export async function getCustomDomainSettings() {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -170,6 +172,7 @@ export async function getCustomDomainSettings() {
 }
 
 export async function saveCustomDomainAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

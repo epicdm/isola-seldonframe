@@ -23,6 +23,7 @@ import {
 } from "@/lib/payments/retainer";
 import { sendEmailFromApi } from "@/lib/emails/api";
 import { logEvent } from "@/lib/observability/log";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 /** Org-scoped authz: does callerOrgId's agency own targetClientOrgId? Mirrors
  *  authorizeUsageCapSetterForOrg's shape (lib/billing/usage-cap.ts) but
@@ -61,6 +62,7 @@ export async function createRetainerCheckoutLinkAction(input: {
   monthlyPriceCents: number;
   setupFeeCents?: number;
 }): Promise<CreateRetainerCheckoutLinkActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const callerOrgId = await getOrgId();
@@ -113,6 +115,7 @@ export async function sendRetainerLinkAction(input: {
   contactName: string;
   checkoutUrl: string;
 }): Promise<SendRetainerLinkActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const callerOrgId = await getOrgId();
@@ -155,6 +158,7 @@ export type CancelRetainerActionResult =
   | { ok: false; error: "unauthorized" | "invalid_input" | CancelRetainerFailureReason };
 
 export async function cancelRetainerAction(input: { clientOrgId: string }): Promise<CancelRetainerActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const callerOrgId = await getOrgId();

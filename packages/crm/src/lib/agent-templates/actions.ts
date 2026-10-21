@@ -36,6 +36,7 @@ import {
   buildDefaultInstantiateDeps,
 } from "./starter-pack";
 import { resolveStudioBuildGate, NEEDS_BYOK_MESSAGE } from "./studio-build-gate";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type CreateAgentTemplateResult =
   | { ok: true; id: string }
@@ -50,6 +51,7 @@ export async function createAgentTemplateAction(input: {
   name: string;
   type?: AgentTemplateType;
 }): Promise<CreateAgentTemplateResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -93,6 +95,7 @@ export type CreateTemplateFromStarterResult =
 export async function createTemplateFromStarterAction(input: {
   starterId: string;
 }): Promise<CreateTemplateFromStarterResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -124,6 +127,7 @@ export async function saveAgentTemplateBlueprintAction(input: {
   templateId: string;
   patch: unknown;
 }): Promise<SaveTemplateBlueprintResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -214,6 +218,7 @@ export async function generateAgentDraftAction(input: {
   // voice | chat today; the generator treats any non-voice surface as text.
   surface: AgentSurface;
 }): Promise<GenerateAgentDraftResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

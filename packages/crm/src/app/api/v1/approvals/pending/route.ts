@@ -12,10 +12,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/db";
 import { getOrgId } from "@/lib/auth/helpers";
 import { DrizzleApprovalStorage } from "@/lib/workflow/approvals/storage-drizzle";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const orgId = await getOrgId();
   if (!orgId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

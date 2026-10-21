@@ -29,8 +29,11 @@ import { NextResponse } from "next/server";
 
 import { getOrgId } from "@/lib/auth/helpers";
 import { decideMediaUploadGrant } from "@/lib/media/upload-token";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
 
 export async function POST(request: Request): Promise<Response> {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const body = (await request.json()) as HandleUploadBody;
 
   try {

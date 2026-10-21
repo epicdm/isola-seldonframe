@@ -9,10 +9,13 @@ import { assertWritable } from "@/lib/demo/server";
 import { recordDealStageLearning } from "@/lib/soul/learning";
 import { ensureDefaultPipelineForOrg } from "@/lib/deals/pipeline-defaults";
 import { moveDealToStage } from "@/lib/deals/stage-move";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { orgIdForCallerRead } from "@/lib/auth/require-workspace-role";
 
 export async function listDeals(orgIdOverride?: string) {
   // v1.24.0 — accept orgId override for operator-portal mirror.
-  const orgId = orgIdOverride ?? (await getOrgId());
+  // EPIC 2026-10-21: a caller-supplied workspace counts only if the caller holds a role there (re-read per call).
+  const orgId = await orgIdForCallerRead(orgIdOverride);
 
   if (!orgId) {
     return [];
@@ -23,7 +26,8 @@ export async function listDeals(orgIdOverride?: string) {
 
 export async function getDefaultPipeline(orgIdOverride?: string) {
   // v1.24.0 — accept orgId override for operator-portal mirror.
-  const orgId = orgIdOverride ?? (await getOrgId());
+  // EPIC 2026-10-21: a caller-supplied workspace counts only if the caller holds a role there (re-read per call).
+  const orgId = await orgIdForCallerRead(orgIdOverride);
 
   if (!orgId) {
     return null;
@@ -50,6 +54,7 @@ export async function getDefaultPipeline(orgIdOverride?: string) {
 export async function saveDefaultPipelineStagesAction(input: {
   stages: PipelineStage[];
 }): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };

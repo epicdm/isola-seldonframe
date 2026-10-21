@@ -7,6 +7,8 @@ import { db } from "@/db";
 import { stripeConnections } from "@/db/schema";
 import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import { canonicalAppOrigin } from "@/lib/http/app-hosts";
+import { getCallerRoleIn } from "@/lib/auth/require-workspace-role";
+import { isWorkspaceAdminRole } from "@/lib/auth/workspace-role";
 import { handleStripeConnectCallback } from "@/lib/payments/stripe-connect-callback";
 import { STRIPE_CONNECT_STATE_COOKIE, resolveStripeConnectStateSecret } from "@/lib/payments/stripe-connect-state";
 
@@ -23,7 +25,12 @@ export async function GET(request: NextRequest) {
       resolveSession: async () => {
         const user = await getCurrentUser();
         const orgId = await getOrgId();
-        return user?.id && orgId ? { userId: user.id, orgId } : null;
+        if (!user?.id || !orgId) return null;
+        // EPIC 2026-10-21 (staff-access, Codex r4-r6): the caller must STILL be owner/admin of the workspace now, at
+        // completion and before the token exchange — an admin demoted to staff (or removed) after starting the flow is
+        // refused (session_mismatch). The signed state then binds that workspace to the one that started it.
+        if (!isWorkspaceAdminRole(await getCallerRoleIn(orgId))) return null;
+        return { userId: user.id, orgId };
       },
       exchange: async (code) => {
         const secretKey = process.env.STRIPE_SECRET_KEY;

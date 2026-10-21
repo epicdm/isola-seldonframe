@@ -18,7 +18,7 @@ import { buildRunEventAgentDeps } from "@/lib/agents/triggers/run-event-agent-de
 // runEventAgent-shaped.
 import { dispatchComposioEventToDeployments } from "@/lib/deployments/composio-event-dispatch";
 import { buildDispatchComposioEventDeps } from "@/lib/deployments/composio-event-dispatch-deps";
-import { sendTriggeredEmailsForContactEvent, sendWelcomeEmailForContact } from "@/lib/emails/actions";
+import { sendTriggeredEmailsForContactEvent, sendWelcomeEmailForContact } from "@/lib/emails/emails-internal";
 import { syncContactToNewsletter } from "@/lib/integrations/newsletter-sync";
 // 2026-05-18 — Outbound messaging dispatch (plan v2, slice 2).
 import { dispatchOutboundMessagesForEvent } from "@/lib/messaging/dispatch";

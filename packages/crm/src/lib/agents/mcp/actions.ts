@@ -38,6 +38,7 @@ import {
 import { db } from "@/db";
 import { agents, type AgentBlueprint } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type BindConnectorResult =
   | { ok: true; version: number; connectorId: string; toolCount: number }
@@ -82,6 +83,7 @@ export async function bindMcpConnectorAction(input: {
   apiKey: string;
   enabledTools?: string[];
 }): Promise<BindConnectorResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -140,6 +142,7 @@ export async function unbindMcpConnectorAction(input: {
   agentId: string;
   connectorId: string;
 }): Promise<{ ok: true; version: number } | { ok: false; error: string }> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 
@@ -187,6 +190,7 @@ export async function refreshMcpConnectorAction(input: {
 }): Promise<
   { ok: true; version: number; toolCount: number } | { ok: false; error: string }
 > {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 

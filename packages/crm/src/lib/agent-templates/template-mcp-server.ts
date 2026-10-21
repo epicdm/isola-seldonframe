@@ -45,6 +45,7 @@ import {
   type RefreshTemplateConnectorResult,
   type SetComposioToolkitsResult,
 } from "./mcp-actions";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 /**
  * Build the real composition deps for a given template + builder org. The
@@ -111,6 +112,7 @@ export async function bindTemplateConnectorAction(input: {
   apiKey: string;
   enabledTools?: string[];
 }): Promise<BindTemplateConnectorResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -134,6 +136,7 @@ export async function unbindTemplateConnectorAction(input: {
   templateId: string;
   connectorId: string;
 }): Promise<TemplateConnectorMutationResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -152,6 +155,7 @@ export async function setTemplateConnectorToolsAction(input: {
   connectorId: string;
   enabledTools: string[];
 }): Promise<TemplateConnectorMutationResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -174,6 +178,7 @@ export async function refreshTemplateConnectorAction(input: {
   templateId: string;
   connectorId: string;
 }): Promise<RefreshTemplateConnectorResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -197,6 +202,7 @@ export async function setTemplateComposioToolkitsAction(input: {
   toolkits: string[];
   enabledTools?: string[];
 }): Promise<SetComposioToolkitsResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
@@ -233,6 +239,7 @@ export type ConnectedToolsActionResult =
 export async function connectedToolsAction(input: {
   templateId: string;
 }): Promise<ConnectedToolsActionResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };
 

@@ -32,6 +32,8 @@ import {
   buildConnectAccountParams,
   getStripeClient,
 } from "@/lib/proposals/stripe-connect";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
+import { workspaceAdminRouteRefusalFor } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 
@@ -50,6 +52,8 @@ function isTerminallyRejected(account: Stripe.Account): boolean {
 }
 
 export async function POST(request: Request) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -68,6 +72,8 @@ export async function POST(request: Request) {
   if (!user) {
     return NextResponse.json({ error: "user_not_found" }, { status: 404 });
   }
+  const targetRefusal = await workspaceAdminRouteRefusalFor(user.orgId);
+  if (targetRefusal) return targetRefusal;
 
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://app.seldonframe.com";

@@ -8,6 +8,8 @@ import { assertWritable } from "@/lib/demo/server";
 import { emitSeldonEvent } from "@/lib/events/bus";
 import { inferClientLifecycleFromStatus } from "@/lib/soul/learning";
 import { DEMO_CONTACT_TAG } from "@/lib/workspace/seed-demo-portal";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { orgIdForCallerRead } from "@/lib/auth/require-workspace-role";
 
 type ContactListSort = "recent" | "name_asc" | "name_desc" | "score_desc" | "score_asc";
 
@@ -42,7 +44,8 @@ export async function listContacts(options?: ContactListOptions) {
   // v1.24.0 — accept an explicit orgId override so the operator-portal
   // mirror (which authenticates via the sf_operator_session cookie,
   // not NextAuth) can reuse this helper.
-  const orgId = options?.orgId ?? (await getOrgId());
+  // EPIC 2026-10-21: a caller-supplied workspace counts only if the caller holds a role there (re-read per call).
+  const orgId = await orgIdForCallerRead(options?.orgId);
 
   if (!orgId) {
     return [];
@@ -177,6 +180,7 @@ function resolveStatus(rawStatus: string, stageNames: string[], defaultStatus: s
 }
 
 export async function bulkImportContactsAction(input: { rows: ImportedContactRow[] }) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

@@ -11,10 +11,14 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { stripeConnections } from "@/db/schema";
 import { getStripeClient } from "@/lib/proposals/stripe-connect";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
+import { workspaceAdminRouteRefusalFor } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const session = await auth();
   if (!session?.user?.id) {
     redirect("/login?callbackUrl=/proposals/onboarding");
@@ -22,6 +26,8 @@ export async function GET(request: Request) {
   if (!session?.user?.orgId) {
     return NextResponse.json({ error: "no_org" }, { status: 400 });
   }
+  const targetRefusal = await workspaceAdminRouteRefusalFor(session.user.orgId);
+  if (targetRefusal) return targetRefusal;
 
   const { searchParams } = new URL(request.url);
   const accountId = searchParams.get("account_id");

@@ -171,7 +171,8 @@ describe("P1-2 conversation-time MCP client refuses redirects", () => {
 
   test("tools.ts builds the conversation-time client through createRuntimeMcpClient", () => {
     const src = readFileSync(path.resolve(__dirname, "../../../../src/lib/agents/tools.ts"), "utf8");
-    assert.match(src, /makeClient: \(endpoint, bearer\) => createRuntimeMcpClient\(endpoint, bearer\)/);
+    // EPIC 2026-10-21: the client also receives the optional per-call headers (only the session-derived X-Staff-Id).
+    assert.match(src, /makeClient: \(endpoint, bearer, headers\) => createRuntimeMcpClient\(endpoint, bearer, fetch, undefined, headers\)/);
     assert.equal((src.match(/createMcpClient\(/g) ?? []).length, 0, "control: no direct client construction left in tools.ts");
   });
 });

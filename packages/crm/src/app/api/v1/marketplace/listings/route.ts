@@ -6,6 +6,8 @@ import { marketplaceListings } from "@/db/schema";
 import { assertWritable, demoApiBlockedResponse, isDemoReadonly } from "@/lib/demo/server";
 import { exportSoulPackage } from "@/lib/marketplace/export-soul";
 import type { SoulPackage } from "@/lib/marketplace/soul-package";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
+import { workspaceAdminRouteRefusalFor } from "@/lib/auth/require-workspace-role";
 
 function slugify(input: string) {
   return input
@@ -19,10 +21,14 @@ function slugify(input: string) {
 }
 
 export async function GET() {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const session = await auth();
   if (!session?.user?.id || !session.user.orgId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const targetRefusal = await workspaceAdminRouteRefusalFor(session.user.orgId);
+  if (targetRefusal) return targetRefusal;
 
   const listings = await db
     .select()
@@ -34,6 +40,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   if (isDemoReadonly()) {
     return demoApiBlockedResponse();
   }
@@ -44,6 +52,8 @@ export async function POST(req: Request) {
   if (!session?.user?.id || !session.user.orgId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const targetRefusal = await workspaceAdminRouteRefusalFor(session.user.orgId);
+  if (targetRefusal) return targetRefusal;
 
   const body = (await req.json()) as {
     name?: string;

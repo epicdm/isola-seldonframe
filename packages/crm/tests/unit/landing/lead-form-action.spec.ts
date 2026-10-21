@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   submitLeadFormWithDeps,
   type LeadFormDeps,
-} from "@/lib/landing/lead-form-action";
+} from "@/lib/landing/lead-form-core";
 
 // Each makeDeps call gets a unique timestamp offset by 2 minutes per call so
 // the module-level idempotency cache never deduplicates across tests.

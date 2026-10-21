@@ -13,6 +13,7 @@ import { getOrgId } from "@/lib/auth/helpers";
 import { getPurchase } from "./purchases-store";
 import { resolveMarketplacePortalSession } from "./billing-portal";
 import { buildMarketplacePortalDeps, readConnectStatus } from "./real-deps";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type CreateMarketplaceBillingPortalResult =
   | { ok: true; url: string }
@@ -26,6 +27,7 @@ export type CreateMarketplaceBillingPortalResult =
 export async function createMarketplaceBillingPortalAction(input: {
   purchaseId: string;
 }): Promise<CreateMarketplaceBillingPortalResult> {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, reason: "unauthorized" };
 

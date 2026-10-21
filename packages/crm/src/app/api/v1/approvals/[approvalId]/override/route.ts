@@ -24,6 +24,7 @@ import {
 import { runtimeResumeApproval } from "@/lib/workflow/runtime";
 import { DrizzleRuntimeStorage } from "@/lib/workflow/storage-drizzle";
 import { notImplementedToolInvoker, type RuntimeContext } from "@/lib/workflow/types";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 
@@ -36,6 +37,8 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ approvalId: string }> },
 ) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const { approvalId } = await params;
 
   const user = await getCurrentUser();

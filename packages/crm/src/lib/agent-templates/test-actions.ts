@@ -54,6 +54,7 @@ import {
 import type { AgentBlueprint } from "@/db/schema/agents";
 import { getAgentTemplate } from "./store";
 import { resolveStudioBuildGate, NEEDS_BYOK_MESSAGE } from "./studio-build-gate";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 // Hard cap on the messages we accept from the client — a test sandbox never
 // needs a long history, and it bounds the prompt sent to Anthropic.
@@ -80,6 +81,7 @@ export async function testAgentTemplateTurn(input: {
   templateId: string;
   messages: StatelessChatMessage[];
 }): Promise<TestAgentTemplateTurnResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -180,6 +182,7 @@ export type MarkAgentTemplateTestedResult =
 export async function markAgentTemplateTestedAction(input: {
   templateId: string;
 }): Promise<MarkAgentTemplateTestedResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

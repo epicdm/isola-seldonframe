@@ -21,6 +21,7 @@ import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { encryptValue } from "@/lib/encryption";
 import { assertWritable } from "@/lib/demo/server";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +31,8 @@ const RequestSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   try {
     assertWritable();
   } catch {

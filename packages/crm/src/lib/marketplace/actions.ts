@@ -37,6 +37,8 @@ import { buyerSetupPath } from "@/lib/marketplace/buyer/buyer-routes";
 import { hasDeclaredTemplateVariables } from "@/lib/agent-templates/generalize";
 import { hasOrgInstalledListing, markOrgInstalledListing, provisionBuyerAgentFromListing, finalizeSoulPurchaseFromWebhook, enableBlockForOrg } from "@/lib/marketplace/fulfillment";
 import type { ListingInstallRow } from "@/lib/marketplace/fulfillment";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 type GeneratedFile = { path: string; content: string };
 
@@ -85,6 +87,7 @@ export async function listMarketplaceBlocksAction(params?: {
   query?: string;
   sort?: "popular" | "rated" | "newest" | "price";
 }) {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   const rows = await db
@@ -151,6 +154,7 @@ export async function listMarketplaceBlocksAction(params?: {
 }
 
 export async function getMarketplaceBlockDetailsAction(blockId: string) {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
   const user = await getCurrentUser();
 
@@ -224,6 +228,7 @@ export async function publishAgentTemplateAction(input: {
   niche: string;
   tags?: string[];
 }) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await getCurrentUser();
@@ -306,6 +311,9 @@ export async function installAgentListingAction(
   input: { slug: string },
   _deps: BuyBoxAuthDeps = { getCurrentUser, getOrgId },
 ) {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = (await serverSideDeps(_deps)) ?? { getCurrentUser, getOrgId };
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await _deps.getCurrentUser();
@@ -504,6 +512,7 @@ export async function installAgentListingAction(
 }
 
 export async function finalizeMarketplacePurchaseReturnAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await getCurrentUser();
@@ -525,6 +534,7 @@ export async function finalizeMarketplacePurchaseReturnAction(formData: FormData
 }
 
 export async function finalizeSoulListingPurchaseReturnAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await getCurrentUser();
@@ -571,6 +581,7 @@ export async function finalizeSoulListingPurchaseReturnAction(formData: FormData
 }
 
 export async function purchaseSoulListingAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await getCurrentUser();
@@ -674,6 +685,7 @@ export async function purchaseSoulListingAction(formData: FormData) {
 }
 
 export async function submitSoulListingReviewAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await getCurrentUser();
@@ -744,6 +756,7 @@ export async function submitSoulListingReviewAction(formData: FormData) {
 }
 
 export async function purchaseMarketplaceBlockAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await getCurrentUser();
@@ -852,6 +865,7 @@ export async function purchaseMarketplaceBlockAction(formData: FormData) {
 }
 
 export async function submitBlockRatingAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await getCurrentUser();
@@ -1027,6 +1041,7 @@ async function sendAdminReviewNotification(params: {
 
 
 export async function generateBlockForReviewAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await getCurrentUser();
@@ -1127,6 +1142,7 @@ export async function generateBlockForReviewAction(formData: FormData) {
 }
 
 export async function listSellerBlocksForReview() {
+  await requireWorkspaceAdmin();
   const user = await getCurrentUser();
   if (!user?.id) {
     return [];
@@ -1144,6 +1160,7 @@ export async function listSellerBlocksForReview() {
 }
 
 export async function getSellerReviewBlock(blockId: string) {
+  await requireWorkspaceAdmin();
   const user = await getCurrentUser();
   if (!user?.id) {
     throw new Error("Unauthorized");
@@ -1174,6 +1191,7 @@ export async function getSellerReviewBlock(blockId: string) {
 }
 
 export async function approveGeneratedBlockAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await getCurrentUser();
@@ -1220,6 +1238,7 @@ export async function approveGeneratedBlockAction(formData: FormData) {
 }
 
 export async function rejectGeneratedBlockAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await getCurrentUser();
@@ -1267,6 +1286,7 @@ function isAdminUser(userEmail: string | null | undefined) {
 }
 
 export async function listAdminReviewQueue() {
+  await requireWorkspaceAdmin();
   const user = await getCurrentUser();
   if (!isAdminUser(user?.email)) {
     throw new Error("Forbidden");
@@ -1289,6 +1309,7 @@ export async function listAdminReviewQueue() {
 }
 
 export async function mergeGeneratedBlockAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const user = await getCurrentUser();

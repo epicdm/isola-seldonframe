@@ -47,6 +47,8 @@ export function createRuntimeMcpClient(
   bearer: string,
   baseFetch: typeof fetch = fetch,
   resolve?: DnsResolver,
+  /** EPIC 2026-10-21: per-call headers — only the session-derived X-Staff-Id for the ask_employee bridge. */
+  headers?: Record<string, string>,
 ): McpClient {
-  return createMcpClient({ endpoint, bearer, fetchImpl: noRedirectFetch(publicOnlyFetch(baseFetch, resolve)) });
+  return createMcpClient({ endpoint, bearer, ...(headers ? { headers } : {}), fetchImpl: noRedirectFetch(publicOnlyFetch(baseFetch, resolve)) });
 }

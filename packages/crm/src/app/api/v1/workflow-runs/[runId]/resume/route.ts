@@ -28,6 +28,7 @@ import { getOrgId } from "@/lib/auth/helpers";
 import { resumeWait } from "@/lib/workflow/runtime";
 import { DrizzleRuntimeStorage } from "@/lib/workflow/storage-drizzle";
 import { notImplementedToolInvoker, type RuntimeContext } from "@/lib/workflow/types";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 
@@ -35,6 +36,8 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ runId: string }> },
 ) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const { runId } = await params;
 
   const orgId = await getOrgId();

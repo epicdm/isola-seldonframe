@@ -44,6 +44,7 @@ import {
   type DeployedClientResult,
   type SkippedClientResult,
 } from "./plan-client-deployments";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type DeployAgentTemplateToClientsResult =
   | {
@@ -77,6 +78,7 @@ export async function deployAgentTemplateToClientsAction(input: {
   templateId: string;
   clientOrgIds: string[];
 }): Promise<DeployAgentTemplateToClientsResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const agencyOrgId = await getOrgId();

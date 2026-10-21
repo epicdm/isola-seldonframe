@@ -33,6 +33,7 @@ import { assertWritable } from "@/lib/demo/server";
 import { markOnboardingComplete } from "@/lib/onboarding/state";
 import { sendOnboardingCompletionWelcomeEmail } from "@/lib/onboarding/welcome-email";
 import { setLandingTemplateForOrg } from "@/lib/landing/set-landing-template-for-org";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 /**
  * "Maybe later" — the soft-skip path from the step-3 surface. Marks
@@ -52,6 +53,7 @@ import { setLandingTemplateForOrg } from "@/lib/landing/set-landing-template-for
  * swallowed — the redirect must still happen.
  */
 export async function dismissOnboardingAction(formData: FormData): Promise<never> {
+  await requireWorkspaceAdmin();
   // Demo-readonly gate. Same shape as every other write-side action so
   // a hosted demo deployment doesn't accidentally mark accounts as
   // onboarded just because someone clicked the button.
@@ -136,6 +138,7 @@ export async function setLandingTemplateAction(
   slug: string,
   choice: string,
 ): Promise<void> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const session = await auth();

@@ -23,6 +23,7 @@ import { getAIClient } from "@/lib/ai/client";
 import { runR1LandingStep } from "@/lib/landing/r1-landing-step";
 import type { ExtractedBusinessFacts } from "@/lib/web-onboarding/extraction-prompt";
 import type { OrgSoul } from "@/lib/soul/types";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 // Allow up to 60 seconds — LLM generation can be slow on large payloads.
@@ -68,6 +69,8 @@ function readSoulBool(soul: Record<string, unknown>, ...keys: string[]): boolean
 }
 
 export async function POST(request: Request) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   // Require a valid session — this endpoint is for authenticated operators only.
   const session = await auth();
   if (!session?.user?.id) {

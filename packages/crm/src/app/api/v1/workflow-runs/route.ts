@@ -16,10 +16,13 @@ import {
   workflowApprovals,
 } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 
 export async function GET() {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const orgId = await getOrgId();
   if (!orgId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

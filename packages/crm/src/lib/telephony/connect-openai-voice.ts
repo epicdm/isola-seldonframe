@@ -37,6 +37,7 @@ import { setOrgOpenAiVoice } from "@/lib/telephony/openai-voice-store";
 import { resolveBuilderTelephony } from "@/lib/telephony/config";
 import { ensureTrunkForCreds } from "@/lib/telephony/sf-managed";
 import { createTwilioTelephonyClient } from "@/lib/telephony/twilio-client";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type ConnectOpenAiVoiceInput = {
   projectId: string;
@@ -78,6 +79,7 @@ function isValidWebhookSecret(value: string): boolean {
 export async function connectOpenAiVoiceAction(
   input: ConnectOpenAiVoiceInput,
 ): Promise<ConnectOpenAiVoiceResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

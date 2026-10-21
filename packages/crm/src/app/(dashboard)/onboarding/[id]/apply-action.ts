@@ -15,6 +15,7 @@ import { changePlans, onboardingLinks } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { applyChangePlan, type ApplyChangePlanResult } from "@/lib/onboarding/execute-change-plan";
 import type { ChangePlan as ChangePlanPayload } from "@/lib/onboarding/change-plan";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 // ── result type ────────────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ export type ApplyChangePlanActionResult =
 export async function applyChangePlanAction(
   planId: string,
 ): Promise<ApplyChangePlanActionResult> {
+  await requireWorkspaceAdmin();
   // ── 1. auth ──────────────────────────────────────────────────────────────────
   const orgId = await getOrgId();
   if (!orgId) return { ok: false, error: "unauthorized" };

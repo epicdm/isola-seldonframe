@@ -51,7 +51,7 @@ import { seedDefaultOutboundTriggers } from "./seed-default-triggers";
 // the auto-disable in setAgentDeployStateAction — that one only fires
 // on a NEW deploy, this runtime check also covers agents that were
 // already deployed before the auto-disable code shipped.
-import { findDeployedAgentForEvent } from "@/lib/agents/configure-actions";
+import { findDeployedAgentForEvent } from "@/lib/agents/deployed-agent-for-event";
 
 // 2026-05-18 — TCPA / A2P 10DLC footer. Auto-appended to every
 // outbound SMS so operators can never accidentally skip it. Detection

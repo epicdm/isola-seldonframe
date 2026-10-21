@@ -30,6 +30,8 @@ import { auth } from "@/auth";
 import { assertWritable } from "@/lib/demo/server";
 import { sanitizeNextPath } from "@/lib/auth/signup-redirect";
 import { setOperatorByokAnthropicKey } from "@/lib/web-onboarding/byok-resolver";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { requireWorkspaceAdminFor } from "@/lib/auth/require-workspace-role";
 
 /** Discriminated shape returned to the form when validation/encryption
  *  fails before we can redirect. The form re-renders with the message
@@ -60,6 +62,7 @@ export async function saveConnectAiKeyAction(
   _prev: SaveConnectAiKeyState,
   formData: FormData,
 ): Promise<SaveConnectAiKeyState> {
+  await requireWorkspaceAdmin();
   try {
     assertWritable();
   } catch (error) {
@@ -101,6 +104,7 @@ export async function saveConnectAiKeyAction(
     );
     redirect(nextPathFallback);
   }
+  await requireWorkspaceAdminFor(orgId);
 
   const rawKey = String(formData.get("apiKey") ?? "").trim();
   const nextPath = sanitizeNextPath(formData.get("next"));
@@ -179,6 +183,7 @@ export async function saveConnectAiKeyAction(
  * can see how often it fires.
  */
 export async function skipConnectAiAction(formData: FormData): Promise<never> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const session = await auth();

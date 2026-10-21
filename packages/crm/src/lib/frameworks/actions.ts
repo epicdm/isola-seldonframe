@@ -8,6 +8,7 @@ import { getAIClient, recordSeldonUsage } from "@/lib/ai/client";
 import { DEFAULT_SONNET_MODEL } from "@/lib/ai/models";
 import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import type { FrameworkConfig } from "@/lib/soul/install";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type GeneratedFrameworkOption = {
   id: string;
@@ -394,6 +395,7 @@ async function saveFrameworkToLibrary(params: { orgId: string; framework: Framew
 }
 
 export async function listSavedFrameworkLibrary() {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -410,11 +412,13 @@ export async function listSavedFrameworkLibrary() {
 }
 
 export async function listSavedFrameworkOptions() {
+  await requireWorkspaceAdmin();
   const saved = await listSavedFrameworkLibrary();
   return saved.map((item) => toFrameworkOption(item.framework));
 }
 
 export async function deleteSavedFrameworkAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -459,6 +463,7 @@ export async function generateCustomFrameworkAction(input: {
   description: string;
   businessName?: string;
 }): Promise<GeneratedFrameworkPayload> {
+  await requireWorkspaceAdmin();
   const user = await getCurrentUser();
   const orgId = await getOrgId();
 

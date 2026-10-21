@@ -41,6 +41,8 @@ import { resolveReviewUrl } from "@/lib/agents/persona/deployment-customization"
 import { resolveAgentTrigger } from "@/lib/agents/triggers/agent-trigger";
 import { composeTestEventAgentMessage } from "@/lib/agents/triggers/test-message";
 import type { EventAgentSkill } from "@/lib/agents/triggers/run-event-agent";
+import { getOrgIdAsWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 export type SendTestEventAgentInput = {
   /** The agent TEMPLATE to test. Ownership is checked against the caller's org. */
@@ -122,7 +124,7 @@ function skillForEventType(eventType: string): EventAgentSkill | null {
 /** The production deps — the real session, DB loaders, and outbound seam. */
 function buildDefaultSendTestDeps(): SendTestEventAgentDeps {
   return {
-    getOrgId,
+    getOrgId: getOrgIdAsWorkspaceAdmin,
     findTemplateById: async (id) => {
       const t = await getAgentTemplate(id);
       if (!t) return null;
@@ -183,6 +185,8 @@ export async function sendTestEventAgentAction(
   input: SendTestEventAgentInput,
   _deps?: Partial<SendTestEventAgentDeps>,
 ): Promise<SendTestEventAgentResult> {
+  // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
+  _deps = await serverSideDeps(_deps);
   assertWritable();
 
   const defaults = buildDefaultSendTestDeps();

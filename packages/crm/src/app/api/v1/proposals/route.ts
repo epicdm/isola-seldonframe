@@ -15,11 +15,15 @@ import { createProposal } from "@/lib/proposals/create";
 import { composeProposalHtml } from "@/lib/proposals/compose-html";
 import { countProposalsThisMonth, evaluateProposalQuota } from "@/lib/proposals/check-tier-quota";
 import { DEFAULT_PROPOSAL_TEMPLATE } from "@/lib/proposals/generate-html";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
+import { workspaceAdminRouteRefusalFor } from "@/lib/auth/require-workspace-role";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 export async function GET(_request: Request) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -31,6 +35,8 @@ export async function GET(_request: Request) {
     .where(eq(users.id, session.user.id))
     .limit(1);
   if (!user) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  const targetRefusal = await workspaceAdminRouteRefusalFor(user.orgId);
+  if (targetRefusal) return targetRefusal;
 
   const rows = await db
     .select()
@@ -43,6 +49,8 @@ export async function GET(_request: Request) {
 }
 
 export async function POST(request: Request) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -111,6 +119,8 @@ export async function POST(request: Request) {
     .where(eq(users.id, session.user.id))
     .limit(1);
   if (!user) return NextResponse.json({ error: "user_not_found" }, { status: 404 });
+  const targetRefusal = await workspaceAdminRouteRefusalFor(user.orgId);
+  if (targetRefusal) return targetRefusal;
 
   // Tier gate
   const tier = user.planId ?? "free";

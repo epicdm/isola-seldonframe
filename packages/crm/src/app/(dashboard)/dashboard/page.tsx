@@ -14,6 +14,7 @@ import { listDeals } from "@/lib/deals/actions";
 import { listEmailTemplates } from "@/lib/emails/actions";
 import { listForms } from "@/lib/forms/actions";
 import { listLandingPages } from "@/lib/landing/actions";
+import { isWorkspaceRoleForbiddenError } from "@/lib/auth/require-workspace-role";
 import { getSoul } from "@/lib/soul/server";
 import { getPersonality } from "@/lib/crm/personality-server";
 import type { PersonalityUrgencyIndicator } from "@/lib/crm/personality";
@@ -316,7 +317,11 @@ export default async function DashboardPage({
     listBookings(),
     listAppointmentTypes(),
     listEmailTemplates(),
-    listLandingPages(),
+    // EPIC 2026-10-21: landing pages are owner/admin configuration; a staff member's dashboard shows none.
+    listLandingPages().catch((error: unknown) => {
+      if (isWorkspaceRoleForbiddenError(error)) return [] as Awaited<ReturnType<typeof listLandingPages>>;
+      throw error;
+    }),
     listForms(),
     getSoul(),
     getHiddenBlocks(),

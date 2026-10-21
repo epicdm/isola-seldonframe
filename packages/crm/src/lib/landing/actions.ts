@@ -12,6 +12,7 @@ import { sectionsToHTML } from "@/lib/landing/section-to-html";
 import { assertLandingPageLimit } from "@/lib/tier/limits";
 import { dispatchWebhook } from "@/lib/utils/webhooks";
 import { defaultLandingSections, type LandingSection } from "./types";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 function toSlug(value: string) {
   return value
@@ -23,6 +24,7 @@ function toSlug(value: string) {
 }
 
 export async function listLandingPages() {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -33,6 +35,7 @@ export async function listLandingPages() {
 }
 
 export async function getLandingPageById(id: string) {
+  await requireWorkspaceAdmin();
   const orgId = await getOrgId();
 
   if (!orgId) {
@@ -58,6 +61,7 @@ export async function getLandingPageById(id: string) {
 }
 
 export async function createLandingPageAction(formData: FormData) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -105,6 +109,7 @@ export async function createLandingPageForSeldonAction(input: {
   pageType?: string;
   puckData?: Record<string, unknown> | null;
 }) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -168,6 +173,7 @@ export async function updateLandingEditorAction({
   editorData: Record<string, unknown>;
   sections?: LandingSection[];
 }) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -197,6 +203,7 @@ export async function updateLandingPageAction(input: {
   sections?: Record<string, unknown>[];
   seoDescription?: string;
 }) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -253,6 +260,7 @@ export async function updateLandingPageSettingsAction({
   slug: string;
   seoDescription?: string;
 }) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
@@ -286,6 +294,7 @@ export async function updateLandingPageSettingsAction({
 }
 
 export async function publishLandingPageAction(pageId: string, published: boolean) {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();

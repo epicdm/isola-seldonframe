@@ -5,6 +5,8 @@ import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { assertWritable, demoApiBlockedResponse, isDemoReadonly } from "@/lib/demo/server";
 import { decryptValue, encryptValue } from "@/lib/encryption";
+import { workspaceAdminRouteRefusal } from "@/lib/auth/require-workspace-role";
+import { workspaceAdminRouteRefusalFor } from "@/lib/auth/require-workspace-role";
 
 type Provider = "kit" | "mailchimp" | "beehiiv" | "resend";
 
@@ -39,10 +41,14 @@ function maskLastEight(value: string) {
 }
 
 export async function GET() {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   const session = await auth();
   if (!session?.user?.id || !session.user.orgId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const targetRefusal = await workspaceAdminRouteRefusalFor(session.user.orgId);
+  if (targetRefusal) return targetRefusal;
 
   const [org] = await db
     .select({ integrations: organizations.integrations })
@@ -81,6 +87,8 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   if (isDemoReadonly()) {
     return demoApiBlockedResponse();
   }
@@ -91,6 +99,8 @@ export async function PUT(req: Request) {
   if (!session?.user?.id || !session.user.orgId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const targetRefusal = await workspaceAdminRouteRefusalFor(session.user.orgId);
+  if (targetRefusal) return targetRefusal;
 
   const body = (await req.json()) as {
     provider?: string;
@@ -148,6 +158,8 @@ export async function PUT(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const staffRefusal = await workspaceAdminRouteRefusal();
+  if (staffRefusal) return staffRefusal;
   if (isDemoReadonly()) {
     return demoApiBlockedResponse();
   }
@@ -158,6 +170,8 @@ export async function DELETE(req: Request) {
   if (!session?.user?.id || !session.user.orgId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const targetRefusal = await workspaceAdminRouteRefusalFor(session.user.orgId);
+  if (targetRefusal) return targetRefusal;
 
   const body = (await req.json()) as {
     provider?: string;

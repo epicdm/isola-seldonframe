@@ -30,6 +30,7 @@ import {
   hasDeclaredTemplateVariables,
   TEMPLATE_VARIABLES_DEPLOY_GUARD_MESSAGE,
 } from "@/lib/agent-templates/generalize";
+import { requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 
 export type DeployToSelfActionResult =
   | { ok: true; deploymentId: string; active: boolean; triggerSentence: string }
@@ -48,6 +49,7 @@ export type DeployToSelfActionResult =
 
 /** "For myself" — one-click self-deploy into the OPERATOR'S OWN workspace. */
 export async function deployToSelfAction(templateId: string): Promise<DeployToSelfActionResult> {
+  await requireWorkspaceAdmin();
   assertWritable();
 
   const orgId = await getOrgId();
