@@ -140,7 +140,11 @@ const DEFAULT_TOOLS_BY_TOOLKIT: Record<string, readonly string[]> = {
     // differs, the booking adapter fails soft to native availability.
     "GOOGLECALENDAR_FIND_FREE_SLOTS",
     "GOOGLECALENDAR_FIND_EVENT",
-    "GOOGLECALENDAR_LIST_EVENTS",
+    // Composio renamed LIST_EVENTS -> EVENTS_LIST (toolkit version 20261010_00;
+    // the old slug now fails "Unable to retrieve tool with slug"). Verified live
+    // 2026-10-21. Saved bindings with the old slug are mapped at runtime
+    // (connector.ts COMPOSIO_SLUG_RENAMES).
+    "GOOGLECALENDAR_EVENTS_LIST",
   ],
   googledrive: [
     "GOOGLEDRIVE_FIND_FILE",

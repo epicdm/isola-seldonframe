@@ -231,7 +231,16 @@ export async function composeSystemPrompt(input: ComposeSystemPromptInput): Prom
   const allSkills = getSkillsForArchetype(archetype);
   const trimmedCustomSkillMd = blueprint.customSkillMd?.trim() ?? "";
   if (trimmedCustomSkillMd.length > 0) {
-    sections.push(trimmedCustomSkillMd);
+    // The custom script REPLACES the platform skills, including the
+    // temporal-reasoning skill that carries today's date — so render the same
+    // context vars ({{currentDate}}, {{currentTime}}, {{timezone}}) inside it.
+    // Unknown {{placeholders}} are left untouched; a script without
+    // placeholders is unchanged.
+    sections.push(
+      trimmedCustomSkillMd.replace(/\{\{(\w+)\}\}/g, (match, key: string) =>
+        Object.prototype.hasOwnProperty.call(skillVars, key) ? skillVars[key]! : match,
+      ),
+    );
   } else {
     const upFrontSkills = allSkills.filter((s) => s.id !== "hard-rules");
     for (const skill of upFrontSkills) {

@@ -84,6 +84,7 @@ const COMPOSIO_TOOL_EFFECTS: Record<string, Effect> = {
   GOOGLECALENDAR_FIND_FREE_SLOTS: "read",
   GOOGLECALENDAR_FIND_EVENT: "read",
   GOOGLECALENDAR_LIST_EVENTS: "read",
+  GOOGLECALENDAR_EVENTS_LIST: "read",
   // Google Drive
   GOOGLEDRIVE_FIND_FILE: "read",
   GOOGLEDRIVE_CREATE_FILE: "idempotent-write",

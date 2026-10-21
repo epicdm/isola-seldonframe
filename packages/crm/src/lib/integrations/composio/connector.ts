@@ -88,6 +88,22 @@ function wrapComposioTool(
   };
 }
 
+/** Composio action slugs renamed in newer toolkit versions: old -> current.
+ *  The old slug is rejected by the API ("Unable to retrieve tool with slug
+ *  ..."), so a saved binding would advertise a tool that can never run. Verified
+ *  live 2026-10-21 (googlecalendar toolkit version 20261010_00). Same action,
+ *  same permission — a rename only, never a widening. */
+export const COMPOSIO_SLUG_RENAMES: Readonly<Record<string, string>> = {
+  GOOGLECALENDAR_LIST_EVENTS: "GOOGLECALENDAR_EVENTS_LIST",
+};
+
+/** The current slug for a (possibly renamed) Composio action slug. */
+export function currentComposioSlug(slug: string): string {
+  return Object.prototype.hasOwnProperty.call(COMPOSIO_SLUG_RENAMES, slug)
+    ? COMPOSIO_SLUG_RENAMES[slug]!
+    : slug;
+}
+
 /**
  * Resolve a composio binding to its enabled AgentTools. Wraps ONLY the binding's
  * `enabledTools` allowlist; uses the cached schema for `jsonSchema` when present
@@ -103,9 +119,19 @@ export function resolveComposioBinding(
     (binding.tools ?? []).map((t) => [t.name, t]),
   );
   const out: AgentTool[] = [];
-  for (const toolName of binding.enabledTools) {
+  const seen = new Set<string>();
+  for (const savedName of binding.enabledTools) {
+    // A saved binding may carry a slug Composio has since renamed; expose and
+    // execute the CURRENT slug (same permission, same action) — de-duplicated.
+    const toolName = currentComposioSlug(savedName);
+    if (seen.has(toolName)) continue;
+    seen.add(toolName);
     out.push(
-      wrapComposioTool(toolName, cacheByName.get(toolName), deps) as AgentTool,
+      wrapComposioTool(
+        toolName,
+        cacheByName.get(toolName) ?? cacheByName.get(savedName),
+        deps,
+      ) as AgentTool,
     );
   }
   return out;
