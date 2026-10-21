@@ -51,6 +51,7 @@ import {
   normalizeAvailability,
   normalizeMaxBookingsPerDay,
   partsInTimezone,
+  resolveAppointmentTypeDurationMinutes,
   resolveContextBookingRules,
   toMinutes,
   utcMomentForLocalTime,
@@ -250,11 +251,7 @@ function parseAvailabilityFromForm(formData: FormData) {
 }
 
 function resolveDuration(duration: number | undefined) {
-  if (duration == null || !Number.isFinite(duration)) {
-    return 30;
-  }
-
-  return duration >= 60 ? 60 : 30;
+  return resolveAppointmentTypeDurationMinutes(duration);
 }
 
 // v1.40.2 — toDateTimeLocalValue removed. Pre-1.40.2 it produced

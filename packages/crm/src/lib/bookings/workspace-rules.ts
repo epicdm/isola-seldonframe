@@ -138,6 +138,18 @@ export function clampBufferMinutes(raw: unknown): number {
   return Math.min(120, Math.round(value));
 }
 
+/** Resolve an APPOINTMENT TYPE's duration for the public booking flow.
+ *  Honors the stored per-type value within the same 5-240 minute bounds the
+ *  appointment-types API accepts (rounded). Non-finite => 30. Before this,
+ *  the public page snapped every type to 30 or 60, so a 15-minute type
+ *  showed and booked as 30 while the admin showed 15. */
+export function resolveAppointmentTypeDurationMinutes(raw: unknown): number {
+  if (raw == null) return 30;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return 30;
+  return Math.min(240, Math.max(5, Math.round(value)));
+}
+
 /** Clamp a duration-minutes value to 30-180 (rounded). Non-finite/too-small => 30. */
 export function clampDurationMinutes(raw: unknown): number {
   const value = Number(raw);
