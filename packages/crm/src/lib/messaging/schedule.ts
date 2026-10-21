@@ -32,7 +32,12 @@ import { sendEmailFromApi } from "@/lib/emails/api";
 import { sendSmsFromApi } from "@/lib/sms/api";
 import { composeOutboundMessage } from "./compose";
 import { buildRenderVars, type DispatchEventPayload } from "./render-vars";
-import { isScheduledSendPastBookingStart } from "./reminder-guards";
+import {
+  BOOKING_REMINDER_24H_SKILL_ID,
+  isBookingReminderWorkflowEnabled,
+  isScheduledSendPastBookingStart,
+  isScheduledSendCancelReason,
+} from "./reminder-guards";
 
 const SMS_STOP_FOOTER = "Reply STOP to unsubscribe.";
 
@@ -183,6 +188,15 @@ export async function processScheduledSend(
   if (isScheduledSendPastBookingStart(row.eventType, row.payload, new Date())) {
     await markScheduledSendCancelled(row.id, "past_start");
     return { ok: false, reason: "past_start" };
+  }
+  // Single path: when the workflow reminder is explicitly enabled it owns
+  // the 24h reminder, so the scheduled copy must not also send.
+  if (
+    trigger.skillId === BOOKING_REMINDER_24H_SKILL_ID &&
+    isBookingReminderWorkflowEnabled(process.env)
+  ) {
+    await markScheduledSendCancelled(row.id, "workflow_reminder_enabled");
+    return { ok: false, reason: "workflow_reminder_enabled" };
   }
 
   const [org] = await db
@@ -452,7 +466,7 @@ export async function tickScheduledSends(): Promise<{
       const result = await processScheduledSend(row);
       if (result.ok) {
         fired += 1;
-      } else if (result.reason === "trigger_disabled") {
+      } else if (isScheduledSendCancelReason(result.reason)) {
         cancelled += 1;
       } else {
         failed += 1;

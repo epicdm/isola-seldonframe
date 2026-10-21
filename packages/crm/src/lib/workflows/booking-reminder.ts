@@ -87,6 +87,15 @@ async function sendReminder(
   booking: BookingForReminder,
 ): Promise<ChannelResult> {
   "use step";
+  // 2026-10-21 — re-check the single-path gate at WAKE time, so a workflow
+  // started before the gate existed (or while it was on) cannot send once
+  // the scheduled-send path owns reminders.
+  const { isBookingReminderWorkflowEnabled } = await import(
+    "@/lib/messaging/reminder-guards"
+  );
+  if (!isBookingReminderWorkflowEnabled(process.env)) {
+    return { channel: "skipped", reason: "workflow_reminder_disabled" };
+  }
   // Lookup workspace integrations to decide which channel to use.
   const [org] = await db
     .select({ integrations: organizations.integrations })

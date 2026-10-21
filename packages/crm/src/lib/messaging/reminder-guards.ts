@@ -36,3 +36,16 @@ export function isScheduledSendPastBookingStart(
   if (!startsAt || Number.isNaN(startsAt.getTime())) return false;
   return now.getTime() > startsAt.getTime();
 }
+
+/** skill_id of the default 24h reminder trigger (seed-default-triggers). */
+export const BOOKING_REMINDER_24H_SKILL_ID = "booking-reminder-24h";
+
+/** processScheduledSend reasons that leave the row status='cancelled'
+ *  (counted as cancelled, not failed, by tickScheduledSends). */
+export function isScheduledSendCancelReason(reason: string): boolean {
+  return (
+    reason === "trigger_disabled" ||
+    reason === "past_start" ||
+    reason === "workflow_reminder_enabled"
+  );
+}

@@ -81,3 +81,44 @@ describe("wiring on the real paths", () => {
     assert.match(s.slice(fn, guard), /isScheduledSendPastBookingStart\(row\.eventType, row\.payload, new Date\(\)\)/);
   });
 });
+
+// ── Codex review delta (2026-10-21) ────────────────────────────────────
+import {
+  BOOKING_REMINDER_24H_SKILL_ID,
+  isScheduledSendCancelReason,
+} from "../../src/lib/messaging/reminder-guards";
+
+describe("Codex delta — exclusivity both ways + honest cron counts", () => {
+  test("cancel reasons are counted as cancelled; control: failures are not", () => {
+    for (const r of ["trigger_disabled", "past_start", "workflow_reminder_enabled"]) {
+      assert.equal(isScheduledSendCancelReason(r), true, r);
+    }
+    for (const r of ["trigger_deleted", "no_recipient", "compose_failed:x", "org_not_found"]) {
+      assert.equal(isScheduledSendCancelReason(r), false, r);
+    }
+  });
+  test("tickScheduledSends uses the cancel-reason helper", () => {
+    const s = src("lib/messaging/schedule.ts");
+    const tick = s.indexOf("export async function tickScheduledSends");
+    assert.ok(tick > 0);
+    assert.match(s.slice(tick), /isScheduledSendCancelReason\(result\.reason\)/);
+  });
+  test("scheduled 24h reminder is cancelled (before compose) when the workflow path is enabled", () => {
+    const s = src("lib/messaging/schedule.ts");
+    const fn = s.indexOf("export async function processScheduledSend");
+    const guard = s.indexOf('"workflow_reminder_enabled"', fn);
+    const compose = s.indexOf("composeOutboundMessage(", fn);
+    assert.ok(guard > fn && guard < compose);
+    assert.match(s.slice(fn, compose), /trigger\.skillId === BOOKING_REMINDER_24H_SKILL_ID/);
+    assert.equal(BOOKING_REMINDER_24H_SKILL_ID, "booking-reminder-24h");
+  });
+  test("workflow send step re-checks the gate before any send", () => {
+    const s = src("lib/workflows/booking-reminder.ts");
+    const fn = s.indexOf("async function sendReminder(");
+    const gate = s.indexOf("isBookingReminderWorkflowEnabled(process.env)", fn);
+    const sms = s.indexOf("sendSmsFromApi", fn);
+    const email = s.indexOf("sendEmailFromApi", fn);
+    assert.ok(fn > 0 && sms > fn && email > fn, "control: both sends exist");
+    assert.ok(gate > fn && gate < sms && gate < email, "gate precedes both sends");
+  });
+});
