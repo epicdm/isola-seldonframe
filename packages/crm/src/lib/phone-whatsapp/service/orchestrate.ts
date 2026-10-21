@@ -101,6 +101,7 @@ export async function serviceView(ws: string, phone: string, deps: ServiceDeps):
     readAt: f.evidence?.observedAt ?? null,
     currentDestination: m?.ok && m.destination?.count === 1 ? m.destination.value : null,
     observations: deps.routingObservations?.(ws, phone) ?? [],
+    now: deps.now(),
   }) : null;
   return { eligibility, routingHealth, states, selectable, current: f.dest ? { destinationId: f.dest.id, label: f.dest.label, version: versionOf(f.dest) } : null, acceptance: { current, historical }, missing: states.acceptance === "not_applicable" ? [] : ev.missing, observedAt: f.evidence?.observedAt ?? null };
 }

@@ -8,6 +8,7 @@ import { renderToString } from "react-dom/server";
 
 import { ServiceStatesCard } from "../../../src/app/(dashboard)/phone-whatsapp/service-states";
 import { serviceView, type ServiceDeps, type ServiceView } from "../../../src/lib/phone-whatsapp/service/orchestrate";
+import type { RoutingObservation } from "../../../src/lib/phone-whatsapp/service/routing-observations";
 import type { LineEvidence } from "../../../src/lib/phone-whatsapp/types";
 
 const WS = "aaaaaaaa-0000-4000-8000-0000000000a1";
@@ -17,16 +18,16 @@ const DEST_3742 = "PJSIP/15550103742@pbx-fictional-a"; // shape of PJSIP/1767818
 const DEST_0001 = "PJSIP/36915550100001@AI-FICTIONAL"; // shape of PJSIP/36917678180001@AI-EPIC-DM
 const OBS_AT = "2026-10-21T08:55:00.000Z";
 
-type Obs = { workspaceId: string; phoneNumberId: string; observedAt: string; source: string; destination: string; result: string; faults?: string[] };
+type Obs = RoutingObservation;
 const obs = (o: Partial<Obs>): Obs => ({ workspaceId: WS, phoneNumberId: PHONE, observedAt: OBS_AT, source: "Lane A trace", destination: DEST_3742, result: "configured_unverified", ...o });
 
-function evidence(o: { dest?: string; answered?: boolean; magnusOk?: boolean; destActive?: boolean; callingStatus?: string } = {}): LineEvidence {
+function evidence(o: { dest?: string; answered?: boolean; magnusOk?: boolean; destActive?: boolean; didActive?: boolean; count?: number; callingStatus?: string; metaStatus?: string } = {}): LineEvidence {
   return {
     schema: "line-evidence/v1", wabaId: WABA, phoneNumberId: PHONE, observedAt: "2026-10-21T08:47:26.602Z",
-    meta: { ok: true, displayNumber: "+1 555-010-3742", verifiedName: "Test", status: "CONNECTED", codeVerification: "EXPIRED", quality: "GREEN", nameStatus: "APPROVED", platformType: "CLOUD_API", messagingLimitTier: "TIER_2K", canReceiveCallSip: "AVAILABLE", extraFieldsError: null },
+    meta: { ok: true, displayNumber: "+1 555-010-3742", verifiedName: "Test", status: o.metaStatus ?? "CONNECTED", codeVerification: "EXPIRED", quality: "GREEN", nameStatus: "APPROVED", platformType: "CLOUD_API", messagingLimitTier: "TIER_2K", canReceiveCallSip: "AVAILABLE", extraFieldsError: null },
     calling: { ok: true, status: o.callingStatus ?? "ENABLED", sipStatus: "ENABLED", sipHost: "voice.example.test", sipPort: 5061, callIconVisibility: "DEFAULT" },
     magnus: o.magnusOk === false ? { ok: false, error: "voice platform did not answer" } : {
-      ok: true, did: { activated: true, reserved: true }, destination: { value: o.dest ?? DEST_3742, kind: "pjsip_trunk", activated: o.destActive ?? true, count: 1 },
+      ok: true, did: { activated: o.didActive ?? true, reserved: true }, destination: { value: o.dest ?? DEST_3742, kind: "pjsip_trunk", activated: o.destActive ?? true, count: o.count ?? 1 },
       // 3742's recent answered calls came over the phone network; they must never make the WhatsApp leg look verified.
       lastCalls: o.answered === false ? [] : [{ startedAt: "2026-10-20T20:26:36.000Z", durationSec: 175, answered: true, terminateCauseId: 1 }],
     },
@@ -35,7 +36,7 @@ function evidence(o: { dest?: string; answered?: boolean; magnusOk?: boolean; de
 
 function deps(o: { ev?: LineEvidence; observations?: Obs[]; connection?: "active" | null; seen?: Array<[string, string]> } = {}): ServiceDeps {
   return {
-    now: () => new Date("2026-10-21T09:00:00Z"),
+    now: () => new Date("2026-10-21T12:00:00Z"),
     connectionStatus: async () => (o.connection === undefined ? null : o.connection),
     claimants: async () => [WS],
     line: async (w) => (w === WS ? { wabaId: WABA } : null),
@@ -47,12 +48,12 @@ function deps(o: { ev?: LineEvidence; observations?: Obs[]; connection?: "active
     callEvents: async () => [], appendCallEvent: async () => {},
     acceptance: async () => [], appendAcceptance: async () => {},
     // extra dependency: ignored by code that does not know it (so this file runs, and fails on assertions, on the base commit)
-    routingObservations: (w: string, p: string) => { o.seen?.push([w, p]); return (o.observations ?? []) as never; },
-  } as ServiceDeps;
+    routingObservations: (w: string, p: string) => { o.seen?.push([w, p]); return o.observations ?? []; },
+  };
 }
 
-const card = (v: ServiceView) => renderToString(<ServiceStatesCard {...({ states: v.states, observedAt: v.observedAt, eligibility: (v as { eligibility?: unknown }).eligibility, routingHealth: (v as { routingHealth?: unknown }).routingHealth } as unknown as Parameters<typeof ServiceStatesCard>[0])} />);
-const health = (v: ServiceView) => (v as { routingHealth?: { state: string; text: string } | null }).routingHealth;
+const card = (v: ServiceView) => renderToString(<ServiceStatesCard states={v.states} observedAt={v.observedAt} eligibility={v.eligibility} routingHealth={v.routingHealth} />);
+const health = (v: ServiceView) => v.routingHealth;
 const OPERATIONAL = /verified ready|verified as of|is operational|routing is healthy|\bhealthy\b/i;
 
 describe("routing health for a staff-linked line (owner ruling 2026-10-21)", () => {
@@ -127,6 +128,35 @@ describe("routing health for a staff-linked line (owner ruling 2026-10-21)", () 
     const html = card(v);
     assert.match(html, /Not eligible yet/);
     assert.doesNotMatch(html, /verified as of/);
+  });
+
+  test("a FUTURE-dated passing call (after the clock) proves nothing: not verified", async () => {
+    const v = await serviceView(WS, PHONE, deps({ observations: [obs({ result: "whatsapp_call_passed", observedAt: "2099-01-01T00:00:00.000Z" })] }));
+    assert.equal(health(v)?.state, "not_measured");
+    assert.doesNotMatch(card(v), /verified as of/);
+  });
+
+  test("an observation time with an offset is shown in real UTC", async () => {
+    const v = await serviceView(WS, PHONE, deps({ observations: [obs({ result: "whatsapp_call_passed", observedAt: "2026-10-21T04:00:00-04:00" })] }));
+    assert.match(card(v), /verified as of 2026-10-21 08:00 UTC/);
+  });
+
+  test("a recorded passing call no longer applies after the destination is switched off: the acceptance row does not claim nothing was ever recorded", async () => {
+    const html = card(await serviceView(WS, PHONE, deps({ ev: evidence({ destActive: false }), observations: [obs({ result: "whatsapp_call_passed" })] })));
+    assert.match(html, /No passing WhatsApp acceptance call is recorded for the current route/);
+    assert.doesNotMatch(html, /verified as of/);
+  });
+
+  test("inactive DID: live fault; two destination rows (ambiguous): not measured; never verified", async () => {
+    const passed = [obs({ result: "whatsapp_call_passed" })];
+    assert.equal(health(await serviceView(WS, PHONE, deps({ ev: evidence({ didActive: false }), observations: passed })))?.state, "faults");
+    const amb = await serviceView(WS, PHONE, deps({ ev: evidence({ count: 2 }), observations: passed }));
+    assert.equal(health(amb)?.state, "not_measured");
+    assert.doesNotMatch(card(amb), /verified as of/);
+  });
+
+  test("Meta no longer reports CONNECTED: a recorded passing call does not make the heading verified", async () => {
+    assert.doesNotMatch(card(await serviceView(WS, PHONE, deps({ ev: evidence({ metaStatus: "DISCONNECTED" }), observations: [obs({ result: "whatsapp_call_passed" })] }))), /verified as of/);
   });
 
   test("control: a self-serve line (active connect-flow record) keeps its existing routing row; no staff health is applied", async () => {

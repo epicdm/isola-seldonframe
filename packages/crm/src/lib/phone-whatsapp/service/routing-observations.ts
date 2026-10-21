@@ -55,14 +55,16 @@ export function deriveRoutingHealth(i: {
   /** When the live voice-platform facts were read. */
   readAt: string | null;
   observations: RoutingObservation[];
+  /** The injected clock: an observation dated after it has not happened yet and proves nothing (Codex review). */
+  now: Date;
 }): RoutingHealth {
   if (!i.magnusRead) return { state: "unknown", text: "Routing could not be checked right now", observedAt: null, source: null };
   if (!i.routed) return { state: "faults", text: "Not operational: the voice platform has no active destination for this number", observedAt: i.readAt, source: "EPIC voice platform (Magnus)" };
-  const latest = [...i.observations].sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime())[0];
+  const latest = i.observations.filter((o) => new Date(o.observedAt).getTime() <= i.now.getTime()).sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime())[0];
   const notMeasured: RoutingHealth = { state: "not_measured", text: "Not measured: Uplink cannot see the voice server, and no EPIC check is recorded for the current route", observedAt: null, source: null };
   if (!latest || !i.currentDestination || latest.destination !== i.currentDestination) return notMeasured;
   const tail = `(observed ${day(latest.observedAt)}, ${latest.source.trim()})`;
-  const base = { observedAt: latest.observedAt, source: latest.source.trim() };
+  const base = { observedAt: new Date(latest.observedAt).toISOString(), source: latest.source.trim() }; // normalised to UTC before display (Codex review)
   if (latest.result === "faults") return { state: "faults", text: `Not operational: ${latest.faults!.map((f) => f.trim()).join("; ")} ${tail}`, ...base };
   if (latest.result === "whatsapp_call_passed") return { state: "verified", text: `A WhatsApp call to this number worked in both directions ${tail}`, ...base };
   return { state: "configured_unverified", text: `Configured; WhatsApp call not yet verified ${tail}`, ...base };
