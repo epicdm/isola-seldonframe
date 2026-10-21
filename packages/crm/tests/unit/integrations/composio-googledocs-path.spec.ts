@@ -110,7 +110,8 @@ describe("Google Docs chip -> binding -> runtime (read-only doc text)", () => {
     } as never);
     assert.equal(out, "doc text");
     assert.deepEqual(calls, [
-      { orgId: "org-1", tool: DOC_TOOL, args: { document_id: "doc-123" } },
+      // Docs reads default to ALL tabs (docs-tabs.ts) — the executor receives include_tabs_content=true.
+      { orgId: "org-1", tool: DOC_TOOL, args: { document_id: "doc-123", include_tabs_content: true } },
     ]);
   });
 
