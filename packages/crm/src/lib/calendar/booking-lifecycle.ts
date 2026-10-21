@@ -36,7 +36,7 @@
 // (settings.bookingCalendar.calendarId). Everyone else: a no-op.
 // SOFT-FAIL exactly like the invite path: nothing here throws.
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { bookings, emails } from "@/db/schema";
 import { sendEmailFromApi, type ApiSendEmailResult } from "@/lib/emails/api";
@@ -154,7 +154,10 @@ async function defaultCancelEmailSent(orgId: string, bookingId: string, who: Rec
     .where(
       and(
         eq(emails.orgId, orgId),
-        eq(emails.status, "sent"),
+        // Acceptance evidence that survives later webhook status changes
+        // ("delivered", "opened", ...): sent_at is written together with
+        // status "sent", only after the provider accepted the email.
+        isNotNull(emails.sentAt),
         sql`(${emails.metadata} ->> ${tag}::text) = ${bookingId}`,
       ),
     )
@@ -267,8 +270,12 @@ export async function sendBookingCalendarCancellation(
     // CUSTOMER — at most one confirmed email.
     let customer: "existing_email" | "dedicated_email" | "already_sent" | "failed" | "no_email" = "no_email";
     if (await deps.claimRecipient(input.orgId, input.bookingId, "customer")) {
-      let delivered = false;
-      if (opts.deliverToCustomer) {
+      // A re-claimed (stale) recipient may already have been served by an
+      // attempt that died before recording it: check the persisted evidence
+      // FIRST, before sending anything.
+      let delivered = await deps.cancelEmailSent(input.orgId, input.bookingId, "customer").catch(() => false);
+      if (delivered) customer = "already_sent";
+      if (!delivered && opts.deliverToCustomer) {
         try {
           await opts.deliverToCustomer(attachment, { [CANCEL_EMAIL_TAG]: input.bookingId });
         } catch (err) {
@@ -285,7 +292,7 @@ export async function sendBookingCalendarCancellation(
       }
       if (!delivered && data.booking.customerEmail) {
         try {
-          await deps.sendEmail({
+          const res = await deps.sendEmail({
             orgId: data.org.id,
             userId: null,
             contactId: null,
@@ -305,8 +312,9 @@ export async function sendBookingCalendarCancellation(
             attachments: [attachment],
             metadata: { [CANCEL_EMAIL_TAG]: input.bookingId },
           });
-          delivered = true;
-          customer = "dedicated_email";
+          // A suppressed address was NOT served: keep it retryable.
+          delivered = !res.suppressed;
+          customer = delivered ? "dedicated_email" : "failed";
         } catch (err) {
           // The provider may still have accepted it before a later step
           // failed: trust the persisted row, never guess.
@@ -332,8 +340,13 @@ export async function sendBookingCalendarCancellation(
       warn("calendar_cancel.owner_skipped", { orgId: input.orgId, bookingId: input.bookingId, reason: "no_owner_email" });
     } else if (await deps.claimRecipient(input.orgId, input.bookingId, "owner")) {
       try {
+        if (await deps.cancelEmailSent(input.orgId, input.bookingId, "owner").catch(() => false)) {
+          owner = "already_sent";
+          await deps.finishRecipient(input.orgId, input.bookingId, "owner", "sent").catch(() => undefined);
+          return { sent: true, customer, owner };
+        }
         const connected = await deps.hasConnectedCalendar(input.orgId).catch(() => false);
-        await deps.sendEmail({
+        const res = await deps.sendEmail({
           orgId: data.org.id,
           userId: null,
           contactId: null,
@@ -357,8 +370,10 @@ export async function sendBookingCalendarCancellation(
           attachments: [attachment],
           metadata: { [OWNER_CANCEL_EMAIL_TAG]: input.bookingId },
         });
-        owner = "sent";
-        await deps.finishRecipient(input.orgId, input.bookingId, "owner", "sent").catch(() => undefined);
+        owner = res.suppressed ? "failed" : "sent";
+        await deps
+          .finishRecipient(input.orgId, input.bookingId, "owner", res.suppressed ? "release" : "sent")
+          .catch(() => undefined);
       } catch (err) {
         // Trust the persisted row: accepted-then-failed is still "sent".
         const accepted = await deps.cancelEmailSent(input.orgId, input.bookingId, "owner").catch(() => false);

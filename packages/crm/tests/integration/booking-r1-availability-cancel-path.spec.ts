@@ -48,7 +48,9 @@ let currentOrg = ORG_CFG;
 // "sent" only after the provider accepted (as lib/emails/api.ts does).
 //   fail_before_send  → provider rejects: row stays "queued", throws
 //   throw_after_sent  → provider accepted ("sent"), a later step throws
-const emailMode = new Map<string, "fail_before_send" | "throw_after_sent">();
+//   suppressed        → suppression list: no row, returns {suppressed:true}
+//   throw_after_sent also flips status to "delivered" first (webhook race)
+const emailMode = new Map<string, "fail_before_send" | "throw_after_sent" | "suppressed">();
 let portalContactId = "";
 
 class FakeComposio {
@@ -119,12 +121,17 @@ describe("release 1: availability + cancellation (scratch Postgres, production d
         sendEmailFromApi: async (p: Sent & { metadata?: Record<string, unknown>; contactId?: string | null }) => {
           const { db: d } = await import("@/db");
           const mode = emailMode.get(p.toEmail);
+          if (mode === "suppressed") return { emailId: null, contactId: null, suppressed: true, reason: "suppressed" };
           const md = JSON.stringify({ source: "api", ...(p.metadata ?? {}) });
           const ins = (await d.execute(sql`insert into emails (org_id, provider, from_email, to_email, subject, status, metadata) values (${p.orgId}::uuid, 'test', 'from@r1.test', ${p.toEmail}, ${p.subject}, 'queued', ${md}::jsonb) returning id`)) as unknown as { rows: Array<{ id: string }> };
           if (mode === "fail_before_send") throw new Error("provider rejected");
           sent.push({ orgId: p.orgId, toEmail: p.toEmail, subject: p.subject, body: p.body, attachments: p.attachments });
           await d.execute(sql`update emails set status='sent', sent_at=now() where id=${ins.rows[0].id}::uuid`);
-          if (mode === "throw_after_sent") throw new Error("usage accounting failed after send");
+          if (mode === "throw_after_sent") {
+            // the Resend webhook may already have moved it to "delivered"
+            await d.execute(sql`update emails set status='delivered' where id=${ins.rows[0].id}::uuid`);
+            throw new Error("usage accounting failed after send");
+          }
           return { emailId: ins.rows[0].id, contactId: null, suppressed: false };
         },
         getEmailWithEvents: async () => null,
@@ -323,6 +330,36 @@ describe("release 1: availability + cancellation (scratch Postgres, production d
     assert.equal(customer.length, 1, "retry delivers to the customer");
     assert.equal(field(icsOf(customer[0])!, "SEQUENCE"), "1", "same cancel SEQUENCE on the retry");
     assert.equal(sent.filter((s) => s.toEmail === "r1-cfg-owner@r1.test").length, 0, "owner NOT re-sent");
+  });
+
+  test("suppressed customer is NOT marked served; once unsuppressed, a later attempt delivers once (Codex R1 r2 #3)", async () => {
+    reset();
+    const b = await book("r1-cfg", "sup@r1.test", "15:30");
+    reset();
+    emailMode.set("sup@r1.test", "suppressed");
+    await A.cancelBookingByTokenAction({ bookingId: b.id, token: sign(b.id) });
+    const [m] = await rows<{ d: Record<string, unknown> | null }>(sql`select metadata->'icsCancelDelivery' as d from bookings where id=${b.id}::uuid`);
+    assert.equal((m.d ?? {}).customer, undefined, "suppressed -> still retryable");
+    emailMode.delete("sup@r1.test");
+    reset();
+    const { emitSeldonEvent } = await import("@/lib/events/bus");
+    await emitSeldonEvent("booking.cancelled", { appointmentId: b.id, contactId: b.contact_id }, { orgId: ORG_CFG });
+    assert.equal(sent.filter((s) => s.toEmail === "sup@r1.test").length, 1);
+  });
+
+  test("stale claim from a died attempt whose email WAS accepted: re-claim sends nothing (Codex R1 r2 #2)", async () => {
+    reset();
+    const b = await book("r1-cfg", "died@r1.test", "08:00");
+    // fixture: a previous attempt claimed the customer, its tagged email was
+    // accepted (sent_at set), and the process died before recording "sent".
+    await ex(sql`update bookings set metadata = jsonb_set(jsonb_set(coalesce(metadata,'{}'::jsonb), '{icsCancelSequence}', '1'), '{icsCancelDelivery}', jsonb_build_object('customer', jsonb_build_object('status','sending','at', (now() - interval '1 hour')::text))) where id=${b.id}::uuid`);
+    await ex(sql`insert into emails (org_id, provider, from_email, to_email, subject, status, sent_at, metadata) values (${ORG_CFG}::uuid, 'test', 'f@r1.test', 'died@r1.test', 'x', 'delivered', now(), ${JSON.stringify({ calendarCancelFor: b.id })}::jsonb)`);
+    await ex(sql`update bookings set status='cancelled' where id=${b.id}::uuid`);
+    reset();
+    const { emitSeldonEvent } = await import("@/lib/events/bus");
+    await emitSeldonEvent("booking.cancelled", { appointmentId: b.id, contactId: b.contact_id }, { orgId: ORG_CFG });
+    assert.equal(sent.filter((s) => s.toEmail === "died@r1.test").length, 0, "persisted acceptance checked before sending");
+    assert.equal(sent.filter((s) => s.toEmail === "r1-cfg-owner@r1.test").length, 1, "control: the unserved owner is still notified");
   });
 
   test("cancel via the CUSTOMER PORTAL: ONE customer email carrying the CANCEL, reminder cancelled; a repeat sends nothing", async () => {
