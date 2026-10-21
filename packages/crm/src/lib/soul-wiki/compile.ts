@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { organizations, soulSources, soulWiki } from "@/db/schema";
+import { getAIClient } from "@/lib/ai/client";
 import { DEFAULT_SONNET_MODEL } from "@/lib/ai/models";
 
 type WikiCategory = {
@@ -35,13 +36,53 @@ const WIKI_CATEGORIES: WikiCategory[] = [
   { slug: "differentiators", title: "Differentiators", description: "What sets them apart from competitors, unique mechanisms, proprietary frameworks" },
 ];
 
-function getAnthropicClient() {
-  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
-  if (!apiKey) {
-    return null;
+// The workspace's own BYOK Anthropic key first, then the platform key (env, or the
+// mounted-file provider with its own model) — the same resolver the agents use.
+async function resolveCompileClient(orgId: string): Promise<{ client: Anthropic; model: string }> {
+  const resolution = await getAIClient({ orgId });
+  if (!resolution.client) {
+    throw new SoulCompileNoKeyError();
   }
+  return { client: resolution.client, model: resolution.model ?? DEFAULT_SONNET_MODEL };
+}
 
-  return new Anthropic({ apiKey });
+const NO_KEY_REASON = "no model key configured";
+
+class SoulCompileNoKeyError extends Error {
+  constructor() {
+    super(NO_KEY_REASON);
+    this.name = "SoulCompileNoKeyError";
+  }
+}
+
+// Short, secret-free reason for the operator: error class + message, key-shaped text removed.
+function compileErrorReason(error: unknown) {
+  if (error instanceof SoulCompileNoKeyError) return NO_KEY_REASON;
+  const name = error instanceof Error ? error.name || "Error" : "Error";
+  const message = error instanceof Error ? error.message : String(error);
+  return `${name}: ${message}`
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]")
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/\s+/g, " ")
+    .slice(0, 200);
+}
+
+// Fail visibly: the sources this compile covered become 'failed' with the reason in metadata.compileError.
+async function recordCompileFailure(orgId: string, sourceIds: string[], error: unknown) {
+  const reason = compileErrorReason(error);
+  console.error(`[soul-wiki] compile failed org=${orgId} sources=${sourceIds.length}: ${reason}`);
+  try {
+    await db
+      .update(soulSources)
+      .set({
+        status: "failed",
+        metadata: sql`${soulSources.metadata} || jsonb_build_object('compileError', ${reason}::text)`,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(soulSources.orgId, orgId), inArray(soulSources.id, sourceIds)));
+  } catch (markError) {
+    console.error(`[soul-wiki] could not record compile failure org=${orgId}: ${compileErrorReason(markError)}`);
+  }
 }
 
 function buildRawBundle(sources: SourceRow[]) {
@@ -70,21 +111,19 @@ export async function compileSoulWiki(orgId: string) {
     return;
   }
 
+  try {
   const [org] = await db
     .select({ soul: organizations.soul })
     .from(organizations)
     .where(eq(organizations.id, orgId))
     .limit(1);
 
-  const client = getAnthropicClient();
-  if (!client) {
-    return;
-  }
+  const { client, model } = await resolveCompileClient(orgId);
 
   const rawBundle = buildRawBundle(sources);
 
   for (const category of WIKI_CATEGORIES) {
-    const article = await compileArticle(client, category, rawBundle, org?.soul);
+    const article = await compileArticle(client, model, category, rawBundle, org?.soul);
 
     if (!article || article.trim().length < 50) {
       continue;
@@ -114,15 +153,19 @@ export async function compileSoulWiki(orgId: string) {
 
   await db
     .update(soulSources)
-    .set({ status: "compiled", updatedAt: new Date() })
+    .set({ status: "compiled", metadata: sql`${soulSources.metadata} - 'compileError'`, updatedAt: new Date() })
     .where(eq(soulSources.orgId, orgId));
+  } catch (error) {
+    await recordCompileFailure(orgId, sources.map((source) => source.id), error);
+    throw error;
+  }
 }
 
-async function compileArticle(client: Anthropic, category: WikiCategory, rawBundle: string, soul: unknown) {
+async function compileArticle(client: Anthropic, model: string, category: WikiCategory, rawBundle: string, soul: unknown) {
   const soulRecord = soul && typeof soul === "object" ? (soul as Record<string, unknown>) : null;
 
   const response = await client.messages.create({
-    model: DEFAULT_SONNET_MODEL,
+    model,
     max_tokens: 4096,
     system: `You are a business knowledge compiler. Your job is to read raw source material about a business and compile a specific wiki article from it.
 
@@ -173,6 +216,7 @@ export async function incrementalCompile(orgId: string, newSourceId: string) {
     return;
   }
 
+  try {
   const existingArticles = await db
     .select({ id: soulWiki.id, slug: soulWiki.slug, sourceIds: soulWiki.sourceIds, content: soulWiki.content })
     .from(soulWiki)
@@ -184,16 +228,13 @@ export async function incrementalCompile(orgId: string, newSourceId: string) {
     .where(eq(organizations.id, orgId))
     .limit(1);
 
-  const client = getAnthropicClient();
-  if (!client) {
-    return;
-  }
+  const { client, model } = await resolveCompileClient(orgId);
 
   for (const category of WIKI_CATEGORIES) {
     const existing = existingArticles.find((article) => article.slug === category.slug) as WikiRow | undefined;
 
     const response = await client.messages.create({
-      model: DEFAULT_SONNET_MODEL,
+      model,
       max_tokens: 4096,
       system: `You are a wiki editor. You have an existing article and new source material. Update the article if the new material adds relevant information. If nothing new is relevant, return the existing article unchanged.
 
@@ -256,8 +297,12 @@ Return the updated article:`,
 
   await db
     .update(soulSources)
-    .set({ status: "compiled", updatedAt: new Date() })
+    .set({ status: "compiled", metadata: sql`${soulSources.metadata} - 'compileError'`, updatedAt: new Date() })
     .where(eq(soulSources.id, newSource.id));
+  } catch (error) {
+    await recordCompileFailure(orgId, [newSource.id], error);
+    throw error;
+  }
 }
 
 export { WIKI_CATEGORIES };

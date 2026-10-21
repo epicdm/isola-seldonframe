@@ -243,6 +243,11 @@ export default function SoulWikiSettingsPage() {
           <h4 className="text-sm font-medium text-zinc-300">Sources ({sources.length})</h4>
           {sources.map((source) => {
             const wordCount = Number((source.metadata ?? {})["wordCount"] ?? 0);
+            const compileError = (source.metadata ?? {})["compileError"];
+            const statusLabel =
+              source.status === "failed" && typeof compileError === "string" && compileError
+                ? `failed: ${compileError}`
+                : source.status;
             return (
               <div key={source.id} className="flex items-center justify-between p-3 rounded-lg border border-zinc-800">
                 <div className="flex items-center gap-3">
@@ -253,7 +258,7 @@ export default function SoulWikiSettingsPage() {
                   {!['url', 'youtube', 'text', 'testimonial'].includes(source.type) ? <FileText className="h-4 w-4 text-zinc-400" /> : null}
                   <div>
                     <p className="text-sm text-zinc-200">{source.title || "Untitled source"}</p>
-                    <p className="text-xs text-zinc-500">{wordCount} words · {source.status}</p>
+                    <p className="text-xs text-zinc-500">{wordCount} words · {statusLabel}</p>
                   </div>
                 </div>
                 <button type="button" onClick={() => void handleDelete(source.id)} className="text-xs text-zinc-600 hover:text-red-400 inline-flex items-center gap-1">
@@ -271,7 +276,7 @@ export default function SoulWikiSettingsPage() {
         <div>
           <h3 className="text-lg font-semibold text-zinc-100 mb-1">What Seldon Knows About You</h3>
           <p className="text-sm text-zinc-500">Compiled from your sources and used during page/email/content generation.</p>
-          {articles.length > 0 ? (
+          {articles.length > 0 || sources.length > 0 ? (
             <Button variant="outline" size="sm" className="mt-3" disabled={isBusy} onClick={() => void recompile()}>
               Recompile All
             </Button>
