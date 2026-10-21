@@ -374,6 +374,55 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     assert.equal((await (await post(EPIC, raw)).json()).status, "duplicate");
   });
 
+  test("review P2-1: DETERMINISTIC interleaving — two first events for one subject both read 'no deal' before either claims; exactly one deal results", async () => {
+    configure();
+    const { drizzleLifecycleStore, processLifecycleEvent, parseLifecycleEvent } = await import("@/lib/personal-line/lifecycle");
+    const { moveDealToStage } = await import("@/lib/deals/stage-move");
+    const base = await drizzleLifecycleStore();
+    // barrier: each worker's FIRST projection read (no deal yet) waits until BOTH have read it, so both reach the
+    // compare-and-set claim with dealId = null — the exact window the isNull(projected_deal_id) guard protects
+    let arrivals = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const timer = setTimeout(() => release(), 10_000);   // never hang; the arrivals assertion below then fails loudly
+    const store = { ...base, async readProjection(o: string, subj: string) {
+      const r = await base.readProjection(o, subj);
+      if (subj === "subj_cas_window" && r.dealId === null && arrivals < 2) { arrivals++; if (arrivals === 2) release(); await gate; }
+      return r;
+    } };
+    const emit = async () => {};
+    const a = parseLifecycleEvent(body("pl.signup_started", "subj_cas_window"))!;
+    const b = parseLifecycleEvent(body("pl.line_created", "subj_cas_window"))!;
+    const rs = await Promise.all([processLifecycleEvent(EPIC, a, store as any, emit as any, (i) => moveDealToStage(i)), processLifecycleEvent(EPIC, b, store as any, emit as any, (i) => moveDealToStage(i))]);
+    clearTimeout(timer);
+    assert.equal(arrivals, 2, "both workers must have been inside the window");     // proves the interleaving happened
+    assert.deepEqual(rs.map((r) => r.status), ["processed", "processed"]);
+    const ds = await plDealOf(EPIC, "subj_cas_window");
+    assert.equal(ds.length, 1, `exactly one deal, got ${ds.length}`);
+    assert.equal(ds[0].stage, "Line created");                                           // and it ends at the furthest stage
+  });
+
+  test("review P3: oversized body -> 413 before any signature work; occurred after detected / detected in the future -> 422; an operator-edited phone is never overwritten", async () => {
+    configure();
+    const big = JSON.stringify({ pad: "x".repeat(5000) });
+    assert.equal((await post(EPIC, big, null)).status, 413);                          // unsigned AND oversized: 413, not 401
+    const fc = JSON.parse(produced["pl.first_call"]);
+    const late = body("pl.first_call", "subj_time", { occurred_at: "2026-10-21T20:00:00.000Z", facts: { first_call_at: "2026-10-21T20:00:00.000Z", first_call_detected_at: fc.facts.first_call_detected_at }, detected_at: "2026-10-21T19:00:00.000Z" });
+    assert.equal((await post(EPIC, late)).status, 422);
+    const future = body("pl.signup_started", "subj_time", { detected_at: new Date(Date.now() + 3_600_000).toISOString() });
+    assert.equal((await post(EPIC, future)).status, 422);
+    // phone: created with the verified phone; an operator edits it; the next event does not put it back
+    assert.equal((await post(EPIC, body("pl.signup_started", "subj_phone"))).status, 200);
+    const ident: any = await db.execute(sql`select contact_id from external_identities where org_id = ${EPIC}::uuid and external_id = 'subj_phone'`);
+    const cid = (ident.rows ?? ident)[0].contact_id;
+    const [c0] = await db.select().from(S.contacts).where(eq(S.contacts.id, cid));
+    assert.ok(c0.phone && c0.phone.startsWith("+"));                                  // positive twin: the verified phone was set
+    await db.update(S.contacts).set({ phone: "+17675550999" }).where(eq(S.contacts.id, cid));
+    assert.equal((await post(EPIC, body("pl.line_created", "subj_phone"))).status, 200);
+    const [c1] = await db.select().from(S.contacts).where(eq(S.contacts.id, cid));
+    assert.equal(c1.phone, "+17675550999");
+  });
+
   test("Codex r2: the stage write and its deal.stage_changed row are ONE statement — a lost CAS writes neither", async () => {
     configure();
     assert.equal((await post(EPIC, body("pl.signup_started", "subj_cas"))).status, 200);
