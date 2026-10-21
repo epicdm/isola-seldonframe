@@ -88,6 +88,7 @@ export default async function AgentSettingsPage({
         pricingFacts: blueprint.pricingFacts ?? [],
         customSkillMd: blueprint.customSkillMd ?? "",
       }}
+      initialConnectors={blueprint.connectors ?? []}
       defaultSkillMd={defaultSkillMd}
       allCapabilities={ALL_CAPABILITIES}
     />

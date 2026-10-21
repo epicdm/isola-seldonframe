@@ -8,6 +8,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { saveAgentBlueprintAction } from "@/lib/agents/actions";
 import { CUSTOM_SKILL_MD_MAX } from "@/lib/agents/blueprint-patch-limits";
+import { AgentConnectorsCard } from "@/components/agents/agent-connectors-card";
+import type { ConnectorBinding } from "@/lib/agents/mcp/connectors";
 
 type FaqRow = { q: string; a: string };
 type PricingRow = { label: string; amount: number; currency: string };
@@ -28,6 +30,9 @@ type Props = {
    *  by "Reset to default" to revert. */
   defaultSkillMd: string;
   allCapabilities: string[];
+  /** Bound MCP connectors (blueprint.connectors). Bound/removed immediately by
+   *  the Connectors card, independent of the Save buffer above. */
+  initialConnectors: ConnectorBinding[];
 };
 
 export function SettingsClient(props: Props) {
@@ -371,6 +376,11 @@ export function SettingsClient(props: Props) {
           )}
         </div>
       </div>
+
+      <AgentConnectorsCard
+        agentId={props.agentId}
+        initialConnectors={props.initialConnectors}
+      />
     </div>
   );
 }
