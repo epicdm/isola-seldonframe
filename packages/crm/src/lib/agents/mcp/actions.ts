@@ -120,6 +120,23 @@ export async function bindMcpConnectorAction(input: {
   });
   if (!result.ok) return { ok: false, error: "save_failed" };
 
+  // Re-bind under a new name (e.g. the endpoint changed): best-effort delete
+  // this agent's own superseded BYO secret so it is not left orphaned.
+  const previous = (blueprint.connectors ?? []).find((b) => b.id === binding.id);
+  if (
+    previous &&
+    previous.kind === "byo" &&
+    binding.kind === "byo" &&
+    previous.serviceName !== binding.serviceName &&
+    isAgentScopedSecret(input.agentId, previous.serviceName)
+  ) {
+    try {
+      await rotateSecret({ workspaceId: orgId, serviceName: previous.serviceName });
+    } catch {
+      // non-fatal — the binding already points at the new secret.
+    }
+  }
+
   return {
     ok: true,
     version: result.version,

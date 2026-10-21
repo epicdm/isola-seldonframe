@@ -72,7 +72,7 @@ function agentTag(agentId: string): string {
 /** Per-agent BYO secret name: byo_a<agent tag>_<128-bit digest of the full
  *  normalised endpoint>. Keyed on the endpoint itself (not the lossy slug), so
  *  two endpoints — including slug aliases like api.example.com vs
- *  api-example.com — never share a secret. 50 chars, within the old 52-char
+ *  api-example.com — do not share a secret (128-bit digest). 50 chars, within the old 52-char
  *  byo_<48-char slug> maximum, because the runtime namespaces tool names as
  *  `${serviceName}__${tool}` and model tool names are length-limited. */
 export function agentByoServiceName(agentId: string, endpoint: string): string {
@@ -99,6 +99,9 @@ export async function validateAgentByoEndpoint(
   if (parsed.protocol !== "https:") throw new AgentConnectorError("endpoint_not_allowed");
   try {
     const { url } = await assertPublicHttpUrl(parsed.toString(), opts.resolve ? { resolve: opts.resolve } : {});
+    // A fragment is never sent to the server: drop it so one endpoint has one
+    // identity (and one per-agent secret name).
+    url.hash = "";
     return { endpoint: url.toString(), id: byoSlug(url) };
   } catch {
     throw new AgentConnectorError("endpoint_not_allowed");

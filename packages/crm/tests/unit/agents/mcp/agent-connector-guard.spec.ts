@@ -155,7 +155,7 @@ describe("2 server-derived names, store after discovery, no cross-kind overwrite
 
     test(`[${path.name}] an existing non-byo binding with the derived id is never replaced`, async () => {
       const h = harness();
-      const existing = [{ kind: "composio", id: "odoo-mcp-example-com-mcp", enabledTools: [] } as unknown as ConnectorBinding];
+      const existing: ConnectorBinding[] = [{ kind: "composio", id: "odoo-mcp-example-com-mcp", enabledToolkits: [], enabledTools: [] }];
       await assert.rejects(bindVia(path, byo("https://odoo-mcp.example.com/mcp"), h, existing), isCode("connector_conflict"));
       assert.deepEqual(h.events, []);
     });
@@ -221,6 +221,15 @@ describe("4 error codes never carry upstream text", () => {
     assert.equal(agentConnectorErrorCode(caught), "discovery_failed");
     assert.equal(String((caught as Error).message).includes(KEY), false);
     assert.equal(agentConnectorErrorCode(new Error(`leak ${KEY}`)), "discovery_failed");
+  });
+
+  test("a fragment does not change the endpoint identity or the per-agent secret name", async () => {
+    const plain = await validateAgentByoEndpoint("https://odoo-mcp.example.com/mcp", { resolve: publicResolver });
+    const frag = await validateAgentByoEndpoint("https://odoo-mcp.example.com/mcp#x", { resolve: publicResolver });
+    assert.equal(frag.endpoint, plain.endpoint);
+    assert.equal(agentByoServiceName(AGENT_A, frag.endpoint), agentByoServiceName(AGENT_A, plain.endpoint));
+    const q = await validateAgentByoEndpoint("https://odoo-mcp.example.com/mcp?t=1", { resolve: publicResolver });
+    assert.notEqual(q.endpoint, plain.endpoint, "control: a query IS sent, so it stays part of the identity");
   });
 
   test("validateAgentByoEndpoint normalises and derives the id (control for the refusals)", async () => {
