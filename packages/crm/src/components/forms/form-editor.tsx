@@ -50,18 +50,21 @@ export function FormEditor({
   formId,
   initialName,
   initialSlug,
+  initialPublic,
   initialFields,
 }: {
   orgSlug: string;
   formId: string;
   initialName: string;
   initialSlug: string;
+  initialPublic?: boolean;
   initialFields: EditableField[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [name, setName] = useState(initialName);
   const [slug, setSlug] = useState(initialSlug);
+  const [isPublic, setIsPublic] = useState(Boolean(initialPublic));
   const [fields, setFields] = useState<EditableField[]>(initialFields);
 
   const serializedFields = useMemo(() => JSON.stringify(fields), [fields]);
@@ -155,6 +158,21 @@ export function FormEditor({
             </Link>
           </div>
         </div>
+        <label className="mt-3 flex items-start gap-2 text-sm">
+          <input type="hidden" name="publicIntake" value={isPublic ? "1" : "0"} />
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={isPublic}
+            onChange={(event) => setIsPublic(event.target.checked)}
+          />
+          <span>
+            Public intake form
+            <span className="block text-xs text-muted-foreground">
+              Only public forms can be the workspace&apos;s default /intake. Leave internal or staff forms unticked.
+            </span>
+          </span>
+        </label>
       </section>
 
       {/* ────── Fields ────── */}

@@ -41,7 +41,7 @@ export default async function FormEditPage({ params }: { params: Promise<{ id: s
         <p className="text-sm sm:text-base text-muted-foreground">Manage form fields and publishing details.</p>
       </div>
 
-      <FormEditor orgSlug={org.slug} formId={form.id} initialName={form.name} initialSlug={form.slug} initialFields={initialFields} />
+      <FormEditor orgSlug={org.slug} formId={form.id} initialName={form.name} initialSlug={form.slug} initialPublic={form.settings?.public === true} initialFields={initialFields} />
     </section>
   );
 }

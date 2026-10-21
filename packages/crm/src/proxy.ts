@@ -21,6 +21,8 @@ import {
 import { toInternalRedirectPath } from "@/lib/auth/signup-redirect";
 import { extraAppHosts } from "@/lib/http/app-hosts";
 import { resolvePlatformBranding, resolveWorkspaceBaseDomain, shouldHideVendorMarketingPath, shouldServeBrandedRootPublicly } from "@/lib/branding/platform";
+import { WORKSPACE_DEFAULT_FORM_SLUG } from "@/lib/forms/default-intake";
+import { resolveDomainLookupOrigin } from "@/lib/http/domain-lookup-origin";
 
 const protectedPrefixes = ["/hub", "/dashboard", "/welcome", "/orgs", "/contacts", "/deals", "/activities", "/forms", "/settings", "/api/v1"];
 const publicPrefixes = ["/api/v1", "/api/auth"];
@@ -114,7 +116,11 @@ function resolveWorkspaceRewritePath(
 ) {
   const defaultLandingSlug = defaults?.landingSlug || "home";
   const defaultBookingSlug = defaults?.bookingSlug || "default";
-  const defaultFormSlug = defaults?.formSlug || "intake";
+  // Bare /intake and /forms go to the workspace-default sentinel; the public
+  // form page resolves the owner-chosen / public default server-side
+  // (lib/forms/default-intake.ts). Never the lookup's formSlug, and never an
+  // internal form by accident.
+  const defaultFormSlug = WORKSPACE_DEFAULT_FORM_SLUG;
   const segments = pathname.split("/").filter(Boolean);
 
   if (pathname === "/" || pathname === "") {
@@ -833,7 +839,7 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     !pathname.startsWith("/api/")
   ) {
     try {
-      const domainLookupUrl = new URL("/api/v1/public/domain", request.url);
+      const domainLookupUrl = new URL("/api/v1/public/domain", resolveDomainLookupOrigin(request.url));
       domainLookupUrl.searchParams.set("host", host);
 
       const domainResponse = await fetch(domainLookupUrl, { cache: "no-store" });

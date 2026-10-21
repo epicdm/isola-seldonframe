@@ -10,6 +10,22 @@ import { getPublicOrgThemeBySlug } from "@/lib/theme/actions";
 import type { Metadata } from "next";
 import { resolvePlatformBranding } from "@/lib/branding/platform";
 import { LicenseNoticeLink } from "@/components/legal/license-notice-link";
+import { WORKSPACE_DEFAULT_FORM_SLUG } from "@/lib/forms/default-intake";
+import { loadDefaultIntakeForm } from "@/lib/forms/default-intake-server";
+
+/** Bare /intake arrives as the workspace-default sentinel: map it to the
+ *  workspace's public default form slug, or null when it has none. */
+async function resolveRequestedFormSlug(orgSlug: string, formSlug: string): Promise<string | null> {
+  if (formSlug !== WORKSPACE_DEFAULT_FORM_SLUG) return formSlug;
+  const [org] = await db
+    .select({ id: organizations.id, settings: organizations.settings })
+    .from(organizations)
+    .where(eq(organizations.slug, orgSlug))
+    .limit(1);
+  if (!org) return null;
+  const form = await loadDefaultIntakeForm(org.id, org.settings);
+  return form?.slug ?? null;
+}
 // 2026-05-18 (later) — agency-wide branding REMOVED from public-facing
 // intake pages. The agency's chrome substitution only applies to the
 // SMB operator's admin dashboard; their CUSTOMERS (the people filling
@@ -19,14 +35,16 @@ import { LicenseNoticeLink } from "@/components/legal/license-notice-link";
 // the top instead of the actual roofing company, which was confusing.
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string; formSlug: string }> }): Promise<Metadata> {
-  const { id: orgSlug, formSlug } = await params;
+  const { id: orgSlug, formSlug: requestedSlug } = await params;
+  const formSlug = await resolveRequestedFormSlug(orgSlug, requestedSlug);
+  const brand = resolvePlatformBranding();
+  if (!formSlug) return { title: "Form not available", robots: { index: false, follow: false } };
   const [row] = await db
     .select({ orgName: organizations.name, formName: intakeForms.name })
     .from(intakeForms)
     .innerJoin(organizations, eq(organizations.id, intakeForms.orgId))
     .where(and(eq(organizations.slug, orgSlug), eq(intakeForms.slug, formSlug)))
     .limit(1);
-  const brand = resolvePlatformBranding();
   if (!row) return { title: "Form not found", robots: { index: false, follow: false } };
   return {
     title: `${row.formName} | ${row.orgName}`,
@@ -41,7 +59,12 @@ export default async function PublicIntakePage({
 }: {
   params: Promise<{ id: string; formSlug: string }>;
 }) {
-  const { id: orgSlug, formSlug } = await params;
+  const { id: orgSlug, formSlug: requestedSlug } = await params;
+  const formSlug = await resolveRequestedFormSlug(orgSlug, requestedSlug);
+
+  if (!formSlug) {
+    notFound();
+  }
 
   const [org] = await db
     .select({ id: organizations.id, name: organizations.name })

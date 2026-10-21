@@ -1,8 +1,9 @@
 import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { bookings, intakeForms, landingPages, organizations } from "@/db/schema";
+import { bookings, landingPages, organizations } from "@/db/schema";
 import { resolveWorkspaceForCustomDomain } from "@/lib/domains/store";
+import { loadDefaultIntakeForm } from "@/lib/forms/default-intake-server";
 
 function normalizeHost(host: string) {
   return host.trim().toLowerCase().replace(/:\d+$/, "");
@@ -89,12 +90,9 @@ export async function GET(request: Request) {
     .orderBy(sql`${bookings.updatedAt} desc`)
     .limit(1);
 
-  const [form] = await db
-    .select({ slug: intakeForms.slug })
-    .from(intakeForms)
-    .where(sql`${intakeForms.orgId} = ${org.id}`)
-    .orderBy(sql`${intakeForms.updatedAt} desc`)
-    .limit(1);
+  // Owner-chosen / public default only (lib/forms/default-intake.ts) — the
+  // old "most recently updated" pick could surface an internal form.
+  const form = await loadDefaultIntakeForm(org.id);
 
   return NextResponse.json({
     ok: true,
@@ -104,7 +102,7 @@ export async function GET(request: Request) {
       defaults: {
         landingSlug: landing?.slug ?? "home",
         bookingSlug: booking?.slug ?? "default",
-        formSlug: form?.slug ?? "intake",
+        formSlug: form?.slug ?? null,
       },
     },
   });

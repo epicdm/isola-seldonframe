@@ -2,7 +2,9 @@ import { eq, and, desc } from "drizzle-orm";
 import { Globe, Building2, Clock, KeyRound, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { db } from "@/db";
-import { apiKeys, organizations } from "@/db/schema";
+import { apiKeys, intakeForms, organizations } from "@/db/schema";
+import { isPublicIntakeEligible, readDefaultIntakeFormId, resolveDefaultIntakeForm } from "@/lib/forms/default-intake";
+import { setDefaultIntakeFormAction } from "@/lib/forms/actions";
 import { getOrgId, requireAuth } from "@/lib/auth/helpers";
 import { isAdminTokenUserId } from "@/lib/auth/admin-token";
 import { updateWorkspaceSettingsAction } from "@/lib/workspace/actions";
@@ -61,6 +63,7 @@ export default async function WorkspaceSettingsPage() {
       slug: organizations.slug,
       timezone: organizations.timezone,
       ownerId: organizations.ownerId,
+      settings: organizations.settings,
     })
     .from(organizations)
     .where(eq(organizations.id, orgId))
@@ -74,6 +77,14 @@ export default async function WorkspaceSettingsPage() {
       </section>
     );
   }
+
+  const workspaceForms = await db
+    .select({ id: intakeForms.id, slug: intakeForms.slug, name: intakeForms.name, isActive: intakeForms.isActive, settings: intakeForms.settings })
+    .from(intakeForms)
+    .where(eq(intakeForms.orgId, org.id));
+  const chosenDefaultFormId = readDefaultIntakeFormId(org.settings);
+  const defaultIntakeForm = resolveDefaultIntakeForm({ forms: workspaceForms, defaultIntakeFormId: chosenDefaultFormId });
+  const publicForms = workspaceForms.filter((form) => form.isActive && isPublicIntakeEligible(form));
 
   // Find the most-recent admin-token (mcp:anonymous-create or mcp:device)
   // for the expiration display. Only relevant for guest sessions.
@@ -244,16 +255,47 @@ export default async function WorkspaceSettingsPage() {
           </li>
           <li className="flex items-center justify-between">
             <span className="text-muted-foreground">Intake</span>
-            <a
-              href={`https://${org.slug}.${workspaceBaseDomain}/intake`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-foreground hover:underline font-mono text-xs"
-            >
-              {org.slug}.{workspaceBaseDomain}/intake
-            </a>
+            {defaultIntakeForm ? (
+              <a
+                href={`https://${org.slug}.${workspaceBaseDomain}/intake`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-foreground hover:underline font-mono text-xs"
+                title={defaultIntakeForm.name}
+              >
+                {org.slug}.{workspaceBaseDomain}/intake
+              </a>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                No public intake form yet.{" "}
+                <Link href="/forms" className="underline">
+                  Mark a form public
+                </Link>
+              </span>
+            )}
           </li>
         </ul>
+        <form action={setDefaultIntakeFormAction} className="flex flex-wrap items-center gap-2 pt-2">
+          <label htmlFor="ws-default-intake" className="text-xs text-muted-foreground">
+            Default intake form
+          </label>
+          <select
+            id="ws-default-intake"
+            name="defaultIntakeFormId"
+            defaultValue={chosenDefaultFormId ?? ""}
+            className="rounded-lg border border-border bg-background py-1.5 px-2 text-xs"
+          >
+            <option value="">Automatic (only public forms)</option>
+            {publicForms.map((form) => (
+              <option key={form.id} value={form.id}>
+                {form.name} (/{form.slug})
+              </option>
+            ))}
+          </select>
+          <button type="submit" className="crm-button-secondary h-8 px-3 text-xs">
+            Save
+          </button>
+        </form>
         <p className="text-xs text-muted-foreground pt-1">
           Want a custom domain? See{" "}
           <Link href="/settings/domain" className="underline">

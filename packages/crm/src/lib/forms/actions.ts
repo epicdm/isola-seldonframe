@@ -1,7 +1,8 @@
 "use server";
 
 import { contactFromAnswers, emailFromAnswers } from "@/lib/forms/contact-from-answers";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { DEFAULT_INTAKE_FORM_SETTING, isPublicIntakeEligible } from "@/lib/forms/default-intake";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { contacts, intakeForms, intakeSubmissions, organizations } from "@/db/schema";
@@ -172,6 +173,13 @@ export async function updateFormAction(formData: FormData) {
   }
 
   const fields = normalizeFields(parsedFields);
+  // Explicit public marking (lib/forms/default-intake.ts). Only touched when
+  // the editor sends the field; other settings keys are preserved.
+  const publicField = formData.get("publicIntake");
+  const settingsPatch =
+    publicField === null
+      ? {}
+      : { settings: sql`coalesce(${intakeForms.settings}, '{}'::jsonb) || jsonb_build_object('public', ${publicField === "1"}::boolean)` };
 
   await db
     .update(intakeForms)
@@ -179,6 +187,7 @@ export async function updateFormAction(formData: FormData) {
       name,
       slug: toSlug(slugInput),
       fields,
+      ...settingsPatch,
       updatedAt: new Date(),
     })
     .where(and(eq(intakeForms.orgId, orgId), eq(intakeForms.id, formId)));
@@ -188,6 +197,41 @@ export async function updateFormAction(formData: FormData) {
   revalidatePath("/forms");
   revalidatePath(`/forms/${formId}/edit`);
   return { success: true };
+}
+
+/** Owner picks the workspace's public default intake form (or none).
+ *  Only an active, public-eligible form of this workspace is accepted. */
+export async function setDefaultIntakeFormAction(formData: FormData): Promise<void> {
+  assertWritable();
+
+  const orgId = await getOrgId();
+  if (!orgId) {
+    throw new Error("Unauthorized");
+  }
+
+  const formId = String(formData.get("defaultIntakeFormId") ?? "").trim();
+
+  if (!formId) {
+    await db
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) - ${DEFAULT_INTAKE_FORM_SETTING}::text`, updatedAt: new Date() })
+      .where(eq(organizations.id, orgId));
+  } else {
+    const [form] = await db
+      .select({ id: intakeForms.id, slug: intakeForms.slug, isActive: intakeForms.isActive, settings: intakeForms.settings })
+      .from(intakeForms)
+      .where(and(eq(intakeForms.orgId, orgId), eq(intakeForms.id, formId)))
+      .limit(1);
+    if (!form || !form.isActive || !isPublicIntakeEligible(form)) {
+      throw new Error("Only an active form marked public can be the default intake form");
+    }
+    await db
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object(${DEFAULT_INTAKE_FORM_SETTING}::text, ${form.id}::text)`, updatedAt: new Date() })
+      .where(eq(organizations.id, orgId));
+  }
+
+  revalidatePath("/settings/workspace");
 }
 
 export async function submitPublicIntakeAction({
