@@ -301,9 +301,17 @@ export type WebhookDeps = {
   nowS?: () => number;
 };
 
+/** A lifecycle event is a few hundred bytes; anything over this is refused BEFORE any signature work (review P3). */
+export const MAX_BODY_BYTES = 4096;
+/** Allowed clock skew for "not in the future" (same window as the signature freshness). */
+const FUTURE_SKEW_MS = 300_000;
+
 export async function handlePersonalLineLifecycle(request: Request, orgId: string, deps: WebhookDeps): Promise<{ status: number; body: Record<string, unknown> }> {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return { status: 413, body: { ok: false, error: "body_too_large" } };
   const raw = await request.text().catch(() => null);
   if (raw === null) return { status: 400, body: { ok: false, error: "unreadable_body" } };
+  if (Buffer.byteLength(raw, "utf8") > MAX_BODY_BYTES) return { status: 413, body: { ok: false, error: "body_too_large" } };
   const cfg = deps.config();
   if (!cfg) return { status: 503, body: { ok: false, error: "personal_line_not_configured" } };
   const check = verifyIngress(request.headers, raw, cfg.key, (deps.nowS ?? (() => Math.floor(Date.now() / 1000)))());
@@ -313,6 +321,10 @@ export async function handlePersonalLineLifecycle(request: Request, orgId: strin
   }
   const event = parseLifecycleEvent(raw);
   if (!event) return { status: 422, body: { ok: false, error: "invalid_event" } };
+  // review P3: an event cannot have happened after it was detected, and neither time can be in the future
+  const nowMs = (deps.nowS ? deps.nowS() * 1000 : Date.now());
+  if (event.occurredAt !== null && Date.parse(event.occurredAt) > Date.parse(event.detectedAt)) return { status: 422, body: { ok: false, error: "occurred_after_detected" } };
+  if (Date.parse(event.detectedAt) > nowMs + FUTURE_SKEW_MS) return { status: 422, body: { ok: false, error: "detected_in_future" } };
   const mapped = cfg.tenants.get(event.tenant);
   if (!mapped) {
     console.warn(`[pl-lifecycle] refused: unknown tenant`);

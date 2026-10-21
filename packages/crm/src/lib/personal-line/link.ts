@@ -14,7 +14,7 @@
 // contact insert and the identity insert, a replay, or two concurrent first events all converge on the SAME contact
 // row; nothing is ever deleted.
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 export const PL_PROVIDER = "personal_line";
 
@@ -32,6 +32,7 @@ export type LinkResult =
 export interface LinkStore {
   findIdentityByExternal(orgId: string, provider: string, externalId: string): Promise<{ contactId: string } | null>;
   contactExists(orgId: string, contactId: string): Promise<boolean>;
+  /** Fill the verified phone ONLY when the contact has none — an operator-edited phone is never overwritten (review P3). */
   setContactPhone(orgId: string, contactId: string, phone: string): Promise<void>;
   /** Insert the contact with exactly this id; a no-op if it already exists. */
   createContact(orgId: string, c: { id: string; firstName: string; phone: string | null; source: string }): Promise<void>;
@@ -76,7 +77,7 @@ export async function drizzleLinkStore(): Promise<LinkStore> {
     },
     async setContactPhone(orgId, contactId, phone) {
       await db.update(contacts).set({ phone, updatedAt: new Date() })
-        .where(and(eq(contacts.orgId, orgId), eq(contacts.id, contactId)));
+        .where(and(eq(contacts.orgId, orgId), eq(contacts.id, contactId), isNull(contacts.phone)));
     },
     async createContact(orgId, c) {
       await db.insert(contacts)
