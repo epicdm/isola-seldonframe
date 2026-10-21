@@ -69,22 +69,29 @@ export function AgentConnectorsCard({
     const key = apiKey.trim();
     const url = endpoint.trim();
     startBind(async () => {
-      const slug = slugForByo(url);
-      const result = await bindAction({
-        agentId,
-        connector: { kind: "byo", id: slug, serviceName: `byo_${slug}`, endpoint: url },
-        apiKey: key,
-      });
-      // Never keep the key around, whatever the outcome.
-      setApiKey("");
-      if (!result.ok) {
-        setBindError(friendlyBindError(result.error));
-        return;
+      try {
+        // id + serviceName are re-derived (and scoped to this agent) on the
+        // server; the values sent here are advisory only.
+        const slug = slugForByo(url);
+        const result = await bindAction({
+          agentId,
+          connector: { kind: "byo", id: slug, serviceName: `byo_${slug}`, endpoint: url },
+          apiKey: key,
+        });
+        if (!result.ok) {
+          setBindError(friendlyBindError(result.error));
+          return;
+        }
+        setConnected(`Connected — ${result.toolCount} tool${result.toolCount === 1 ? "" : "s"} available.`);
+        setEndpoint("");
+        setAdding(false);
+        router.refresh();
+      } catch {
+        setBindError(friendlyBindError("unexpected"));
+      } finally {
+        // Never keep the key around, whatever the outcome.
+        setApiKey("");
       }
-      setConnected(`Connected — ${result.toolCount} tool${result.toolCount === 1 ? "" : "s"} available.`);
-      setEndpoint("");
-      setAdding(false);
-      router.refresh();
     });
   };
 
@@ -218,13 +225,25 @@ export function AgentConnectorsCard({
   );
 }
 
-/** Map a bind action error code to friendly copy (agent-scoped wording). */
-function friendlyBindError(error: string): string {
-  if (error === "api_key_required") return "Enter the connector's API key.";
-  if (error === "unauthorized") return "You don't have access to this agent.";
-  if (error === "agent_not_found") return "Agent not found.";
-  if (/https/i.test(error)) return "The MCP endpoint must use https://.";
-  return `Couldn't connect: ${error}`;
+/** Map a bind error CODE to fixed copy. Never echoes server or upstream text:
+ *  an unknown value is reduced to a short safe code, else "error". */
+const BIND_ERROR_COPY: Record<string, string> = {
+  api_key_required: "Enter the connector's API key.",
+  unauthorized: "You don't have access to this agent.",
+  agent_not_found: "Agent not found.",
+  endpoint_not_allowed: "That endpoint isn't allowed. Use a public https:// MCP address.",
+  redirect_refused: "The MCP server redirected the request, which isn't allowed.",
+  connector_conflict: "A different connector with this name is already on this agent.",
+  unknown_connector: "Unknown connector.",
+  discovery_failed: "Couldn't reach the MCP server or list its tools. Check the address and key.",
+  save_failed: "Couldn't save the connector. Try again.",
+};
+
+export function friendlyBindError(error: string): string {
+  const known = BIND_ERROR_COPY[error];
+  if (known) return known;
+  const code = /^[a-z_]{1,40}$/.test(error) ? error : "error";
+  return `Couldn't connect (code: ${code}).`;
 }
 
 /** Stable id from a BYO endpoint (host + path slug) — same rule as the Studio editor. */

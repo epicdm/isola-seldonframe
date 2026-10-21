@@ -21,7 +21,6 @@ import { storeSecret, getSecretValue, rotateSecret } from "@/lib/secrets";
 import { updateAgentBlueprint } from "../store";
 import { createMcpClient } from "./client";
 import {
-  buildConnectorBinding,
   mergeConnectorBinding,
   removeConnectorBinding,
   withRediscoveredTools,
@@ -29,6 +28,13 @@ import {
   type BindDeps,
 } from "./bind";
 import { resolveConnectorEndpoint, type ConnectorBinding } from "./connectors";
+import {
+  agentConnectorErrorCode,
+  isAgentScopedSecret,
+  noRedirectFetch,
+  prepareAgentConnectorBinding,
+  validateAgentByoEndpoint,
+} from "./agent-connector-guard";
 import { db } from "@/db";
 import { agents, type AgentBlueprint } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
@@ -45,7 +51,8 @@ function realBindDeps(): BindDeps {
       await storeSecret({ workspaceId, serviceName, value });
     },
     discoverTools: async ({ endpoint, bearer }) => {
-      const client = createMcpClient({ endpoint, bearer });
+      // Discovery never follows a redirect (SSRF: a public host 302-ing inward).
+      const client = createMcpClient({ endpoint, bearer, fetchImpl: noRedirectFetch() });
       return client.listTools();
     },
   };
@@ -85,17 +92,22 @@ export async function bindMcpConnectorAction(input: {
   const blueprint = await loadBlueprint(input.agentId, orgId);
   if (!blueprint) return { ok: false, error: "agent_not_found" };
 
+  // id + serviceName are derived server-side from the validated endpoint (or
+  // the vetted registry); the key is stored only after discovery succeeds.
+  // Errors leave as fixed codes, never upstream text.
   let binding: ConnectorBinding;
   try {
-    binding = await buildConnectorBinding({
+    binding = await prepareAgentConnectorBinding({
       orgId,
+      agentId: input.agentId,
       connector: input.connector,
       apiKey: input.apiKey.trim(),
+      existing: blueprint.connectors,
       enabledTools: input.enabledTools,
       deps: realBindDeps(),
     });
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: agentConnectorErrorCode(err) };
   }
 
   const connectors = mergeConnectorBinding(blueprint.connectors, binding);
@@ -105,7 +117,7 @@ export async function bindMcpConnectorAction(input: {
     patch: { connectors },
     publishNotes: `Bound MCP connector: ${binding.id}`,
   });
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) return { ok: false, error: "save_failed" };
 
   return {
     ok: true,
@@ -139,13 +151,15 @@ export async function unbindMcpConnectorAction(input: {
     patch: { connectors },
     publishNotes: `Unbound MCP connector: ${input.connectorId}`,
   });
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) return { ok: false, error: "save_failed" };
 
   // Best-effort: drop the stored key so it isn't left dangling. rotateSecret
   // deletes the row (and mints a fresh capture link we ignore here). Composio
   // bindings have no stored secret (the key is the per-workspace Composio key,
   // shared across toolkits) — skip them.
-  if (target && target.kind !== "composio") {
+  // Only this agent's own BYO secret (byo_agent_<agentId>_*): never a shared
+  // vetted key or another agent's copy of the same endpoint.
+  if (target && target.kind === "byo" && isAgentScopedSecret(input.agentId, target.serviceName)) {
     try {
       await rotateSecret({ workspaceId: orgId, serviceName: target.serviceName });
     } catch {
@@ -185,8 +199,11 @@ export async function refreshMcpConnectorAction(input: {
   let endpoint: string;
   try {
     endpoint = resolveConnectorEndpoint(binding); // HTTPS-guarded
+    if (binding.kind === "byo") {
+      endpoint = (await validateAgentByoEndpoint(endpoint)).endpoint; // public-only
+    }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: agentConnectorErrorCode(err) };
   }
 
   const bearer = await getSecretValue({
@@ -198,9 +215,9 @@ export async function refreshMcpConnectorAction(input: {
 
   let tools;
   try {
-    tools = await createMcpClient({ endpoint, bearer }).listTools();
+    tools = await createMcpClient({ endpoint, bearer, fetchImpl: noRedirectFetch() }).listTools();
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: agentConnectorErrorCode(err) };
   }
 
   const refreshed = withRediscoveredTools(binding, tools);
@@ -211,7 +228,7 @@ export async function refreshMcpConnectorAction(input: {
     patch: { connectors },
     publishNotes: `Refreshed MCP connector: ${input.connectorId}`,
   });
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) return { ok: false, error: "save_failed" };
 
   return { ok: true, version: result.version, toolCount: tools.length };
 }

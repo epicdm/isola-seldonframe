@@ -153,6 +153,47 @@ describe("workspace agent Connectors", () => {
     assert.equal((screen.getByLabelText(/api key/i) as HTMLInputElement).value, "");
   });
 
+  test("item 4: an upstream error text is never shown — only fixed copy / a short code", async () => {
+    const upstream = `MCP server returned HTTP 500: Bearer ${KEY} <html>internal</html>`;
+    const bind: typeof bindMcpConnectorAction = async () => ({ ok: false, error: upstream });
+    render(withRouter(<AgentConnectorsCard agentId={AGENT_ID} initialConnectors={[]} bindAction={bind} />));
+    fireEvent.click(screen.getByRole("button", { name: /add connector/i }));
+    fireEvent.change(screen.getByLabelText(/mcp endpoint/i), { target: { value: ENDPOINT } });
+    fireEvent.change(screen.getByLabelText(/api key/i), { target: { value: KEY } });
+    fireEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await waitFor(() => assert.ok(screen.getByText(/couldn't connect \(code: error\)/i)), WAIT);
+    const html = document.body.innerHTML;
+    assert.equal(html.includes("HTTP 500"), false);
+    assert.equal(html.includes("internal"), false);
+    assert.equal(html.includes(KEY), false);
+  });
+
+  test("item 4 control: a known code maps to its fixed message", async () => {
+    const bind: typeof bindMcpConnectorAction = async () => ({ ok: false, error: "endpoint_not_allowed" });
+    render(withRouter(<AgentConnectorsCard agentId={AGENT_ID} initialConnectors={[]} bindAction={bind} />));
+    fireEvent.click(screen.getByRole("button", { name: /add connector/i }));
+    fireEvent.change(screen.getByLabelText(/mcp endpoint/i), { target: { value: ENDPOINT } });
+    fireEvent.change(screen.getByLabelText(/api key/i), { target: { value: KEY } });
+    fireEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await waitFor(() => assert.ok(screen.getByText(/isn't allowed\. use a public https/i)), WAIT);
+  });
+
+  test("item 5: the key is cleared even when the action throws", async () => {
+    const bind: typeof bindMcpConnectorAction = async () => {
+      throw new Error(`network down ${KEY}`);
+    };
+    render(withRouter(<AgentConnectorsCard agentId={AGENT_ID} initialConnectors={[]} bindAction={bind} />));
+    fireEvent.click(screen.getByRole("button", { name: /add connector/i }));
+    fireEvent.change(screen.getByLabelText(/mcp endpoint/i), { target: { value: ENDPOINT } });
+    fireEvent.change(screen.getByLabelText(/api key/i), { target: { value: KEY } });
+    fireEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+    await waitFor(
+      () => assert.equal((screen.getByLabelText(/api key/i) as HTMLInputElement).value, ""),
+      WAIT,
+    );
+    assert.equal(document.body.innerHTML.includes(KEY), false);
+  });
+
   test("bound connectors are listed and Remove calls unbind with agent + connector id", async () => {
     const bound: ConnectorBinding[] = [
       {
