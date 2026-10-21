@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { activities, contacts, deals, users } from "@/db/schema";
@@ -97,16 +97,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "completed_at must be a valid ISO timestamp" }, { status: 400 });
   }
 
+  // Both lookups are scoped to the caller's workspace: an id that exists in
+  // another workspace is reported exactly like one that does not exist (404),
+  // so a caller can neither attach to it nor learn that it exists.
   if (contactId) {
     const [match] = await db
       .select({ id: contacts.id })
       .from(contacts)
-      .where(eq(contacts.id, contactId))
+      .where(and(eq(contacts.orgId, guard.orgId), eq(contacts.id, contactId)))
       .limit(1);
     if (!match) return NextResponse.json({ error: "contact not found" }, { status: 404 });
   }
   if (dealId) {
-    const [match] = await db.select({ id: deals.id }).from(deals).where(eq(deals.id, dealId)).limit(1);
+    const [match] = await db
+      .select({ id: deals.id })
+      .from(deals)
+      .where(and(eq(deals.orgId, guard.orgId), eq(deals.id, dealId)))
+      .limit(1);
     if (!match) return NextResponse.json({ error: "deal not found" }, { status: 404 });
   }
 
