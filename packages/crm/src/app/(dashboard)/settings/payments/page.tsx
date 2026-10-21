@@ -1,4 +1,4 @@
-import { isStripeConnectConfigured } from "@seldonframe/payments";
+import { isStripeConnectConfigured } from "@/lib/payments/stripe-connect-state";
 import { startStripeConnectAction, getStripeConnectionStatus } from "@/lib/payments/actions";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { getOrgFeatures } from "@/lib/billing/features";

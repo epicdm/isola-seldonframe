@@ -38,6 +38,15 @@ const stripeConnectStateSchema: z.ZodType<StripeConnectState> = z.object({
   exp: z.number(),
 }) as z.ZodType<StripeConnectState>;
 
+/**
+ * True when Stripe Connect can start: the same condition buildStripeConnectUrl
+ * (@seldonframe/payments) refuses on. Kept in packages/crm because the release image
+ * ships packages/crm only, on a pinned packages/payments.
+ */
+export function isStripeConnectConfigured(): boolean {
+  return Boolean(process.env.STRIPE_CONNECT_CLIENT_ID);
+}
+
 /** The existing app signing secret (AUTH_SECRET, NEXTAUTH_SECRET fallback). Empty string when unset. */
 export function resolveStripeConnectStateSecret(): string {
   return process.env.AUTH_SECRET?.trim() || process.env.NEXTAUTH_SECRET?.trim() || "";

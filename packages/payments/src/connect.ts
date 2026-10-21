@@ -2,11 +2,6 @@ import { stripeConnectTokenResponseSchema } from "./types";
 
 const STRIPE_CONNECT_AUTHORIZE_URL = "https://connect.stripe.com/oauth/authorize";
 
-/** True when Stripe Connect can start: the same condition buildStripeConnectUrl refuses on. */
-export function isStripeConnectConfigured(): boolean {
-  return Boolean(process.env.STRIPE_CONNECT_CLIENT_ID);
-}
-
 export function buildStripeConnectUrl({ state, redirectUri }: { state: string; redirectUri: string }) {
   const clientId = process.env.STRIPE_CONNECT_CLIENT_ID;
   if (!clientId) {
