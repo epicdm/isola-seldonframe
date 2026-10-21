@@ -12,7 +12,7 @@ import type { Candidate } from "@/lib/chatwoot-link/service";
 export type ChatwootLinkViewState =
   | { kind: "linked"; url: string; conversationId: number; confirmedAt: string }
   | { kind: "checking" }
-  | { kind: "candidates"; candidates: Candidate[] }
+  | { kind: "candidates"; candidates: Candidate[]; incomplete?: boolean }
   | { kind: "none" }
   | { kind: "error" };
 
@@ -96,6 +96,11 @@ export function ChatwootLinkView({
               );
             })}
           </ul>
+          {view.incomplete ? (
+            <p data-testid="chatwoot-incomplete" className="text-xs text-muted-foreground">
+              Chatwoot has more matching contacts than were checked, so this list may be incomplete.
+            </p>
+          ) : null}
           {!canConfirm ? <p className="text-xs text-muted-foreground">A workspace owner or admin can confirm a match.</p> : null}
           {confirmError ? (
             <p data-testid="chatwoot-confirm-error" className="text-xs text-red-600">

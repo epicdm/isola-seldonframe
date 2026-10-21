@@ -30,7 +30,8 @@ export function ChatwootLinkCard({ contactId, initial, canConfirm }: { contactId
       .then((r) => {
         if (!live) return;
         if (!r.ok) setView(r.code === "chatwoot_unreachable" ? { kind: "error" } : { kind: "none" });
-        else setView(r.candidates.length ? { kind: "candidates", candidates: r.candidates } : { kind: "none" });
+        else if (r.candidates.length) setView({ kind: "candidates", candidates: r.candidates, incomplete: r.incomplete });
+        else setView(r.incomplete ? { kind: "error" } : { kind: "none" }); // "none found" is only said when the lookup was complete
       })
       .catch(() => live && setView({ kind: "error" }));
     return () => {

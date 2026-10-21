@@ -31,11 +31,16 @@ let calls = 0;
 const reader: ChatwootReader = {
   async searchContacts(q) {
     calls++;
-    return q === "5550100123" ? [{ id: 501, name: "Test Customer", phone: "+15550100123", email: null }] : [];
+    return { contacts: q === "5550100123" ? [{ id: 501, name: "Test Customer", phone: "+15550100123", email: null }] : [], complete: true };
   },
   async contactConversations(id) {
     calls++;
-    return id === 501 ? [{ displayId: 41, inboxId: 11, status: "open", lastActivityAt: 1_760_000_000 }] : [];
+    return id === 501
+      ? [
+          { displayId: 41, inboxId: 11, status: "open", lastActivityAt: 1_760_000_000 },
+          { displayId: 17, inboxId: 7, status: "resolved", lastActivityAt: 1_750_000_000 },
+        ]
+      : [];
   },
 };
 
@@ -110,5 +115,22 @@ describe("real SQL store: workspace scoping is in the query", () => {
     assert.deepEqual(await getChatwootLinkState(ORG_B, CONTACT_B, d), { state: "unlinked" });
     assert.equal((await getChatwootLinkState(ORG_A, CONTACT_A, d)).state, "linked");
     void activities;
+  });
+
+  test("REPLAY by SQL: after confirming 17, re-inserting the 41 row's metadata for the SAME contact does not revert the link (control: 17 shown before)", async () => {
+    const d = deps();
+    const asA = { orgId: ORG_A, userId: USER_A, role: "owner", realPerson: true };
+    const r = await confirmChatwootLink(asA, { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 17 }, d);
+    assert.ok(r.ok, JSON.stringify(r));
+    const s1 = await getChatwootLinkState(ORG_A, CONTACT_A, d);
+    assert.equal(s1.state === "linked" ? s1.conversationId : null, 17);
+    await pool.query(
+      "insert into activities (org_id, contact_id, user_id, type, subject, metadata, created_at) select org_id, contact_id, user_id, type, subject, metadata, now() + interval '1 minute' from activities where contact_id = $1 and type = $2 and metadata->>'conversationId' = '41' limit 1",
+      [CONTACT_A, CHATWOOT_LINK_ACTIVITY_TYPE],
+    );
+    const [{ newest }] = (await pool.query("select metadata->>'conversationId' as newest from activities where contact_id = $1 and type = $2 order by created_at desc limit 1", [CONTACT_A, CHATWOOT_LINK_ACTIVITY_TYPE])).rows;
+    assert.equal(newest, "41", "the replayed 41 row is the newest row");
+    const s2 = await getChatwootLinkState(ORG_A, CONTACT_A, d);
+    assert.equal(s2.state === "linked" ? s2.conversationId : null, 17);
   });
 });

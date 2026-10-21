@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { ChevronLeft, Mail, Phone } from "lucide-react";
 import { db } from "@/db";
 import { activities, bookings, contacts, deals, organizations, portalDocuments } from "@/db/schema";
-import { getOrgId, getCurrentUser, getCurrentWorkspaceRole } from "@/lib/auth/helpers";
+import { getOrgId, getCurrentUser } from "@/lib/auth/helpers";
 import { getLabels } from "@/lib/soul/labels";
 import { getPersonality } from "@/lib/crm/personality-server";
 import { getContactRevenue } from "@/lib/payments/actions";
@@ -18,9 +18,8 @@ import {
 } from "@/components/contacts/contact-record-detail";
 import type { DocumentRow } from "@/components/contacts/contact-documents-tab";
 import { ChatwootLinkCard } from "@/components/contacts/chatwoot-link-card";
-import { isAdminTokenUserId } from "@/lib/auth/admin-token";
-import { isOperatorPortalUserId } from "@/lib/auth/operator-portal-context";
 import { getChatwootLinkState, type LinkState } from "@/lib/chatwoot-link/service";
+import { canConfirmChatwootLink, resolveChatwootActor } from "@/lib/chatwoot-link/session";
 import { makeChatwootLinkDeps } from "@/lib/chatwoot-link/wiring";
 
 /**
@@ -165,12 +164,9 @@ export default async function ContactRecordPage({
   const chatwootLink: LinkState = await getChatwootLinkState(orgId, contact.id, makeChatwootLinkDeps(orgId)).catch(
     () => ({ state: "unavailable" }) as LinkState,
   );
+  // Same rule the confirm Server Action enforces (session.ts): a real NextAuth owner/admin, no token session mixed in.
   const chatwootCanConfirm =
-    chatwootLink.state === "unlinked" &&
-    !!currentUser?.id &&
-    !isAdminTokenUserId(currentUser.id) &&
-    !isOperatorPortalUserId(currentUser.id) &&
-    ["owner", "admin"].includes((await getCurrentWorkspaceRole().catch(() => null)) ?? "member");
+    chatwootLink.state === "unlinked" && canConfirmChatwootLink(await resolveChatwootActor().catch(() => null));
 
   // Resolve the client's workspace slug from customFields.workspaceId.
   // This is a lightweight second-pass query — runs after notFound() so

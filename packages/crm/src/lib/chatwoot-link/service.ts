@@ -8,19 +8,23 @@
 //    candidate for this contact: a crafted request cannot link an arbitrary conversation.
 //  * Only a real workspace owner/admin can confirm (not an admin-token or operator-portal session: a person must confirm).
 //  * Chatwoot is only ever READ (reader.ts has no write method). The only write is one activities row in Uplink.
+import { randomUUID } from "node:crypto";
+
+import { canConfirmChatwootLink } from "./actor";
 import { chatwootConversationUrl, type ChatwootLinkTarget, type ChatwootLookupConfig } from "./config";
 import { CHATWOOT_LINK_ACTIVITY_TYPE, chatwootLinkMetadata, verifyChatwootLink, type ChatwootLinkRecord } from "./record";
 import type { ChatwootReader } from "./reader";
 
 export type LinkContact = { id: string; orgId: string; firstName: string; lastName: string | null; email: string | null; phone: string | null };
-export type LinkActivityRow = { orgId: string; contactId: string | null; metadata: unknown };
+export type LinkActivityRow = { id: string; orgId: string; contactId: string | null; metadata: unknown };
 
 export interface ChatwootLinkStore {
   /** The contact, only if it belongs to orgId. */
   getContact(orgId: string, contactId: string): Promise<LinkContact | null>;
   /** This contact's chatwoot_link_confirmed rows in orgId, newest first. */
   linkActivities(orgId: string, contactId: string, limit: number): Promise<LinkActivityRow[]>;
-  insertLinkActivity(a: { orgId: string; contactId: string; userId: string; subject: string; metadata: Record<string, unknown> }): Promise<void>;
+  /** Inserts with the given id: the signature is bound to it. */
+  insertLinkActivity(a: { id: string; orgId: string; contactId: string; userId: string; subject: string; metadata: Record<string, unknown> }): Promise<void>;
 }
 
 export type ChatwootLinkDeps = {
@@ -30,6 +34,8 @@ export type ChatwootLinkDeps = {
   reader: ChatwootReader | null;
   key: string | null;
   now: () => Date;
+  /** Activity row id generator (default randomUUID). */
+  newId?: () => string;
 };
 
 export type LinkState =
@@ -48,12 +54,16 @@ export type Candidate = {
 
 export type Actor = { orgId: string; userId: string; role: string; realPerson: boolean };
 
-export type FindResult = { ok: true; candidates: Candidate[] } | { ok: false; code: "not_found" | "unavailable" | "chatwoot_unreachable" };
+/** incomplete: Chatwoot had more search pages than the lookup budget; some matches may not be listed. */
+export type FindResult = { ok: true; candidates: Candidate[]; incomplete: boolean } | { ok: false; code: "not_found" | "unavailable" | "chatwoot_unreachable" };
 export type ConfirmResult =
   | { ok: true; link: Extract<LinkState, { state: "linked" }> }
   | { ok: false; code: "not_found" | "unavailable" | "forbidden" | "not_a_candidate" | "chatwoot_unreachable" | "invalid" };
 
 const MAX_CONTACTS = 5;
+// How many chatwoot_link_confirmed rows of ONE contact are examined, newest first. Rows written by other paths never verify; this bounds
+// the work if someone floods a contact with them (the effect of a flood is fail-closed: the link is hidden, candidates show again).
+const LINK_SCAN_LIMIT = 200;
 const MAX_CONVERSATIONS_PER_CONTACT = 5;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -74,7 +84,7 @@ export async function getChatwootLinkState(orgId: string, contactId: string, dep
   if (!deps.target || !deps.key || !UUID.test(contactId)) return { state: "unavailable" };
   const contact = await deps.store.getContact(orgId, contactId);
   if (!contact) return { state: "unavailable" };
-  const rows = await deps.store.linkActivities(orgId, contactId, 20);
+  const rows = await deps.store.linkActivities(orgId, contactId, LINK_SCAN_LIMIT);
   for (const row of rows) {
     const rec = verifyChatwootLink(row, { orgId, contactId, accountId: deps.target.accountId }, deps.key);
     if (rec) return linked(deps.target, rec);
@@ -93,13 +103,14 @@ export async function findChatwootCandidates(actor: Pick<Actor, "orgId">, contac
   if (!contact) return { ok: false, code: "not_found" };
   if (!deps.lookup || !deps.reader || !deps.key) return { ok: false, code: "unavailable" };
   try {
-    return { ok: true, candidates: await lookupCandidates(contact, deps.reader) };
+    const r = await lookupCandidates(contact, deps.reader);
+    return { ok: true, candidates: r.candidates, incomplete: r.incomplete };
   } catch {
     return { ok: false, code: "chatwoot_unreachable" };
   }
 }
 
-async function lookupCandidates(contact: LinkContact, reader: ChatwootReader): Promise<Candidate[]> {
+async function lookupCandidates(contact: LinkContact, reader: ChatwootReader): Promise<{ candidates: Candidate[]; incomplete: boolean }> {
   const phone = phoneKey(contact.phone);
   const email = emailKey(contact.email);
   const matched = new Map<number, { name: string | null; on: Set<"phone" | "email"> }>();
@@ -108,12 +119,18 @@ async function lookupCandidates(contact: LinkContact, reader: ChatwootReader): P
     m.on.add(on);
     matched.set(id, m);
   };
+  let incomplete = false;
   if (phone) {
-    for (const c of await reader.searchContacts(phone)) if (phoneKey(c.phone) === phone) note(c.id, c.name, "phone");
+    const r = await reader.searchContacts(phone);
+    incomplete ||= !r.complete;
+    for (const c of r.contacts) if (phoneKey(c.phone) === phone) note(c.id, c.name, "phone");
   }
   if (email) {
-    for (const c of await reader.searchContacts(email)) if (emailKey(c.email) === email) note(c.id, c.name, "email");
+    const r = await reader.searchContacts(email);
+    incomplete ||= !r.complete;
+    for (const c of r.contacts) if (emailKey(c.email) === email) note(c.id, c.name, "email");
   }
+  if (matched.size > MAX_CONTACTS) incomplete = true;
   const out: Candidate[] = [];
   for (const [chatwootContactId, m] of [...matched.entries()].sort((a, b) => a[0] - b[0]).slice(0, MAX_CONTACTS)) {
     const convs = (await reader.contactConversations(chatwootContactId))
@@ -130,7 +147,7 @@ async function lookupCandidates(contact: LinkContact, reader: ChatwootReader): P
       });
     }
   }
-  return out;
+  return { candidates: out, incomplete };
 }
 
 /** A person confirms one candidate. Writes one Uplink activity; never writes to Chatwoot. */
@@ -143,18 +160,20 @@ export async function confirmChatwootLink(
   const cwContact = typeof input.chatwootContactId === "number" && Number.isInteger(input.chatwootContactId) && input.chatwootContactId > 0 ? input.chatwootContactId : null;
   const conv = typeof input.conversationId === "number" && Number.isInteger(input.conversationId) && input.conversationId > 0 ? input.conversationId : null;
   if (!contactId || !cwContact || !conv) return { ok: false, code: "invalid" };
-  if (!actor.realPerson || !["owner", "admin"].includes(actor.role)) return { ok: false, code: "forbidden" };
+  if (!canConfirmChatwootLink(actor)) return { ok: false, code: "forbidden" }; // the same rule the page uses to offer the button
   const contact = await deps.store.getContact(actor.orgId, contactId);
   if (!contact) return { ok: false, code: "not_found" };
   if (!deps.target || !deps.lookup || !deps.reader || !deps.key) return { ok: false, code: "unavailable" };
   let candidates: Candidate[];
   try {
-    candidates = await lookupCandidates(contact, deps.reader);
+    candidates = (await lookupCandidates(contact, deps.reader)).candidates;
   } catch {
     return { ok: false, code: "chatwoot_unreachable" };
   }
   if (!candidates.some((c) => c.chatwootContactId === cwContact && c.conversationId === conv)) return { ok: false, code: "not_a_candidate" };
+  const rowId = (deps.newId ?? randomUUID)();
   const rec: ChatwootLinkRecord = {
+    rowId,
     orgId: actor.orgId,
     uplinkContactId: contactId,
     accountId: deps.target.accountId,
@@ -164,6 +183,7 @@ export async function confirmChatwootLink(
     confirmedAt: deps.now().toISOString(),
   };
   await deps.store.insertLinkActivity({
+    id: rowId,
     orgId: actor.orgId,
     contactId,
     userId: actor.userId,

@@ -6,9 +6,11 @@
 // planted by a stranger.
 //
 // Activities are not exclusive to this feature either (the v1 activities API and the agent create_activity tool accept any type and
-// metadata), so a row only counts when it carries a valid HMAC over (workspace, Uplink contact, Chatwoot account, Chatwoot contact,
-// conversation, confirming user, time) under a key derived from AUTH_SECRET. Copying a row to another contact or workspace, or writing one
-// by hand, does not verify. No key = no link is ever shown (fail closed; there is no development fallback key).
+// metadata), so a row only counts when it carries a valid HMAC over (activity row id, workspace, Uplink contact, Chatwoot account, Chatwoot
+// contact, conversation, confirming user, time) under a key derived from AUTH_SECRET. The row id is generated before the insert and
+// checked against the row actually read, so re-inserting an older genuine record (replay, to revert a newer confirmation) does not verify,
+// nor does copying a row to another contact or workspace, or writing one by hand. No key = no link is ever shown (fail closed; there is no
+// development fallback key).
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import type { EnvLike } from "./config";
@@ -18,6 +20,8 @@ export const CHATWOOT_LINK_SCHEMA = "chatwoot-link/v1";
 const KEY_LABEL = "uplink:chatwoot-link-record:v1";
 
 export type ChatwootLinkRecord = {
+  /** The activities.id this record is stored under (generated before the insert). */
+  rowId: string;
   orgId: string;
   uplinkContactId: string;
   accountId: string;
@@ -36,6 +40,7 @@ export function chatwootLinkKey(env: EnvLike): string | null {
 function canonical(r: ChatwootLinkRecord): string {
   return JSON.stringify([
     CHATWOOT_LINK_SCHEMA,
+    r.rowId.toLowerCase(),
     r.orgId.toLowerCase(),
     r.uplinkContactId.toLowerCase(),
     r.accountId,
@@ -48,7 +53,7 @@ function canonical(r: ChatwootLinkRecord): string {
 
 const sign = (r: ChatwootLinkRecord, key: string) => createHmac("sha256", key).update(canonical(r)).digest("hex");
 
-/** The metadata stored on the activity row. orgId and the Uplink contact id live in the row's own columns and are covered by the signature. */
+/** The metadata stored on the activity row. Row id, orgId and the Uplink contact id live in the row's own columns; all are covered by the signature. */
 export function chatwootLinkMetadata(r: ChatwootLinkRecord, key: string): Record<string, unknown> {
   return {
     schema: CHATWOOT_LINK_SCHEMA,
@@ -69,7 +74,7 @@ const str = (v: unknown): string | null => (typeof v === "string" && v.length > 
  * (its own org/contact columns, not anything inside metadata).
  */
 export function verifyChatwootLink(
-  row: { orgId: string; contactId: string | null; metadata: unknown },
+  row: { id: string; orgId: string; contactId: string | null; metadata: unknown },
   expected: { orgId: string; contactId: string; accountId: string },
   key: string | null,
 ): ChatwootLinkRecord | null {
@@ -86,6 +91,7 @@ export function verifyChatwootLink(
   if (!accountId || !chatwootContactId || !conversationId || !confirmedByUserId || !confirmedAt || !sig) return null;
   if (accountId !== expected.accountId) return null; // re-mapped workspace: an old account's link is not shown
   const record: ChatwootLinkRecord = {
+    rowId: row.id,
     orgId: row.orgId,
     uplinkContactId: row.contactId,
     accountId,

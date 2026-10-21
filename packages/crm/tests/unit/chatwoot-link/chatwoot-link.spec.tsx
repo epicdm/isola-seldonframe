@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { randomUUID } from "node:crypto";
 import { after, before, beforeEach, describe, test } from "node:test";
 import { renderToString } from "react-dom/server";
 
@@ -19,7 +20,8 @@ import {
   loadChatwootLinkTarget,
   loadChatwootLookupConfig,
 } from "@/lib/chatwoot-link/config";
-import { makeChatwootReader } from "@/lib/chatwoot-link/reader";
+import { actorFromSession, canConfirmChatwootLink } from "@/lib/chatwoot-link/actor";
+import { makeChatwootReader, SEARCH_MAX_PAGES, SEARCH_PAGE_SIZE } from "@/lib/chatwoot-link/reader";
 import { CHATWOOT_LINK_ACTIVITY_TYPE, chatwootLinkKey, chatwootLinkMetadata, verifyChatwootLink } from "@/lib/chatwoot-link/record";
 import {
   confirmChatwootLink,
@@ -49,6 +51,7 @@ let server: Server;
 let cwBase = "";
 let requests: Req[] = [];
 let failAll = false;
+let filler = 0; // contacts whose number merely CONTAINS the searched digits, served BEFORE the real ones (page 1 fills up)
 
 const CW_CONTACTS = [
   { id: 501, name: "Test Customer", phone_number: "+15550100123", email: "customer@example.test" },
@@ -76,9 +79,13 @@ function handle(req: IncomingMessage, res: import("node:http").ServerResponse) {
   if (req.headers["api_access_token"] !== TOKEN) return send(401, { error: "unauthorized" });
   if (req.method !== "GET") return send(405, { error: "read-only fake" });
   if (url.pathname === "/api/v1/accounts/2/contacts/search") {
+    // v4.18: 15 per page, has_more computed by fetching one extra row (ContactsController#fetch_contacts_with_has_more)
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
-    const hit = CW_CONTACTS.filter((c) => [c.name, c.phone_number, c.email].some((v) => (v ?? "").toLowerCase().includes(q)));
-    return send(200, { meta: { count: hit.length, current_page: 1 }, payload: hit });
+    const page = Math.max(1, Number(url.searchParams.get("page") ?? "1"));
+    const fillers = Array.from({ length: filler }, (_, i) => ({ id: 9000 + i, name: `Filler ${i}`, phone_number: `+15550100123${String(i).padStart(3, "0")}`, email: null }));
+    const hit = [...fillers, ...CW_CONTACTS].filter((c) => [c.name, c.phone_number, c.email].some((v) => (v ?? "").toLowerCase().includes(q)));
+    const slice = hit.slice((page - 1) * 15, page * 15);
+    return send(200, { meta: { count: slice.length, current_page: page, has_more: hit.length > page * 15 }, payload: slice });
   }
   const m = /^\/api\/v1\/accounts\/2\/contacts\/(\d+)\/conversations$/.exec(url.pathname);
   if (m) return send(200, { payload: CW_CONVERSATIONS[Number(m[1])] ?? [] });
@@ -94,6 +101,7 @@ after(() => new Promise<void>((r) => server.close(() => r())));
 beforeEach(() => {
   requests = [];
   failAll = false;
+  filler = 0;
 });
 
 // ── in-memory store with the SAME scoping contract as the SQL store (proven against Postgres in the integration spec) ─────────────────
@@ -109,10 +117,10 @@ function memStore() {
       return contacts.find((c) => c.orgId === orgId && c.id === id) ?? null;
     },
     async linkActivities(orgId, contactId, limit) {
-      return acts.filter((a) => a.orgId === orgId && a.contactId === contactId && a.type === CHATWOOT_LINK_ACTIVITY_TYPE).reverse().slice(0, limit);
+      return acts.filter((a) => a.orgId === orgId && a.contactId === contactId && a.type === CHATWOOT_LINK_ACTIVITY_TYPE).slice().reverse().slice(0, limit);
     },
     async insertLinkActivity(a) {
-      acts.push({ orgId: a.orgId, contactId: a.contactId, metadata: a.metadata, type: CHATWOOT_LINK_ACTIVITY_TYPE, userId: a.userId, subject: a.subject });
+      acts.push({ id: a.id, orgId: a.orgId, contactId: a.contactId, metadata: a.metadata, type: CHATWOOT_LINK_ACTIVITY_TYPE, userId: a.userId, subject: a.subject });
     },
   };
   return { store, acts };
@@ -201,23 +209,28 @@ describe("config: only a mapped workspace gets anything", () => {
 // ── the signed record ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
 describe("record: only a signed, person-confirmed row for THIS contact counts", () => {
   const key = chatwootLinkKey({ AUTH_SECRET })!;
-  const rec = { orgId: ORG_A, uplinkContactId: CONTACT_A, accountId: "2", chatwootContactId: 501, conversationId: 41, confirmedByUserId: USER_ADMIN, confirmedAt: "2026-10-21T12:00:00.000Z" };
+  const ROW = randomUUID();
+  const rec = { rowId: ROW, orgId: ORG_A, uplinkContactId: CONTACT_A, accountId: "2", chatwootContactId: 501, conversationId: 41, confirmedByUserId: USER_ADMIN, confirmedAt: "2026-10-21T12:00:00.000Z" };
   const meta = chatwootLinkMetadata(rec, key);
   const exp = { orgId: ORG_A, contactId: CONTACT_A, accountId: "2" };
   test("control: a genuine row verifies", () => {
-    assert.equal(verifyChatwootLink({ orgId: ORG_A, contactId: CONTACT_A, metadata: meta }, exp, key)?.conversationId, 41);
+    assert.equal(verifyChatwootLink({ id: ROW, orgId: ORG_A, contactId: CONTACT_A, metadata: meta }, exp, key)?.conversationId, 41);
   });
   test("the same metadata on another contact or in another workspace does not verify", () => {
-    assert.equal(verifyChatwootLink({ orgId: ORG_A, contactId: CONTACT_A2, metadata: meta }, { ...exp, contactId: CONTACT_A2 }, key), null);
-    assert.equal(verifyChatwootLink({ orgId: ORG_B, contactId: CONTACT_A, metadata: meta }, { ...exp, orgId: ORG_B }, key), null);
+    assert.equal(verifyChatwootLink({ id: ROW, orgId: ORG_A, contactId: CONTACT_A2, metadata: meta }, { ...exp, contactId: CONTACT_A2 }, key), null);
+    assert.equal(verifyChatwootLink({ id: ROW, orgId: ORG_B, contactId: CONTACT_A, metadata: meta }, { ...exp, orgId: ORG_B }, key), null);
   });
   test("a tampered conversation, a hand-written row (no sig), another key, or a re-mapped account does not verify", () => {
-    assert.equal(verifyChatwootLink({ orgId: ORG_A, contactId: CONTACT_A, metadata: { ...meta, conversationId: 42 } }, exp, key), null);
+    assert.equal(verifyChatwootLink({ id: ROW, orgId: ORG_A, contactId: CONTACT_A, metadata: { ...meta, conversationId: 42 } }, exp, key), null);
     const { sig: _sig, ...unsigned } = meta;
-    assert.equal(verifyChatwootLink({ orgId: ORG_A, contactId: CONTACT_A, metadata: unsigned }, exp, key), null);
-    assert.equal(verifyChatwootLink({ orgId: ORG_A, contactId: CONTACT_A, metadata: meta }, exp, chatwootLinkKey({ AUTH_SECRET: "another-secret-fictional-000000" })), null);
-    assert.equal(verifyChatwootLink({ orgId: ORG_A, contactId: CONTACT_A, metadata: meta }, { ...exp, accountId: "4" }, key), null);
-    assert.equal(verifyChatwootLink({ orgId: ORG_A, contactId: CONTACT_A, metadata: meta }, exp, null), null);
+    assert.equal(verifyChatwootLink({ id: ROW, orgId: ORG_A, contactId: CONTACT_A, metadata: unsigned }, exp, key), null);
+    assert.equal(verifyChatwootLink({ id: ROW, orgId: ORG_A, contactId: CONTACT_A, metadata: meta }, exp, chatwootLinkKey({ AUTH_SECRET: "another-secret-fictional-000000" })), null);
+    assert.equal(verifyChatwootLink({ id: ROW, orgId: ORG_A, contactId: CONTACT_A, metadata: meta }, { ...exp, accountId: "4" }, key), null);
+    assert.equal(verifyChatwootLink({ id: ROW, orgId: ORG_A, contactId: CONTACT_A, metadata: meta }, exp, null), null);
+  });
+  test("REPLAY: the same genuine metadata under a different row id does not verify (control: under its own row id it does)", () => {
+    assert.equal(verifyChatwootLink({ id: randomUUID(), orgId: ORG_A, contactId: CONTACT_A, metadata: meta }, exp, key), null);
+    assert.notEqual(verifyChatwootLink({ id: ROW, orgId: ORG_A, contactId: CONTACT_A, metadata: meta }, exp, key), null);
   });
   test("no AUTH_SECRET -> no key (there is no fallback key)", () => {
     assert.equal(chatwootLinkKey({}), null);
@@ -258,7 +271,7 @@ describe("path: candidates are suggestions; only a confirmed record becomes a li
   test("no candidates: an unmatched contact gets an empty list (control: CONTACT_A in the same harness gets two)", async () => {
     const { store } = memStore();
     const r = await findChatwootCandidates(admin(), CONTACT_A2, depsFor(ORG_A, store));
-    assert.deepEqual(r, { ok: true, candidates: [] });
+    assert.deepEqual(r, { ok: true, candidates: [], incomplete: false });
   });
 
   test("confirm by an owner/admin -> link to the Chatwoot conversation; the page state then shows the same link", async () => {
@@ -329,7 +342,7 @@ describe("path: candidates are suggestions; only a confirmed record becomes a li
   test("a forged activity (any writer can choose the type) is not a link (control: a genuine confirm on the same store is)", async () => {
     const { store, acts } = memStore();
     const d = depsFor(ORG_A, store);
-    await store.insertLinkActivity({ orgId: ORG_A, contactId: CONTACT_A, userId: USER_ADMIN, subject: "x", metadata: { schema: "chatwoot-link/v1", accountId: "2", chatwootContactId: 501, conversationId: 41, confirmedByUserId: USER_ADMIN, confirmedAt: "2026-10-21T00:00:00.000Z", sig: "0".repeat(64) } });
+    await store.insertLinkActivity({ id: randomUUID(), orgId: ORG_A, contactId: CONTACT_A, userId: USER_ADMIN, subject: "x", metadata: { schema: "chatwoot-link/v1", accountId: "2", chatwootContactId: 501, conversationId: 41, confirmedByUserId: USER_ADMIN, confirmedAt: "2026-10-21T00:00:00.000Z", sig: "0".repeat(64) } });
     assert.equal(acts.length, 1);
     assert.deepEqual(await getChatwootLinkState(ORG_A, CONTACT_A, d), { state: "unlinked" });
     await confirmChatwootLink(admin(), { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 17 }, d);
@@ -354,6 +367,63 @@ describe("path: candidates are suggestions; only a confirmed record becomes a li
   });
 });
 
+describe("Codex review 2026-10-21 regressions", () => {
+  const convOf = (s: Awaited<ReturnType<typeof getChatwootLinkState>>) => (s.state === "linked" ? s.conversationId : null);
+
+  test("REPLAY: confirm 41, then 17, then re-insert the 41 record's metadata as a new row -> still 17 (control: 17 is shown before the replay)", async () => {
+    const { store, acts } = memStore();
+    const d = depsFor(ORG_A, store);
+    assert.ok((await confirmChatwootLink(admin(), { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d)).ok);
+    assert.ok((await confirmChatwootLink(admin(), { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 17 }, d)).ok);
+    assert.equal(convOf(await getChatwootLinkState(ORG_A, CONTACT_A, d)), 17);
+    await store.insertLinkActivity({ id: randomUUID(), orgId: ORG_A, contactId: CONTACT_A, userId: USER_ADMIN, subject: "replay", metadata: acts[0].metadata as Record<string, unknown> });
+    assert.equal(acts.length, 3, "the replayed row exists and is the newest");
+    assert.equal(convOf(await getChatwootLinkState(ORG_A, CONTACT_A, d)), 17);
+  });
+
+  test("FLOOD: a genuine link followed by 20 unsigned rows of the same type is still shown", async () => {
+    const { store } = memStore();
+    const d = depsFor(ORG_A, store);
+    assert.ok((await confirmChatwootLink(admin(), { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d)).ok);
+    for (let i = 0; i < 20; i++) await store.insertLinkActivity({ id: randomUUID(), orgId: ORG_A, contactId: CONTACT_A, userId: USER_ADMIN, subject: "noise", metadata: {} });
+    assert.equal(convOf(await getChatwootLinkState(ORG_A, CONTACT_A, d)), 41);
+  });
+
+  test("PAGINATION: an exact match after 15 substring matches (page 2) is still a candidate (control: page 1 was requested too)", async () => {
+    const { store } = memStore();
+    filler = SEARCH_PAGE_SIZE;
+    const r = await findChatwootCandidates(admin(), CONTACT_A, depsFor(ORG_A, store));
+    assert.ok(r.ok && r.candidates.some((c) => c.chatwootContactId === 501), JSON.stringify(r));
+    assert.ok(r.ok && r.incomplete === false);
+    assert.ok(requests.some((q) => q.path.includes("5550100123") && q.path.includes("page=2")), "page 2 was requested");
+    assert.ok(requests.some((q) => q.path.includes("5550100123") && q.path.includes("page=1")), "control: page 1 was requested");
+  });
+
+  test("PAGINATION BUDGET: more pages than the budget -> flagged incomplete, never presented as the full list", async () => {
+    const { store } = memStore();
+    filler = SEARCH_PAGE_SIZE * SEARCH_MAX_PAGES + 1;
+    const r = await findChatwootCandidates(admin(), CONTACT_A, depsFor(ORG_A, store));
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.equal(r.incomplete, true);
+    assert.equal(requests.filter((q) => q.path.includes("contacts/search") && q.path.includes("5550100123")).length, SEARCH_MAX_PAGES, "the budget bounds the requests");
+  });
+
+  test("MIXED SESSION: a token session with a real owner's NextAuth user cannot confirm (control: the same owner without a token can)", async () => {
+    const mixed = actorFromSession({ tokenSession: true, userId: USER_ADMIN, orgId: ORG_A, role: "owner" });
+    const plain = actorFromSession({ tokenSession: false, userId: USER_ADMIN, orgId: ORG_A, role: "owner" });
+    assert.equal(canConfirmChatwootLink(mixed), false);
+    assert.equal(canConfirmChatwootLink(plain), true);
+    assert.equal(canConfirmChatwootLink(actorFromSession({ tokenSession: false, userId: USER_ADMIN, orgId: ORG_A, role: "member" })), false);
+    assert.equal(actorFromSession({ tokenSession: false, userId: null, orgId: ORG_A, role: "owner" }), null);
+    const { store, acts } = memStore();
+    const d = depsFor(ORG_A, store);
+    assert.deepEqual(await confirmChatwootLink(mixed!, { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d), { ok: false, code: "forbidden" });
+    assert.equal(acts.length, 0);
+    assert.ok((await confirmChatwootLink(plain!, { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d)).ok);
+  });
+});
+
 // ── render ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 describe("render: the contact page card", () => {
   const cand = [{ chatwootContactId: 501, name: "Test Customer", matchedOn: ["phone" as const], conversationId: 41, status: "open", lastActivityAt: 1_760_000_000 }];
@@ -372,6 +442,10 @@ describe("render: the contact page card", () => {
     assert.match(html, /conversation #(<!-- -->)?41/); // React SSR separates adjacent text nodes with <!-- -->
     assert.doesNotMatch(html, /Open in Chatwoot/);
     assert.doesNotMatch(html, /href=/, "an unconfirmed candidate is not a link");
+  });
+  test("incomplete lookup says the list may be incomplete (control: a complete list does not say so)", () => {
+    assert.match(renderToString(<ChatwootLinkView view={{ kind: "candidates", candidates: cand, incomplete: true }} canConfirm />), /may be incomplete/);
+    assert.doesNotMatch(renderToString(<ChatwootLinkView view={{ kind: "candidates", candidates: cand }} canConfirm />), /may be incomplete/);
   });
   test("candidates for a member: no confirm button (control: the owner/admin render above has one)", () => {
     const html = renderToString(<ChatwootLinkView view={{ kind: "candidates", candidates: cand }} canConfirm={false} />);
