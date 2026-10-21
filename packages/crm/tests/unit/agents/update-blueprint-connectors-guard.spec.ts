@@ -108,7 +108,7 @@ describe("updateAgentBlueprint — untrusted connectors patch", () => {
 });
 
 describe("only the bind flow marks a connectors write trusted", () => {
-  test("trustedConnectorsWrite: true appears exactly in mcp/actions.ts (3) and deployments/actions.ts (1)", () => {
+  test("trustedConnectorsWrite: true appears exactly in mcp/actions.ts (3), deployments/actions.ts (1) and the template bind-flow save (1)", () => {
     const src = path.resolve(__dirname, "../../../src");
     const hits: Record<string, number> = {};
     const walk = (dir: string) => {
@@ -123,6 +123,11 @@ describe("only the bind flow marks a connectors write trusted", () => {
     };
     walk(src);
     assert.ok(Object.keys(hits).length > 0, "control: the scan finds the known call sites");
-    assert.deepEqual(hits, { "lib/agents/mcp/actions.ts": 3, "lib/deployments/actions.ts": 1 });
+    // template-mcp-server.ts is the Studio TEMPLATE store flag (updateAgentTemplate), not this one.
+    assert.deepEqual(hits, {
+      "lib/agents/mcp/actions.ts": 3,
+      "lib/deployments/actions.ts": 1,
+      "lib/agent-templates/template-mcp-server.ts": 1,
+    });
   });
 });

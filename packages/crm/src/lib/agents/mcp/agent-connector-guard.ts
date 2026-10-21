@@ -15,9 +15,17 @@
 //      may not add or repoint one (that would let it name any stored secret and
 //      send it to any host); adding goes through the bind flow.
 //
-// Known limits (not closed here): the conversation-time MCP call does not
-// re-validate the endpoint, and connect-IP pinning against DNS rebinding is
-// ssrf-guard's tracked follow-up.
+// Known residuals (not closed here — say so, don't assume):
+//   - DNS-rebinding TOCTOU: the endpoint is resolved and vetted, then fetch()
+//     resolves it again; the vetted IP is not pinned to the socket.
+//   - The conversation-time call (tools.ts → runtime-client) refuses redirects
+//     but does not re-run the public-address check on each call.
+//   - Studio template BYO secrets keep the workspace-wide byo_<slug> name
+//     (live honest bindings depend on it); slugs are lossy
+//     (api.example.com and api-example.com share one), so two template
+//     endpoints can alias one workspace secret.
+//   - Superseded per-agent secrets are left in place on re-bind (encrypted,
+//     inert) rather than deleted, to avoid racing a concurrent re-bind.
 
 import { createHash } from "node:crypto";
 import { assertPublicHttpUrl, type DnsResolver } from "@/lib/security/ssrf-guard";

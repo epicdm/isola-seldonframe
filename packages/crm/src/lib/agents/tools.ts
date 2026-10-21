@@ -2010,16 +2010,17 @@ function sandboxConnectorExecute(toolName: string): AgentTool["execute"] {
 async function defaultMcpDeps(): Promise<
   import("./mcp/wrap-tool").WrapMcpDeps
 > {
-  const [{ resolveConnectorBearer }, { createMcpClient }] = await Promise.all([
+  const [{ resolveConnectorBearer }, { createRuntimeMcpClient }] = await Promise.all([
     import("./mcp/resolve-bearer"),
-    import("./mcp/client"),
+    import("./mcp/runtime-client"),
   ]);
   return {
     // resolveConnectorBearer makes an OAuth token envelope (vetted OAuth
     // connectors like Circle) look like a plain bearer to this seam — a
     // legacy plain-string secret (postiz/rube) passes through unchanged.
     getSecret: async (orgId, serviceName) => resolveConnectorBearer(orgId, serviceName),
-    makeClient: (endpoint, bearer) => createMcpClient({ endpoint, bearer }),
+    // Never follows a redirect (SSRF: a bound server 3xx-ing a tools/call inward).
+    makeClient: (endpoint, bearer) => createRuntimeMcpClient(endpoint, bearer),
   };
 }
 

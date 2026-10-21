@@ -110,6 +110,10 @@ function isBlockedIpv4(ip: string): boolean {
   if (a === 192 && b === 0 && octets[2] === 0) return true;
   // 100.64.0.0/10 — carrier-grade NAT / shared address space.
   if (a === 100 && b >= 64 && b <= 127) return true;
+  // 198.18.0.0/15 — benchmarking (RFC 2544); used for internal fabrics.
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  // 224.0.0.0/4 multicast and 240.0.0.0/4 reserved (incl. broadcast).
+  if (a >= 224) return true;
   // 255.255.255.255 — broadcast.
   if (a === 255 && b === 255 && octets[2] === 255 && octets[3] === 255) return true;
 
@@ -198,6 +202,8 @@ function isBlockedIpv6(ip: string): boolean {
   if ((h[0] & 0xfe00) === 0xfc00) return true;
   // fe80::/10 — link-local.
   if ((h[0] & 0xffc0) === 0xfe80) return true;
+  // ff00::/8 — multicast.
+  if ((h[0] & 0xff00) === 0xff00) return true;
 
   return false;
 }

@@ -16,6 +16,7 @@ import type { marketplaceListings, ListingTrustStats } from "@/db/schema/marketp
 import type { AgentTemplate, NewAgentTemplate } from "@/db/schema/agent-templates";
 import type { AgentTemplateType } from "@/lib/agent-templates/store";
 import type { AgentBlueprint } from "@/db/schema/agents";
+import { withCrossTenantSafeConnectors } from "@/lib/agents/mcp/connector-identity";
 
 /** The marketplace_listings INSERT shape (derived from the table). */
 type NewMarketplaceListing = typeof marketplaceListings.$inferInsert;
@@ -121,7 +122,8 @@ export function buildInstalledAgentTemplate(
     type: listing.agentType satisfies string as AgentTemplateType,
     // Structured-clone the blueprint so the installed template owns its own
     // copy (editing it must never reach back into the listing row).
-    blueprint: structuredClone(listing.agentBlueprint),
+    // A seller's BYO endpoint + secret pointer never transfers to a buyer.
+    blueprint: withCrossTenantSafeConnectors(structuredClone(listing.agentBlueprint)),
     status: "draft",
   };
 }

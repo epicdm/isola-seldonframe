@@ -20,6 +20,7 @@ import type {
   NewAgentTemplate,
 } from "@/db/schema/agent-templates";
 import type { Agent, AgentBlueprint } from "@/db/schema/agents";
+import { isTemplateConnectorsPatchAllowed } from "@/lib/agents/mcp/connector-identity";
 
 // ─── archetype defaults ──────────────────────────────────────────────────────
 //
@@ -608,11 +609,16 @@ export type UpdateAgentTemplateInput = {
    *  voice / capabilities). Arrays are replaced, not merged. */
   patch: TemplateBlueprintPatch;
   deps?: Partial<UpdateAgentTemplateDeps>;
+  /** Only the Studio bind/unbind/refresh/tool-selection save
+   *  (template-mcp-server saveConnectors) sets this. Every other caller may only
+   *  keep/drop existing connectors or add canonical vetted / composio ones —
+   *  see isTemplateConnectorsPatchAllowed. */
+  trustedConnectorsWrite?: boolean;
 };
 
 export type UpdateAgentTemplateResult =
   | { ok: true; template: AgentTemplate }
-  | { ok: false; error: "template_not_found" | "update_failed" };
+  | { ok: false; error: "template_not_found" | "update_failed" | "connectors_patch_not_allowed" };
 
 /**
  * Merge-patch a template's blueprint and persist. Loads the row, shallow-merges
@@ -629,6 +635,18 @@ export async function updateAgentTemplate(
 
   const existing = await findById(input.id);
   if (!existing) return { ok: false, error: "template_not_found" };
+
+  if (
+    !input.trustedConnectorsWrite &&
+    input.patch.connectors !== undefined &&
+    input.patch.connectors !== null &&
+    !isTemplateConnectorsPatchAllowed(
+      ((existing.blueprint ?? {}) as AgentBlueprint).connectors,
+      input.patch.connectors,
+    )
+  ) {
+    return { ok: false, error: "connectors_patch_not_allowed" };
+  }
 
   const nextBlueprint = mergeTemplateBlueprint(
     (existing.blueprint ?? {}) as AgentBlueprint,

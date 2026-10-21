@@ -70,6 +70,7 @@ function realTemplateConnectorDeps(args: {
       await updateAgentTemplate({
         id: args.templateId,
         patch: { connectors },
+        trustedConnectorsWrite: true,
       });
     },
     storeSecret: async ({ workspaceId, serviceName, value }) => {

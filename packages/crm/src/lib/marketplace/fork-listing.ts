@@ -26,6 +26,7 @@
 // buildRealForkListingDeps() and translates the result into a 303 redirect.
 
 import type { AgentBlueprint } from "@/db/schema/agents";
+import { withCrossTenantSafeConnectors } from "@/lib/agents/mcp/connector-identity";
 import type { AgentTemplateType } from "@/lib/agent-templates/store";
 import { storefrontPriceFromRow, type StorefrontPricingRow } from "@/lib/marketplace/pricing-model";
 
@@ -157,7 +158,8 @@ export async function forkListingIntoNewWorkspace(
     type: listing.agentType satisfies string as AgentTemplateType,
     // Defensive copy — editing the installed template must never reach back
     // into the listing row (mirrors buildInstalledAgentTemplate).
-    blueprint: structuredClone(listing.agentBlueprint),
+    // A seller's BYO endpoint + secret pointer never transfers to a fork.
+    blueprint: withCrossTenantSafeConnectors(structuredClone(listing.agentBlueprint)),
     status: "draft",
     slug: templateSlug,
   });
