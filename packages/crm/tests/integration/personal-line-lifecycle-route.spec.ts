@@ -344,6 +344,36 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     assert.equal((await r3.json()).status, "duplicate");
   });
 
+  test("Codex r5: REAL bus + exported route — a failing dispatch step (wait-resume store unavailable) answers 500 and leaves the event unfinished; the retry completes with the ORIGINAL log rows", async () => {
+    configure();
+    assert.equal((await post(EPIC, body("pl.signup_started", "subj_bus"))).status, 200);
+    const raw = body("pl.line_created", "subj_bus");
+    const e = JSON.parse(raw);
+    const logIds = async () => {
+      const r: any = await db.execute(sql`select id from workflow_event_log where org_id = ${EPIC}::uuid and (payload->>'eventId' = ${e.event_id} or payload->'actor'->>'ref' = ${e.event_id}) order by id`);
+      return (r.rows ?? r).map((x: any) => String(x.id));
+    };
+    // scratch database only: make the bus's wait-resume read fail (the platform would swallow this; the ingress must not)
+    await db.execute(sql`alter table workflow_waits rename to workflow_waits_zz_offline`);
+    let r1: Response;
+    try { r1 = await post(EPIC, raw); } finally { await db.execute(sql`alter table workflow_waits_zz_offline rename to workflow_waits`); }
+    assert.equal(r1.status, 500);
+    assert.equal((await plDealOf(EPIC, "subj_bus"))[0].stage, "Line created");              // the move + its audit row stand
+    const ids1 = await logIds();
+    assert.equal(ids1.length, 2);                                                             // stage row + pl.* row, logged once
+    const st: any = await db.execute(sql`select outcome, event_dispatched, stage_dispatched from integration_event_inbox where event_id = ${e.event_id}`);
+    assert.deepEqual((st.rows ?? st)[0], { outcome: null, event_dispatched: false, stage_dispatched: false });
+    // POSITIVE CONTROL that the fault really was the dispatch: with the table back, the same retry succeeds
+    await db.execute(sql`update integration_event_inbox set received_at = now() - interval '5 minutes' where event_id = ${e.event_id}`);
+    const r2 = await post(EPIC, raw);
+    assert.equal(r2.status, 200);
+    assert.equal((await r2.json()).status, "processed");
+    assert.deepEqual(await logIds(), ids1);                                                   // re-dispatched from the ORIGINAL rows
+    const st2: any = await db.execute(sql`select event_dispatched, stage_dispatched from integration_event_inbox where event_id = ${e.event_id}`);
+    assert.deepEqual((st2.rows ?? st2)[0], { event_dispatched: true, stage_dispatched: true });
+    assert.equal((await (await post(EPIC, raw)).json()).status, "duplicate");
+  });
+
   test("Codex r2: the stage write and its deal.stage_changed row are ONE statement — a lost CAS writes neither", async () => {
     configure();
     assert.equal((await post(EPIC, body("pl.signup_started", "subj_cas"))).status, 200);
