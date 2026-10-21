@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { ChevronLeft, Mail, Phone } from "lucide-react";
 import { db } from "@/db";
 import { activities, bookings, contacts, deals, organizations, portalDocuments } from "@/db/schema";
-import { getOrgId, getCurrentUser } from "@/lib/auth/helpers";
+import { getOrgId, getCurrentUser, getCurrentWorkspaceRole } from "@/lib/auth/helpers";
 import { getLabels } from "@/lib/soul/labels";
 import { getPersonality } from "@/lib/crm/personality-server";
 import { getContactRevenue } from "@/lib/payments/actions";
@@ -17,6 +17,11 @@ import {
   type ContactDetail,
 } from "@/components/contacts/contact-record-detail";
 import type { DocumentRow } from "@/components/contacts/contact-documents-tab";
+import { ChatwootLinkCard } from "@/components/contacts/chatwoot-link-card";
+import { isAdminTokenUserId } from "@/lib/auth/admin-token";
+import { isOperatorPortalUserId } from "@/lib/auth/operator-portal-context";
+import { getChatwootLinkState, type LinkState } from "@/lib/chatwoot-link/service";
+import { makeChatwootLinkDeps } from "@/lib/chatwoot-link/wiring";
 
 /**
  * /contacts/[id] — full Twenty-style record detail page.
@@ -155,6 +160,18 @@ export default async function ContactRecordPage({
 
   if (!contact) notFound();
 
+  // Chatwoot customer link (read-only). Unconfigured workspace = "unavailable" = nothing rendered, no Chatwoot call. A failure here never
+  // breaks the contact page.
+  const chatwootLink: LinkState = await getChatwootLinkState(orgId, contact.id, makeChatwootLinkDeps(orgId)).catch(
+    () => ({ state: "unavailable" }) as LinkState,
+  );
+  const chatwootCanConfirm =
+    chatwootLink.state === "unlinked" &&
+    !!currentUser?.id &&
+    !isAdminTokenUserId(currentUser.id) &&
+    !isOperatorPortalUserId(currentUser.id) &&
+    ["owner", "admin"].includes((await getCurrentWorkspaceRole().catch(() => null)) ?? "member");
+
   // Resolve the client's workspace slug from customFields.workspaceId.
   // This is a lightweight second-pass query — runs after notFound() so
   // we only hit the DB when a contact actually exists.
@@ -277,6 +294,10 @@ export default async function ContactRecordPage({
           Back to {labels.contact.plural}
         </Link>
       </div>
+
+      {chatwootLink.state !== "unavailable" ? (
+        <ChatwootLinkCard contactId={contact.id} initial={chatwootLink} canConfirm={chatwootCanConfirm} />
+      ) : null}
 
       <ContactRecordDetail
         contact={detail}
