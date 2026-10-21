@@ -21,6 +21,7 @@ import { storeSecret, getSecretValue, rotateSecret } from "@/lib/secrets";
 import { updateAgentBlueprint } from "../store";
 import { createMcpClient } from "./client";
 import {
+  buildConnectorBinding,
   mergeConnectorBinding,
   removeConnectorBinding,
   withRediscoveredTools,
@@ -32,7 +33,6 @@ import {
   agentConnectorErrorCode,
   isAgentScopedSecret,
   noRedirectFetch,
-  prepareAgentConnectorBinding,
   validateAgentByoEndpoint,
 } from "./agent-connector-guard";
 import { db } from "@/db";
@@ -97,9 +97,9 @@ export async function bindMcpConnectorAction(input: {
   // Errors leave as fixed codes, never upstream text.
   let binding: ConnectorBinding;
   try {
-    binding = await prepareAgentConnectorBinding({
+    binding = await buildConnectorBinding({
       orgId,
-      agentId: input.agentId,
+      secretScope: { agentId: input.agentId },
       connector: input.connector,
       apiKey: input.apiKey.trim(),
       existing: blueprint.connectors,
@@ -115,6 +115,7 @@ export async function bindMcpConnectorAction(input: {
     agentId: input.agentId,
     orgId,
     patch: { connectors },
+    trustedConnectorsWrite: true,
     publishNotes: `Bound MCP connector: ${binding.id}`,
   });
   if (!result.ok) return { ok: false, error: "save_failed" };
@@ -149,6 +150,7 @@ export async function unbindMcpConnectorAction(input: {
     agentId: input.agentId,
     orgId,
     patch: { connectors },
+    trustedConnectorsWrite: true,
     publishNotes: `Unbound MCP connector: ${input.connectorId}`,
   });
   if (!result.ok) return { ok: false, error: "save_failed" };
@@ -226,6 +228,7 @@ export async function refreshMcpConnectorAction(input: {
     agentId: input.agentId,
     orgId,
     patch: { connectors },
+    trustedConnectorsWrite: true,
     publishNotes: `Refreshed MCP connector: ${input.connectorId}`,
   });
   if (!result.ok) return { ok: false, error: "save_failed" };

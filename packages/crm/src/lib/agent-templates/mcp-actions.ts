@@ -22,6 +22,10 @@
 // discovery runs.
 
 import {
+  agentConnectorErrorCode,
+  validateAgentByoEndpoint,
+} from "@/lib/agents/mcp/agent-connector-guard";
+import {
   buildConnectorBinding,
   mergeConnectorBinding,
   removeConnectorBinding,
@@ -107,9 +111,10 @@ export async function bindTemplateConnector(
         storeSecret: deps.storeSecret,
         discoverTools: deps.discoverTools,
       },
+      existing: blueprint.connectors,
     });
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: agentConnectorErrorCode(err) };
   }
 
   const connectors = mergeConnectorBinding(blueprint.connectors, binding);
@@ -206,8 +211,11 @@ export async function refreshTemplateConnector(
   let endpoint: string;
   try {
     endpoint = resolveConnectorEndpoint(binding); // HTTPS-guarded
+    if (binding.kind === "byo") {
+      endpoint = (await validateAgentByoEndpoint(endpoint)).endpoint; // public-only
+    }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: agentConnectorErrorCode(err) };
   }
 
   const bearer = await deps.getSecret({
@@ -220,7 +228,7 @@ export async function refreshTemplateConnector(
   try {
     tools = await deps.discoverTools({ endpoint, bearer });
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: agentConnectorErrorCode(err) };
   }
 
   const refreshed = withRediscoveredTools(binding, tools);

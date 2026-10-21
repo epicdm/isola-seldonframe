@@ -11,16 +11,24 @@
 // SECURITY: the apiKey is handed to deps.storeSecret (the AES-GCM
 // workspaceSecrets store) and NEVER written to the blueprint — the blueprint
 // only carries the `serviceName` pointer + the (non-secret) discovered tool
-// schemas. A BYO endpoint is HTTPS-validated (via resolveConnectorEndpoint)
-// BEFORE the key is stored or any discovery runs, so a malformed/insecure
-// endpoint can't cause a secret write or an http:// dial.
+// schemas. Hardened 2026-10-21 (agent-connector-guard): a BYO endpoint must be
+// https AND resolve only to public addresses before any discovery; the id and
+// serviceName are derived HERE (never from input); the key is stored only
+// AFTER discovery succeeds; a bind never replaces a binding of another kind;
+// failures surface as fixed codes (AgentConnectorError), never upstream text.
 
 import {
-  resolveConnectorEndpoint,
   getVettedConnector,
   type ConnectorBinding,
   type McpToolSchema,
 } from "./connectors";
+import type { DnsResolver } from "@/lib/security/ssrf-guard";
+import {
+  AgentConnectorError,
+  agentByoServiceName,
+  byoServiceName,
+  validateAgentByoEndpoint,
+} from "./agent-connector-guard";
 
 /** What the caller is binding. For a vetted connector only the id is needed
  *  (endpoint comes from the registry); for BYO the operator supplies the HTTPS
@@ -36,15 +44,19 @@ export type BindDeps = {
   storeSecret: (args: { workspaceId: string; serviceName: string; value: string }) => Promise<void>;
   /** Discover the server's tools (typically createMcpClient(endpoint, bearer).listTools()). */
   discoverTools: (args: { endpoint: string; bearer: string }) => Promise<McpToolSchema[]>;
+  /** DNS resolver for the public-address check (tests inject; prod = dns.lookup). */
+  resolve?: DnsResolver;
 };
 
 /**
- * Resolve + store + discover, producing the ConnectorBinding to persist on the
- * agent's blueprint. Pure of I/O except through `deps`.
+ * Validate + discover + store, producing the ConnectorBinding to persist.
+ * Pure of I/O except through `deps`.
  *
- * Order matters for security: endpoint resolution (HTTPS guard for BYO) happens
- * FIRST and throws on a bad endpoint — so neither the secret store nor discovery
- * runs for an invalid/insecure endpoint.
+ * The caller's `connector` contributes only its kind and the vetted id / BYO
+ * endpoint. Order: validate endpoint (public https) → derive id + serviceName →
+ * refuse a cross-kind clash → discover tools → THEN store the key.
+ * `secretScope.agentId` scopes a BYO secret to one workspace agent; without it
+ * the workspace-wide byo_<slug> name is used (Studio templates).
  */
 export async function buildConnectorBinding(args: {
   orgId: string;
@@ -53,34 +65,52 @@ export async function buildConnectorBinding(args: {
   /** Optional allowlist; default = enable every discovered tool. */
   enabledTools?: string[];
   deps: BindDeps;
+  /** Current bindings — a bind may replace same-kind, never another kind. */
+  existing?: ConnectorBinding[];
+  secretScope?: { agentId: string };
 }): Promise<ConnectorBinding> {
   const { orgId, connector, apiKey, deps } = args;
 
-  // Build a provisional binding so resolveConnectorEndpoint can validate it
-  // (vetted id must exist; BYO endpoint must be HTTPS). This throws BEFORE any
-  // secret write / discovery.
-  const provisional: ConnectorBinding =
-    connector.kind === "vetted"
-      ? { id: connector.id, kind: "vetted", serviceName: connector.serviceName, enabledTools: [] }
-      : {
-          id: connector.id,
-          kind: "byo",
-          serviceName: connector.serviceName,
-          endpoint: connector.endpoint,
-          enabledTools: [],
-        };
-
-  // Defense-in-depth: also confirm a vetted id is real (resolveConnectorEndpoint
-  // already throws for an unknown vetted id, but be explicit).
-  if (connector.kind === "vetted" && !getVettedConnector(connector.id)) {
-    throw new Error(`Unknown vetted connector id: ${connector.id}`);
+  let kind: "vetted" | "byo";
+  let id: string;
+  let serviceName: string;
+  let endpoint: string;
+  if (connector?.kind === "byo") {
+    const v = await validateAgentByoEndpoint(connector.endpoint, { resolve: deps.resolve });
+    kind = "byo";
+    id = v.id;
+    endpoint = v.endpoint;
+    serviceName = args.secretScope ? agentByoServiceName(args.secretScope.agentId, v.id) : byoServiceName(v.id);
+  } else if (connector?.kind === "vetted") {
+    const vetted = getVettedConnector(connector.id);
+    if (!vetted) throw new AgentConnectorError("unknown_connector");
+    kind = "vetted";
+    id = vetted.id;
+    serviceName = vetted.secretService;
+    endpoint = vetted.endpoint;
+  } else {
+    throw new AgentConnectorError("unknown_connector");
   }
 
-  const endpoint = resolveConnectorEndpoint(provisional); // HTTPS-guarded
+  const clash = (args.existing ?? []).find((b) => b.id === id);
+  if (clash && clash.kind !== kind) throw new AgentConnectorError("connector_conflict");
 
-  // Store the key encrypted, THEN discover.
-  await deps.storeSecret({ workspaceId: orgId, serviceName: connector.serviceName, value: apiKey });
-  const tools = await deps.discoverTools({ endpoint, bearer: apiKey });
+  let tools: McpToolSchema[];
+  try {
+    tools = await deps.discoverTools({ endpoint, bearer: apiKey });
+  } catch (err) {
+    if (err instanceof AgentConnectorError) throw err;
+    if (err instanceof Error && /\bredirect_refused\b/.test(err.message)) {
+      throw new AgentConnectorError("redirect_refused");
+    }
+    throw new AgentConnectorError("discovery_failed");
+  }
+
+  try {
+    await deps.storeSecret({ workspaceId: orgId, serviceName, value: apiKey });
+  } catch {
+    throw new AgentConnectorError("save_failed");
+  }
 
   const enabledTools =
     args.enabledTools && args.enabledTools.length > 0
@@ -89,25 +119,10 @@ export async function buildConnectorBinding(args: {
 
   const discoveredAt = new Date().toISOString();
 
-  if (connector.kind === "vetted") {
-    return {
-      id: connector.id,
-      kind: "vetted",
-      serviceName: connector.serviceName,
-      enabledTools,
-      tools,
-      discoveredAt,
-    };
+  if (kind === "vetted") {
+    return { id, kind: "vetted", serviceName, enabledTools, tools, discoveredAt };
   }
-  return {
-    id: connector.id,
-    kind: "byo",
-    serviceName: connector.serviceName,
-    endpoint: connector.endpoint,
-    enabledTools,
-    tools,
-    discoveredAt,
-  };
+  return { id, kind: "byo", serviceName, endpoint, enabledTools, tools, discoveredAt };
 }
 
 /** Append `incoming` to `existing`, replacing any binding with the same id

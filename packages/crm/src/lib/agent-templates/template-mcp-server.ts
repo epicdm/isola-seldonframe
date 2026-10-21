@@ -22,6 +22,7 @@ import { assertWritable } from "@/lib/demo/server";
 import { storeSecret, rotateSecret } from "@/lib/secrets";
 import { revalidatePath } from "next/cache";
 import { createMcpClient } from "@/lib/agents/mcp/client";
+import { noRedirectFetch } from "@/lib/agents/mcp/agent-connector-guard";
 import { resolveConnectorBearer } from "@/lib/agents/mcp/resolve-bearer";
 import type { BindConnectorInput } from "@/lib/agents/mcp/bind";
 import type { ConnectorBinding } from "@/lib/agents/mcp/connectors";
@@ -75,7 +76,8 @@ function realTemplateConnectorDeps(args: {
       await storeSecret({ workspaceId, serviceName, value });
     },
     discoverTools: async ({ endpoint, bearer }) => {
-      return createMcpClient({ endpoint, bearer }).listTools();
+      // Discovery never follows a redirect (SSRF: a public host 302-ing inward).
+      return createMcpClient({ endpoint, bearer, fetchImpl: noRedirectFetch() }).listTools();
     },
     getSecret: async ({ workspaceId, serviceName }) => {
       // Resolves through the OAuth-aware bearer resolver so a Circle-style

@@ -748,6 +748,7 @@ function buildProvisionDeps() {
               orgId,
               patch: { connectors },
               publishNotes: "Copied connectors from deploying template",
+              trustedConnectorsWrite: true,
             });
           },
         },

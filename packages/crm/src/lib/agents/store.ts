@@ -26,6 +26,7 @@ import { assertWritable } from "@/lib/demo/server";
 import { emitSeldonEvent } from "@/lib/events/bus";
 import { runEvalSuite } from "./eval-runner";
 import { mergeAgentBlueprintPatch } from "./blueprint-patch";
+import { isConnectorsPatchAllowed } from "./mcp/agent-connector-guard";
 
 // ─── createAgent ───────────────────────────────────────────────────────────
 
@@ -224,6 +225,11 @@ export type UpdateAgentBlueprintInput = {
    *  passes the FULL set they want. */
   patch: Partial<AgentBlueprint>;
   publishNotes?: string;
+  /** Only the bind/unbind/refresh actions and the template→agent connector
+   *  copy set this. Every other caller (update_blueprint API, dashboard save,
+   *  improve loop) may only keep/drop existing bindings — see
+   *  isConnectorsPatchAllowed. */
+  trustedConnectorsWrite?: boolean;
 };
 
 export async function updateAgentBlueprint(
@@ -238,6 +244,17 @@ export async function updateAgentBlueprint(
     .limit(1);
   if (!agent) {
     return { ok: false, error: "agent_not_found" };
+  }
+
+  if (
+    !input.trustedConnectorsWrite &&
+    input.patch.connectors !== undefined &&
+    !isConnectorsPatchAllowed(
+      ((agent.blueprint ?? {}) as AgentBlueprint).connectors,
+      input.patch.connectors,
+    )
+  ) {
+    return { ok: false, error: "connectors_patch_not_allowed" };
   }
 
   const next: AgentBlueprint = mergeAgentBlueprintPatch(

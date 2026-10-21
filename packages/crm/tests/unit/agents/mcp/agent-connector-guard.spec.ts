@@ -1,12 +1,13 @@
 // packages/crm/tests/unit/agents/mcp/agent-connector-guard.spec.ts
 //
-// Server-side rules for binding an MCP connector to a WORKSPACE agent
-// (lib/agents/mcp/agent-connector-guard.ts, used by actions.ts):
+// The shared, hardened bind composer (bind.ts buildConnectorBinding) used by
+// BOTH the workspace-agent path (secretScope set) and the Studio template path
+// (no secretScope), plus the guard helpers (agent-connector-guard.ts):
 //   1 SSRF — private/loopback/metadata/CGNAT/IP-literal endpoints refused before
 //     any secret write or discovery; discovery never follows a redirect.
 //   2 id/serviceName derived on the server; key stored only AFTER discovery;
 //     a non-byo binding (composio) is never replaced.
-//   3 BYO secrets scoped per agent.
+//   3 workspace-agent BYO secrets scoped per agent, bounded in length.
 //   4 errors leave as fixed codes, never upstream text.
 // Every refusal has a positive twin (a public https endpoint binds) in this run.
 
@@ -18,11 +19,11 @@ import {
   agentByoServiceName,
   agentConnectorErrorCode,
   isAgentScopedSecret,
+  isConnectorsPatchAllowed,
   noRedirectFetch,
-  prepareAgentConnectorBinding,
   validateAgentByoEndpoint,
 } from "../../../../src/lib/agents/mcp/agent-connector-guard";
-import { buildConnectorBinding } from "../../../../src/lib/agents/mcp/bind";
+import { buildConnectorBinding, type BindConnectorInput } from "../../../../src/lib/agents/mcp/bind";
 import type { ConnectorBinding, McpToolSchema } from "../../../../src/lib/agents/mcp/connectors";
 
 const ORG = "org-1";
@@ -55,21 +56,23 @@ function harness(opts: { discover?: () => Promise<McpToolSchema[]>; resolve?: ty
   };
 }
 
-function byo(endpoint: string, id = "client-id", serviceName = "composio_api_key") {
-  return { kind: "byo" as const, id, serviceName, endpoint };
+function byo(endpoint: string, id = "client-id", serviceName = "composio_api_key"): BindConnectorInput {
+  return { kind: "byo", id, serviceName, endpoint };
 }
 
-describe("1 SSRF", () => {
-  test("control: a public https endpoint binds, discovers and stores", async () => {
-    const h = harness();
-    const b = await prepareAgentConnectorBinding({
-      orgId: ORG, agentId: AGENT_A, connector: byo("https://odoo-mcp.example.com/mcp"),
-      apiKey: KEY, existing: [], deps: h.deps,
-    });
-    assert.equal(b.kind, "byo");
-    assert.deepEqual(h.events, ["discover", "store"]);
-  });
+// Both callers of the shared composer: agent (scoped) and Studio template.
+const PATHS: Array<{ name: string; scope?: { agentId: string } }> = [
+  { name: "agent", scope: { agentId: AGENT_A } },
+  { name: "template", scope: undefined },
+];
 
+function bindVia(path: (typeof PATHS)[number], connector: BindConnectorInput, h: ReturnType<typeof harness>, existing: ConnectorBinding[] = []) {
+  return buildConnectorBinding({ orgId: ORG, connector, apiKey: KEY, deps: h.deps, existing, secretScope: path.scope });
+}
+
+const isCode = (code: string) => (e: unknown) => e instanceof AgentConnectorError && e.code === code;
+
+describe("1 SSRF (both paths)", () => {
   const refused = [
     "https://127.0.0.1/mcp",
     "https://10.0.0.5/mcp",
@@ -87,109 +90,88 @@ describe("1 SSRF", () => {
     "http://odoo-mcp.example.com/mcp", // not https
     "not a url",
   ];
-  for (const ep of refused) {
-    test(`refused before any store/discovery: ${ep}`, async () => {
+  for (const path of PATHS) {
+    test(`[${path.name}] control: a public https endpoint binds — discover THEN store`, async () => {
       const h = harness();
-      await assert.rejects(
-        prepareAgentConnectorBinding({ orgId: ORG, agentId: AGENT_A, connector: byo(ep), apiKey: KEY, existing: [], deps: h.deps }),
-        (e: unknown) => e instanceof AgentConnectorError && e.code === "endpoint_not_allowed",
-      );
+      const b = await bindVia(path, byo("https://odoo-mcp.example.com/mcp"), h);
+      assert.equal(b.kind, "byo");
+      assert.deepEqual(h.events, ["discover", "store"]);
+    });
+    for (const ep of refused) {
+      test(`[${path.name}] refused before any store/discovery: ${ep}`, async () => {
+        const h = harness();
+        await assert.rejects(bindVia(path, byo(ep), h), isCode("endpoint_not_allowed"));
+        assert.deepEqual(h.events, []);
+      });
+    }
+    test(`[${path.name}] a public NAME that also resolves to a private address is refused`, async () => {
+      const h = harness({ resolve: async () => [{ address: PUBLIC_IP, family: 4 }, { address: "10.1.2.3", family: 4 }] });
+      await assert.rejects(bindVia(path, byo("https://rebind.example.com/mcp"), h), isCode("endpoint_not_allowed"));
       assert.deepEqual(h.events, []);
     });
   }
 
-  test("a public NAME that resolves to a private address is refused", async () => {
-    const h = harness({ resolve: async () => [{ address: PUBLIC_IP, family: 4 }, { address: "10.1.2.3", family: 4 }] });
-    await assert.rejects(
-      prepareAgentConnectorBinding({ orgId: ORG, agentId: AGENT_A, connector: byo("https://rebind.example.com/mcp"), apiKey: KEY, existing: [], deps: h.deps }),
-      (e: unknown) => e instanceof AgentConnectorError && e.code === "endpoint_not_allowed",
-    );
-    assert.deepEqual(h.events, []);
-  });
-
-  test("control: the shared composer alone does NOT block a private endpoint (the guard is what blocks)", async () => {
-    const stores: string[] = [];
-    const b = await buildConnectorBinding({
-      orgId: ORG, connector: byo("https://127.0.0.1/mcp", "x", "byo_x"), apiKey: KEY,
-      deps: { storeSecret: async () => { stores.push("s"); }, discoverTools: async () => TOOLS },
-    });
-    assert.equal(b.kind, "byo");
-    assert.equal(stores.length, 1);
-  });
-
   test("discovery refuses redirects (3xx and opaque) and forces redirect:manual", async () => {
     const seen: Array<RequestInit | undefined> = [];
-    const mk = (status: number, type: ResponseType = "basic") =>
+    const mk = (status: number, opaque = false) =>
       (async (_i: RequestInfo | URL, init?: RequestInit) => {
         seen.push(init);
-        const r = new Response(null, { status: status === 0 ? 200 : status });
-        if (type === "opaqueredirect") Object.defineProperty(r, "type", { value: "opaqueredirect" });
+        const r = new Response(null, { status });
+        if (opaque) Object.defineProperty(r, "type", { value: "opaqueredirect" });
         return r;
       }) as typeof fetch;
-    await assert.rejects(noRedirectFetch(mk(302))("https://x.example.com/mcp", { method: "POST" }),
-      (e: unknown) => e instanceof AgentConnectorError && e.code === "redirect_refused");
-    await assert.rejects(noRedirectFetch(mk(307))("https://x.example.com/mcp"),
-      (e: unknown) => e instanceof AgentConnectorError && e.code === "redirect_refused");
-    await assert.rejects(noRedirectFetch(mk(0, "opaqueredirect"))("https://x.example.com/mcp"),
-      (e: unknown) => e instanceof AgentConnectorError && e.code === "redirect_refused");
-    // control: a 200 passes through
+    await assert.rejects(noRedirectFetch(mk(302))("https://x.example.com/mcp", { method: "POST" }), isCode("redirect_refused"));
+    await assert.rejects(noRedirectFetch(mk(307))("https://x.example.com/mcp"), isCode("redirect_refused"));
+    await assert.rejects(noRedirectFetch(mk(200, true))("https://x.example.com/mcp"), isCode("redirect_refused"));
     const ok = await noRedirectFetch(mk(200))("https://x.example.com/mcp", { method: "POST" });
-    assert.equal(ok.status, 200);
+    assert.equal(ok.status, 200, "control: a 200 passes through");
     assert.ok(seen.every((i) => i?.redirect === "manual"));
+  });
+
+  test("a redirect refusal re-wrapped by the MCP client still surfaces as redirect_refused", async () => {
+    const h = harness({ discover: async () => { throw new Error("MCP request failed (initialize): redirect_refused"); } });
+    await assert.rejects(bindVia(PATHS[0], byo("https://odoo-mcp.example.com/mcp"), h), isCode("redirect_refused"));
+    assert.deepEqual(h.events, ["discover"], "nothing stored");
   });
 });
 
-describe("2 server-derived names, store after discovery, no cross-kind overwrite", () => {
-  test("client id/serviceName are ignored; names derive from the validated endpoint", async () => {
-    const h = harness();
-    const b = await prepareAgentConnectorBinding({
-      orgId: ORG, agentId: AGENT_A, connector: byo("https://odoo-mcp.example.com/mcp", "composio", "composio_api_key"),
-      apiKey: KEY, existing: [], deps: h.deps,
+describe("2 server-derived names, store after discovery, no cross-kind overwrite (both paths)", () => {
+  for (const path of PATHS) {
+    test(`[${path.name}] client id/serviceName are ignored; names derive from the validated endpoint`, async () => {
+      const h = harness();
+      const b = await bindVia(path, byo("https://odoo-mcp.example.com/mcp", "composio", "composio_api_key"), h);
+      assert.equal(b.id, "odoo-mcp-example-com-mcp");
+      const expected = path.scope ? agentByoServiceName(AGENT_A, "odoo-mcp-example-com-mcp") : "byo_odoo-mcp-example-com-mcp";
+      assert.equal(svc(b), expected);
+      assert.equal(h.stored[0].serviceName, expected);
+      assert.notEqual(h.stored[0].serviceName, "composio_api_key");
     });
-    assert.equal(b.id, "odoo-mcp-example-com-mcp");
-    assert.equal(svc(b), agentByoServiceName(AGENT_A, "odoo-mcp-example-com-mcp"));
-    assert.equal(h.stored[0].serviceName, svc(b));
-    assert.notEqual(h.stored[0].serviceName, "composio_api_key");
-  });
 
-  test("a failed discovery stores NOTHING", async () => {
-    const h = harness({ discover: async () => { throw new Error("boom"); } });
-    await assert.rejects(
-      prepareAgentConnectorBinding({ orgId: ORG, agentId: AGENT_A, connector: byo("https://odoo-mcp.example.com/mcp"), apiKey: KEY, existing: [], deps: h.deps }),
-      (e: unknown) => e instanceof AgentConnectorError && e.code === "discovery_failed",
-    );
-    assert.deepEqual(h.events, ["discover"]);
-    assert.equal(h.stored.length, 0);
-  });
+    test(`[${path.name}] a failed discovery stores NOTHING`, async () => {
+      const h = harness({ discover: async () => { throw new Error("boom"); } });
+      await assert.rejects(bindVia(path, byo("https://odoo-mcp.example.com/mcp"), h), isCode("discovery_failed"));
+      assert.deepEqual(h.events, ["discover"]);
+    });
 
-  test("an existing non-byo binding with the derived id is never replaced", async () => {
-    const h = harness();
-    const existing: ConnectorBinding[] = [
-      { kind: "composio", id: "odoo-mcp-example-com-mcp", enabledTools: [] } as unknown as ConnectorBinding,
-    ];
-    await assert.rejects(
-      prepareAgentConnectorBinding({ orgId: ORG, agentId: AGENT_A, connector: byo("https://odoo-mcp.example.com/mcp"), apiKey: KEY, existing, deps: h.deps }),
-      (e: unknown) => e instanceof AgentConnectorError && e.code === "connector_conflict",
-    );
-    assert.deepEqual(h.events, []);
-  });
+    test(`[${path.name}] an existing non-byo binding with the derived id is never replaced`, async () => {
+      const h = harness();
+      const existing = [{ kind: "composio", id: "odoo-mcp-example-com-mcp", enabledTools: [] } as unknown as ConnectorBinding];
+      await assert.rejects(bindVia(path, byo("https://odoo-mcp.example.com/mcp"), h, existing), isCode("connector_conflict"));
+      assert.deepEqual(h.events, []);
+    });
 
-  test("control: re-binding an existing byo with the same id is allowed", async () => {
-    const h = harness();
-    const existing: ConnectorBinding[] = [{
-      kind: "byo", id: "odoo-mcp-example-com-mcp", serviceName: "x", endpoint: "https://odoo-mcp.example.com/mcp", enabledTools: [],
-    }];
-    const b = await prepareAgentConnectorBinding({ orgId: ORG, agentId: AGENT_A, connector: byo("https://odoo-mcp.example.com/mcp"), apiKey: KEY, existing, deps: h.deps });
-    assert.equal(b.kind, "byo");
-  });
+    test(`[${path.name}] control: re-binding an existing byo with the same id is allowed`, async () => {
+      const h = harness();
+      const existing: ConnectorBinding[] = [{ kind: "byo", id: "odoo-mcp-example-com-mcp", serviceName: "x", endpoint: "https://odoo-mcp.example.com/mcp", enabledTools: [] }];
+      const b = await bindVia(path, byo("https://odoo-mcp.example.com/mcp"), h, existing);
+      assert.equal(b.kind, "byo");
+    });
+  }
 
   test("an unknown vetted id is refused; a vetted bind uses the registry's secret name, not the client's", async () => {
     const h = harness();
-    await assert.rejects(
-      prepareAgentConnectorBinding({ orgId: ORG, agentId: AGENT_A, connector: { kind: "vetted", id: "nope", serviceName: "composio_api_key" }, apiKey: KEY, existing: [], deps: h.deps }),
-      (e: unknown) => e instanceof AgentConnectorError && e.code === "unknown_connector",
-    );
-    const b = await prepareAgentConnectorBinding({ orgId: ORG, agentId: AGENT_A, connector: { kind: "vetted", id: "postiz", serviceName: "composio_api_key" }, apiKey: KEY, existing: [], deps: h.deps });
+    await assert.rejects(bindVia(PATHS[1], { kind: "vetted", id: "nope", serviceName: "composio_api_key" }, h), isCode("unknown_connector"));
+    const b = await bindVia(PATHS[1], { kind: "vetted", id: "postiz", serviceName: "composio_api_key" }, h);
     assert.equal(b.kind, "vetted");
     assert.notEqual(svc(b), "composio_api_key");
     assert.equal(h.stored[0].serviceName, svc(b));
@@ -197,17 +179,22 @@ describe("2 server-derived names, store after discovery, no cross-kind overwrite
 });
 
 describe("3 per-agent secret scope", () => {
-  test("two agents on the same endpoint get different secret names", async () => {
-    const ha = harness();
-    const hb = harness();
-    const a = await prepareAgentConnectorBinding({ orgId: ORG, agentId: AGENT_A, connector: byo("https://odoo-mcp.example.com/mcp"), apiKey: KEY, existing: [], deps: ha.deps });
-    const b = await prepareAgentConnectorBinding({ orgId: ORG, agentId: AGENT_B, connector: byo("https://odoo-mcp.example.com/mcp"), apiKey: KEY, existing: [], deps: hb.deps });
+  test("two agents on the same endpoint get different, bounded secret names", async () => {
+    const a = await bindVia({ name: "a", scope: { agentId: AGENT_A } }, byo("https://odoo-mcp.example.com/mcp"), harness());
+    const b = await bindVia({ name: "b", scope: { agentId: AGENT_B } }, byo("https://odoo-mcp.example.com/mcp"), harness());
     assert.equal(a.id, b.id, "control: same endpoint → same binding id");
     assert.notEqual(svc(a), svc(b));
     assert.equal(isAgentScopedSecret(AGENT_A, svc(a)), true);
     assert.equal(isAgentScopedSecret(AGENT_A, svc(b)), false, "agent A must never delete agent B's key");
     assert.equal(isAgentScopedSecret(AGENT_A, "composio_api_key"), false);
     assert.equal(isAgentScopedSecret(AGENT_A, "byo_odoo-mcp-example-com-mcp"), false, "legacy unscoped name is not deleted");
+  });
+
+  test("a scoped name is never longer than the old byo_<48-char slug> maximum (tool-name budget)", () => {
+    const longSlug = "x".repeat(48);
+    assert.equal(`byo_${longSlug}`.length, 52, "control: the old maximum");
+    assert.ok(agentByoServiceName(AGENT_A, longSlug).length <= 52);
+    assert.ok(`${agentByoServiceName(AGENT_A, longSlug)}__${"t".repeat(40)}`.length <= 94);
   });
 });
 
@@ -216,10 +203,9 @@ describe("4 error codes never carry upstream text", () => {
     const h = harness({ discover: async () => { throw new Error(`MCP server returned HTTP 500: Bearer ${KEY} <html>`); } });
     let caught: unknown;
     try {
-      await prepareAgentConnectorBinding({ orgId: ORG, agentId: AGENT_A, connector: byo("https://odoo-mcp.example.com/mcp"), apiKey: KEY, existing: [], deps: h.deps });
+      await bindVia(PATHS[1], byo("https://odoo-mcp.example.com/mcp"), h);
     } catch (e) { caught = e; }
-    const code = agentConnectorErrorCode(caught);
-    assert.equal(code, "discovery_failed");
+    assert.equal(agentConnectorErrorCode(caught), "discovery_failed");
     assert.equal(String((caught as Error).message).includes(KEY), false);
     assert.equal(agentConnectorErrorCode(new Error(`leak ${KEY}`)), "discovery_failed");
   });
@@ -228,5 +214,24 @@ describe("4 error codes never carry upstream text", () => {
     const v = await validateAgentByoEndpoint("  https://Odoo-MCP.example.com/mcp ", { resolve: publicResolver });
     assert.equal(v.endpoint, "https://odoo-mcp.example.com/mcp");
     assert.equal(v.id, "odoo-mcp-example-com-mcp");
+  });
+});
+
+describe("5 isConnectorsPatchAllowed (pure)", () => {
+  const existing: ConnectorBinding[] = [
+    { kind: "byo", id: "odoo", serviceName: "byo_aX_odoo", endpoint: "https://odoo-mcp.example.com/mcp", enabledTools: ["a"], tools: [] },
+  ];
+  test("controls: unchanged, tool selection change, drop all, absent patch are allowed", () => {
+    assert.equal(isConnectorsPatchAllowed(existing, existing), true);
+    assert.equal(isConnectorsPatchAllowed(existing, [{ ...existing[0], enabledTools: [] } as ConnectorBinding]), true);
+    assert.equal(isConnectorsPatchAllowed(existing, []), true);
+    assert.equal(isConnectorsPatchAllowed(existing, undefined), true);
+  });
+  test("repointing the endpoint, renaming the secret, or adding a binding is refused", () => {
+    assert.equal(isConnectorsPatchAllowed(existing, [{ ...existing[0], endpoint: "https://evil.example.com/x" } as ConnectorBinding]), false);
+    assert.equal(isConnectorsPatchAllowed(existing, [{ ...existing[0], serviceName: "composio_api_key" } as ConnectorBinding]), false);
+    assert.equal(isConnectorsPatchAllowed(existing, [...existing, { kind: "vetted", id: "postiz", serviceName: "postiz", enabledTools: [] }]), false);
+    assert.equal(isConnectorsPatchAllowed([], [{ ...existing[0] }]), false);
+    assert.equal(isConnectorsPatchAllowed(existing, "x" as unknown as ConnectorBinding[]), false);
   });
 });

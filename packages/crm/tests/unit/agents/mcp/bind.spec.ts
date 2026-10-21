@@ -45,6 +45,8 @@ function recordingDeps(overrides: Partial<BindDeps> = {}): {
       discoveredFrom.push({ endpoint, bearer });
       return DISCOVERED;
     },
+    // Hermetic DNS for the public-address check (no live lookups in unit tests).
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
     ...overrides,
   };
   return { deps, stored, discoveredFrom };
@@ -113,7 +115,7 @@ describe("buildConnectorBinding — BYO", () => {
           apiKey: "k",
           deps,
         }),
-      /https/i,
+      /endpoint_not_allowed/,
     );
     assert.equal(stored.length, 0, "no secret stored for a rejected endpoint");
     assert.equal(discoveredFrom.length, 0, "no discovery for a rejected endpoint");
