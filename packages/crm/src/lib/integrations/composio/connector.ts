@@ -26,6 +26,7 @@
 // Composio-secret lives on the binding or in the blueprint.
 
 import { z } from "zod";
+import { annotateComposioResult, prepareComposioArgs } from "./docs-tabs";
 
 import type { AgentTool, ToolExecuteContext } from "@/lib/agents/tools";
 import type {
@@ -77,8 +78,13 @@ function wrapComposioTool(
     description: cachedSchema?.description ?? `Composio tool ${toolName}.`,
     inputSchema: PASS_THROUGH_INPUT,
     jsonSchema: cachedSchema?.inputSchema ?? DEFAULT_JSON_SCHEMA,
-    execute: async (input: Record<string, unknown>, ctx: ToolExecuteContext) =>
-      deps.executeTool(ctx.orgId, toolName, input ?? {}),
+    execute: async (input: Record<string, unknown>, ctx: ToolExecuteContext) => {
+      // Docs plain-text reads default to ALL tabs and never return a silent
+      // subset (docs-tabs.ts); every other tool passes through unchanged.
+      const args = prepareComposioArgs(toolName, input ?? {});
+      const output = await deps.executeTool(ctx.orgId, toolName, args);
+      return annotateComposioResult(toolName, args, output);
+    },
   };
 }
 
