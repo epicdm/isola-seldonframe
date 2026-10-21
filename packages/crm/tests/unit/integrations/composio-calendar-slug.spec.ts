@@ -78,14 +78,14 @@ describe("Calendar list-events slug", () => {
 });
 
 describe("custom script gets today's date (temporal grounding)", () => {
-  const base = { capabilities: [], pricingFacts: [], faq: [] };
+  const base: AgentBlueprint = { capabilities: [], faq: [] };
   const now = new Date("2026-10-21T15:00:00Z");
 
   test("{{currentDate}}/{{timezone}} placeholders in a custom script are rendered", async () => {
     const prompt = await composeSystemPrompt({
       orgName: "Test Co",
       soul: null,
-      blueprint: { ...base, customSkillMd: "Today is {{currentDate}} ({{timezone}}). Read only." } as unknown as AgentBlueprint,
+      blueprint: { ...base, customSkillMd: "Today is {{currentDate}} ({{timezone}}). Read only." },
       archetype: "website-chatbot",
       now,
       timezone: "America/Dominica",
@@ -98,7 +98,7 @@ describe("custom script gets today's date (temporal grounding)", () => {
     const prompt = await composeSystemPrompt({
       orgName: "Test Co",
       soul: null,
-      blueprint: { ...base, customSkillMd: "Today is Wednesday, October 1, 2026. Read only." } as unknown as AgentBlueprint,
+      blueprint: { ...base, customSkillMd: "Today is Wednesday, October 1, 2026. Read only." },
       archetype: "website-chatbot",
       now,
       timezone: "America/Dominica",
@@ -111,7 +111,7 @@ describe("custom script gets today's date (temporal grounding)", () => {
     const prompt = await composeSystemPrompt({
       orgName: "Test Co",
       soul: null,
-      blueprint: { ...base } as unknown as AgentBlueprint,
+      blueprint: { ...base },
       archetype: "website-chatbot",
       now,
       timezone: "America/Dominica",
@@ -124,7 +124,7 @@ describe("custom script gets today's date (temporal grounding)", () => {
     const prompt = await composeSystemPrompt({
       orgName: "Test Co",
       soul: null,
-      blueprint: { ...base, customSkillMd: "Keep {{customerName}} literal. Plain line." } as unknown as AgentBlueprint,
+      blueprint: { ...base, customSkillMd: "Keep {{customerName}} literal. Plain line." },
       archetype: "website-chatbot",
       now,
       timezone: "UTC",
