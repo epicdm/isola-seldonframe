@@ -113,15 +113,42 @@ export async function ensureSession(
   if (cachedId) {
     try {
       const reused = await composio.use(cachedId, { mcp: true });
-      return toSessionInfo(reused);
+      // A session's toolkit list is fixed at create time; one cached before a
+      // toolkit joined the catalog cannot authorize/expose it. Reuse only when
+      // it covers every requested toolkit — otherwise recreate below.
+      if (await sessionCoversToolkits(reused, requested)) {
+        return toSessionInfo(reused);
+      }
     } catch {
-      // expired / 404 / toolkits drift — fall through to (re)create below.
+      // expired / 404 — fall through to (re)create below.
     }
   }
 
   const created = await composio.create(orgId, { toolkits: requested, mcp: true });
   await persistSessionId(orgId, created.sessionId, opts?.actorUserId);
   return toSessionInfo(created);
+}
+
+/**
+ * True when a (reused) session's toolkit allowlist includes every requested
+ * toolkit. Composio fixes a session's toolkits at create time, so a session
+ * cached before a toolkit was added to the catalog must be recreated rather than
+ * reused. Any error reading the list → false (caller recreates). Exported for
+ * unit tests.
+ */
+export async function sessionCoversToolkits(
+  session: { toolkits: () => Promise<{ items?: Array<{ slug: string }> }> },
+  requested: readonly string[],
+): Promise<boolean> {
+  try {
+    const details = await session.toolkits();
+    const have = new Set(
+      (details.items ?? []).map((it) => it.slug.trim().toLowerCase()),
+    );
+    return requested.every((t) => have.has(t.trim().toLowerCase()));
+  } catch {
+    return false;
+  }
 }
 
 /** Best-effort cache of the session id; swallows the "no actor" Unauthorized. */
@@ -203,6 +230,10 @@ export async function listConnections(
     if (cachedId) {
       try {
         session = await composio.use(cachedId);
+        // Toolkit drift (cached before a catalog addition) → recreate.
+        if (!(await sessionCoversToolkits(session, requestedToolkits))) {
+          throw new Error("composio_session_toolkit_drift");
+        }
       } catch {
         session = await composio.create(orgId, { toolkits: requestedToolkits });
         await persistSessionId(orgId, session.sessionId, opts?.actorUserId);

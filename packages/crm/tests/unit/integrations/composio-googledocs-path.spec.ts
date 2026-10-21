@@ -24,12 +24,12 @@ const SEARCH_TOOL = "GOOGLEDOCS_SEARCH_DOCUMENTS";
 
 function harness() {
   let blueprint: AgentBlueprint = { capabilities: [], connectors: [] };
-  const deps = {
+  const deps: Pick<TemplateConnectorDeps, "loadBlueprint" | "saveConnectors"> = {
     loadBlueprint: async () => blueprint,
     saveConnectors: async (connectors: ConnectorBinding[]) => {
       blueprint = { ...blueprint, connectors };
     },
-  } as unknown as TemplateConnectorDeps;
+  };
   return {
     deps,
     get blueprint() {
