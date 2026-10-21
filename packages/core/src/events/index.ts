@@ -1,9 +1,7 @@
 export type SeldonEvent =
   | { type: "contact.created"; data: { contactId: string } }
   | { type: "contact.updated"; data: { contactId: string } }
-  // EPIC 2026-10-21: `actor` says WHO moved the card (kanban user, REST/MCP caller, or a signed integration).
-  // Optional so every existing emitter and listener is unchanged.
-  | { type: "deal.stage_changed"; data: { dealId: string; from: string; to: string; actor?: { kind: "user" | "api" | "integration"; name?: string; ref?: string | null } } }
+  | { type: "deal.stage_changed"; data: { dealId: string; from: string; to: string } }
   | { type: "form.submitted"; data: { formId: string; contactId: string; data: Record<string, unknown> } }
   | { type: "booking.created"; data: { appointmentId: string; contactId: string } }
   | { type: "booking.completed"; data: { appointmentId: string; contactId: string } }
