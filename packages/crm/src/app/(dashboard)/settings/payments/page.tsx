@@ -14,6 +14,7 @@ export default async function PaymentsSettingsPage() {
   const features = getOrgFeatures(subscription.tier ?? "free");
   const hasCloudAccess = subscription.tier !== "free" && subscription.tier !== "starter";
   // Law 26: without the Connect client id the start action can only fail, so say so instead of offering the button.
+  // Same condition buildStripeConnectUrl refuses on; the notice disappears by itself once Connect is configured again.
   const connectAvailable = isStripeConnectConfigured();
 
   return (
@@ -46,7 +47,7 @@ export default async function PaymentsSettingsPage() {
               </button>
             </form>
           ) : (
-            <p className="text-label text-[hsl(var(--color-text-secondary))]">Stripe payments are not available for this workspace.</p>
+            <p className="text-label text-[hsl(var(--color-text-secondary))]">Stripe connection is temporarily unavailable while we complete a security update. Existing payment methods are not affected.</p>
           )}
         </UpgradeGate>
         {!features.managedEmail ? (
