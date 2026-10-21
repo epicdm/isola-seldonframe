@@ -8,6 +8,8 @@ const TEXT = {
     in_progress: ["Connection not finished", "attention"],
     needs_review: ["Connection needs EPIC to check it", "attention"],
     connected: ["Connected to Meta", "ok"],
+    linked_by_staff: ["Connected to Meta (number linked by EPIC staff)", "ok"],
+    unknown: ["Could not be checked with Meta right now", "unknown"],
   },
   setup: {
     not_started: ["Calling service not set up yet", "attention"],
@@ -15,11 +17,13 @@ const TEXT = {
     step_failed: ["Calling service setup stopped part-way; you can retry", "attention"],
     needs_review: ["Calling service setup needs EPIC to check it", "attention"],
     set_up: ["Calling service account and destination set up", "ok"],
+    staff_managed: ["Managed by EPIC staff, not set up from this page", "unknown"],
   },
   routing: {
     unknown: ["Routing could not be checked right now", "unknown"],
     not_routed: ["Calls are not being sent anywhere yet", "attention"],
     routed_other_destination: ["Calls go to a different destination than the one you chose", "attention"],
+    routed_by_staff: ["Calls are configured to go to the destination EPIC staff set (shown below); none was chosen on this page", "unknown"],
     verified: ["Calls are routed to your chosen destination", "ok"],
   },
   acceptance: {
@@ -41,6 +45,8 @@ const NEXT: Record<ServiceStates["next"], string> = {
   wait_for_routing: "Waiting for routing to show your destination.",
   make_acceptance_call: "Place an acceptance call to the number.",
   confirm_acceptance: "Confirm that the call had audio in both directions.",
+  staff_managed: "Calling for this number is managed by EPIC staff. To change where calls go, contact EPIC.",
+  recheck: "Reload this page to check again.",
   none: "Nothing left to do.",
 };
 
@@ -56,7 +62,7 @@ export function ServiceStatesCard({ states, observedAt = null }: { states: Servi
   return (
     <section className="crm-card space-y-2 p-4" data-testid="service-states" aria-label="Calling service status">
       <h2 className="text-lg font-semibold">
-        {states.ready ? (observedAt ? `Calling service verified ready as of ${utc(observedAt)}` : "Calling service verified ready") : "Calling service is not ready yet"}
+        {states.ready ? (observedAt ? `Calling service verified ready as of ${utc(observedAt)}` : "Calling service verified ready") : states.next === "staff_managed" ? "Calling for this number is managed by EPIC staff" : states.next === "recheck" ? "Calling service status could not be checked" : "Calling service is not ready yet"}
       </h2>
       {states.ready ? (
         <p className="text-xs text-muted-foreground" data-testid="service-ready-scope">

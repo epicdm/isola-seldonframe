@@ -76,7 +76,9 @@ export async function serviceView(ws: string, phone: string, deps: ServiceDeps):
   const version = f.dest ? versionOf(f.dest) : null;
   const input = acceptanceInput(ws, phone, f, events, stored);
   const ev = evaluateAcceptance(input);
-  const states = deriveServiceStates({ connectionStatus: status, ledger: f.ledger, routing: f.routing, expectedTarget: f.dest ? targetString(f.dest) : null, acceptance: ev.state });
+  // The state route only serves this workspace's own lines, so a line with no connect-flow record was linked by EPIC staff: read Meta's evidence for it.
+  const staffLine = status === null ? { metaStatus: f.evidence?.meta.ok ? f.evidence.meta.status ?? null : null } : null;
+  const states = deriveServiceStates({ connectionStatus: status, ledger: f.ledger, routing: f.routing, expectedTarget: f.dest ? targetString(f.dest) : null, acceptance: ev.state, staffLine });
   const current = stored.filter((a) => version && a.destinationVersion === version && states.routing === "verified");
   const historical = stored.filter((a) => !current.includes(a)).map((a) => ({
     ...a, why: version && a.destinationVersion === version ? "routing is not currently verified for this destination" : "accepted for an earlier route; it is not proof for the current route",

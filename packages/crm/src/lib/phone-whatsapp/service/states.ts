@@ -7,9 +7,12 @@
 import type { AttachLedgerRecord } from "./attach";
 import type { AcceptanceState } from "./acceptance";
 
-export type ConnectionState = "not_connected" | "in_progress" | "needs_review" | "connected";
-export type SetupState = "not_started" | "in_progress" | "step_failed" | "needs_review" | "set_up";
-export type RoutingState = "unknown" | "not_routed" | "routed_other_destination" | "verified";
+// linked_by_staff / unknown: a number EPIC staff linked to the workspace (settings.phoneWhatsapp.lines) with no connect-flow record. Read from Meta's own
+// evidence, the same source as the detailed cards; "unknown" when Meta could not be read, never "not connected".
+export type ConnectionState = "not_connected" | "in_progress" | "needs_review" | "connected" | "linked_by_staff" | "unknown";
+export type SetupState = "not_started" | "in_progress" | "step_failed" | "needs_review" | "set_up" | "staff_managed";
+// routed_by_staff: the voice platform routes the number, but no destination was chosen on this page, so there is nothing to compare it with.
+export type RoutingState = "unknown" | "not_routed" | "routed_other_destination" | "routed_by_staff" | "verified";
 
 export type ServiceStates = {
   connection: ConnectionState;
@@ -17,7 +20,7 @@ export type ServiceStates = {
   routing: RoutingState;
   acceptance: AcceptanceState | "not_applicable";
   ready: boolean;
-  next: "connect" | "resolve_connection" | "choose_destination_and_set_up" | "retry_setup" | "staff_review_setup" | "wait_for_routing" | "make_acceptance_call" | "confirm_acceptance" | "none";
+  next: "connect" | "resolve_connection" | "choose_destination_and_set_up" | "retry_setup" | "staff_review_setup" | "wait_for_routing" | "make_acceptance_call" | "confirm_acceptance" | "staff_managed" | "recheck" | "none";
 };
 
 export function deriveServiceStates(i: {
@@ -27,15 +30,20 @@ export function deriveServiceStates(i: {
   routing: { didActive: boolean; destinationActive: boolean; destinationTarget: string | null } | null;
   expectedTarget: string | null;
   acceptance: AcceptanceState | null;
+  /** Present only for a staff-linked line: Meta's own status for the number, or null when Meta could not be read. Used ONLY when there is no
+   *  connect-flow record; a record always wins. Presentation only: the attach precondition still reads the record and is unchanged. */
+  staffLine?: { metaStatus: string | null } | null;
 }): ServiceStates {
   const connection: ConnectionState =
     i.connectionStatus === "active" ? "connected"
     : i.connectionStatus === "registering" ? "needs_review"
     : i.connectionStatus === "pending" || i.connectionStatus === "registered" ? "in_progress"
+    : i.connectionStatus === null && i.staffLine ? (i.staffLine.metaStatus === null ? "unknown" : i.staffLine.metaStatus === "CONNECTED" ? "linked_by_staff" : "not_connected")
     : "not_connected"; // null and failed
 
   const setup: SetupState =
-    connection !== "connected" || !i.ledger ? "not_started"
+    connection === "linked_by_staff" || connection === "unknown" ? "staff_managed"
+    : connection !== "connected" || !i.ledger ? "not_started"
     : i.ledger.status === "attached" ? "set_up"
     : i.ledger.status === "needs_review" ? "needs_review"
     : i.ledger.status === "step_failed" ? "step_failed"
@@ -44,6 +52,7 @@ export function deriveServiceStates(i: {
   let routing: RoutingState = "unknown";
   if (i.routing) {
     if (!i.routing.didActive || !i.routing.destinationActive) routing = "not_routed";
+    else if (!i.expectedTarget && !i.ledger) routing = "routed_by_staff";
     else if (i.expectedTarget && i.routing.destinationTarget === i.expectedTarget) routing = "verified";
     else routing = "routed_other_destination";
   }
@@ -52,7 +61,9 @@ export function deriveServiceStates(i: {
   const ready = connection === "connected" && setup === "set_up" && routing === "verified" && acceptance === "accepted";
 
   let next: ServiceStates["next"];
-  if (connection === "not_connected") next = "connect";
+  if (connection === "unknown") next = "recheck";
+  else if (connection === "linked_by_staff") next = "staff_managed";
+  else if (connection === "not_connected") next = "connect";
   else if (connection !== "connected") next = "resolve_connection";
   else if (setup === "not_started") next = "choose_destination_and_set_up";
   else if (setup === "step_failed" || setup === "in_progress") next = "retry_setup";
