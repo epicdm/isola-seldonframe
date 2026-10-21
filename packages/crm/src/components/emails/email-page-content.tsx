@@ -81,6 +81,24 @@ function statusBadge(status: string) {
   return "border-border bg-muted/50 text-muted-foreground";
 }
 
+// What the Sent list may truthfully say about a row. "manual" rows were never
+// handed to any transport (stored as "sent" anyway), and SMTP2GO has no
+// delivery webhook here, so its "sent" only means the API accepted it.
+function sentStatus(row: { status: string; provider: string }): { label: string; className: string } {
+  const provider = row.provider.toLowerCase();
+  const status = row.status.toLowerCase();
+
+  if (provider === "manual") {
+    return { label: "Not sent — no email provider configured", className: statusBadge("not-sent") };
+  }
+
+  if (provider === "smtp2go" && status === "sent") {
+    return { label: "Submitted to SMTP2GO", className: statusBadge("submitted") };
+  }
+
+  return { label: row.status, className: statusBadge(row.status) };
+}
+
 export function EmailPageContent({
   templates,
   sent,
@@ -474,7 +492,7 @@ export function EmailPageContent({
                       </div>
 
                       <div className="mt-1.5 flex items-center gap-2">
-                        <span className={`rounded-full border px-2 py-0.5 text-[11px] ${statusBadge(row.status)}`}>{row.status}</span>
+                        <span className={`rounded-full border px-2 py-0.5 text-[11px] ${sentStatus(row).className}`}>{sentStatus(row).label}</span>
                         <span className="text-[11px] text-muted-foreground">via {row.provider}</span>
                       </div>
                     </div>
