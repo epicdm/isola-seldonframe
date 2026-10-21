@@ -56,6 +56,7 @@ import { resolveTurnModel } from "./runtime/turn-model";
 import {
   DEEPSEEK_FLASH_PRICING,
   extractCompletePublicUsage,
+  isConfiguredPublicPilotTarget,
   isWithinModelRequestLimit,
 } from "./public-pilot-controls";
 import { createTtlPromiseCache } from "./runtime/capped-reply-cache";
@@ -391,7 +392,15 @@ export async function executeTurn(input: {
   // falling to the platform key. Fail-soft wrapper — identical to
   // getAIClient's behavior whenever the flag is off or any lookup
   // fails, so this is a no-op today until Max flips the flag.
-  const aiResolution = await resolveRuntimeAiClient({ orgId: agent.orgId });
+  // Public pilot pin: a metered turn of the APPROVED pilot workspace
+  // (PUBLIC_PILOT_ORG_ID / PUBLIC_PILOT_AGENT_ID — the same identity the route
+  // meters on) resolves the platform client directly, so a workspace BYOK key
+  // saved for Studio Test cannot switch the pilot off. Any other workspace
+  // resolves exactly as before; the guard below is unchanged.
+  const pinPilotPlatform = input.publicPilotSpend === true && isConfiguredPublicPilotTarget(agent.orgId, agent.id);
+  const aiResolution = await resolveRuntimeAiClient(
+    pinPilotPlatform ? { orgId: agent.orgId, platformOnly: true } : { orgId: agent.orgId },
+  );
   const runtimeModel = aiResolution.model ?? MODEL;
   if (input.publicPilotSpend && (
     aiResolution.provider !== "platform" ||

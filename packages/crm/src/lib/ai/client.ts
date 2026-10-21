@@ -260,6 +260,13 @@ export async function getAIClient(params: { orgId: string; userId?: string | nul
     };
   }
 
+  return getPlatformAIClient(params);
+}
+
+/** The platform (non-BYOK) branch of getAIClient, unchanged; exported so the
+ *  approved public pilot route can pin the platform provider even when the
+ *  workspace has saved a BYOK key for Studio Test. */
+export async function getPlatformAIClient(params: { orgId: string; userId?: string | null }): Promise<AIClientResolution> {
   // Prefer the existing explicit key, then EPIC's mounted-secret convention.
   const platformAuth = resolvePlatformAnthropicAuth(
     process.env.ANTHROPIC_API_KEY,
@@ -390,12 +397,16 @@ export type RuntimeAiClientDeps = {
    *  (fail-soft) — this function is free to throw. OPTIONAL — defaults to
    *  "no cap" (never capped) when omitted. */
   loadUsageCapEvaluation?: (orgId: string) => Promise<UsageCapEvaluationForRuntime>;
+  /** Platform-only resolution used when the caller passes platformOnly.
+   *  OPTIONAL — defaults to getPlatformAIClient. */
+  getPlatformAIClient?: (params: { orgId: string; userId?: string | null }) => Promise<AIClientResolution>;
 };
 
 function defaultRuntimeAiClientDeps(): RuntimeAiClientDeps {
   return {
     flagOn: process.env.SF_AGENCY_KEY_INHERIT?.trim() === "1",
     getAIClient,
+    getPlatformAIClient,
     getParentAgencyId: async (orgId) => {
       const [row] = await db
         .select({ parentAgencyId: organizations.parentAgencyId })
@@ -437,13 +448,19 @@ function defaultRuntimeAiClientDeps(): RuntimeAiClientDeps {
  *  Voice runtime (OPENAI env) is untouched — this only wraps the
  *  Anthropic-facing chat/agent runtime client. */
 export async function resolveRuntimeAiClient(
-  params: { orgId: string; userId?: string | null },
+  params: { orgId: string; userId?: string | null; platformOnly?: boolean },
   deps: RuntimeAiClientDeps = defaultRuntimeAiClientDeps(),
 ): Promise<AIClientResolution> {
-  const own = await deps.getAIClient(params);
+  // platformOnly (approved public pilot workspace only — set by runtime.ts):
+  // skip workspace BYOK and agency-key inheritance, which can only ever swap
+  // in a BYOK key that the pilot guard refuses. The pause branch still applies.
+  const { platformOnly, ...clientParams } = params;
+  const own = platformOnly
+    ? await (deps.getPlatformAIClient ?? getPlatformAIClient)(clientParams)
+    : await deps.getAIClient(clientParams);
 
   let resolved = own;
-  if (deps.flagOn && own.mode !== "byok") {
+  if (!platformOnly && deps.flagOn && own.mode !== "byok") {
     try {
       const parentAgencyId = await deps.getParentAgencyId(params.orgId);
       if (parentAgencyId) {
