@@ -1,12 +1,20 @@
 "use server";
 
 import { and, desc, eq, sql } from "drizzle-orm";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { buildStripeConnectUrl, createCheckoutSession, exchangeStripeConnectCode } from "@seldonframe/payments";
+import { buildStripeConnectUrl, createCheckoutSession } from "@seldonframe/payments";
 import { db } from "@/db";
 import { activities, bookings, paymentRecords, stripeConnections, users } from "@/db/schema";
 import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import { emitSeldonEvent } from "@/lib/events/bus";
+import {
+  STRIPE_CONNECT_STATE_COOKIE,
+  STRIPE_CONNECT_STATE_MAX_AGE_SECONDS,
+  newStripeConnectNonce,
+  resolveStripeConnectStateSecret,
+  signStripeConnectState,
+} from "@/lib/payments/stripe-connect-state";
 
 function getAppBaseUrl() {
   return process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
@@ -20,36 +28,30 @@ export async function startStripeConnectAction() {
     throw new Error("Unauthorized");
   }
 
-  const state = `${orgId}:${Date.now()}`;
+  // The OAuth `state` is an opaque nonce; the workspace and user it was minted for
+  // travel only in the signed, httpOnly cookie that the callback verifies.
+  const secret = resolveStripeConnectStateSecret();
+  if (!secret) {
+    throw new Error("Stripe Connect state secret is not configured");
+  }
+  const state = newStripeConnectNonce();
+  const signedState = signStripeConnectState(
+    { v: 1, nonce: state, orgId, userId: user.id, exp: Date.now() + STRIPE_CONNECT_STATE_MAX_AGE_SECONDS * 1000 },
+    secret,
+  );
   const redirectUri = `${getAppBaseUrl()}/api/stripe/connect/callback`;
   const connectUrl = buildStripeConnectUrl({ state, redirectUri });
 
-  redirect(connectUrl);
-}
-
-export async function completeStripeConnectFromCode({ code, state }: { code: string; state: string }) {
-  const [orgId] = state.split(":");
-
-  if (!orgId || !code) {
-    throw new Error("Invalid Stripe connect callback payload");
-  }
-
-  const secretKey = process.env.STRIPE_SECRET_KEY;
-
-  if (!secretKey) {
-    throw new Error("Stripe secret key is not configured");
-  }
-
-  const payload = await exchangeStripeConnectCode({ code, secretKey });
-
-  await db.insert(stripeConnections).values({
-    orgId,
-    stripeAccountId: payload.stripe_user_id,
-    accessToken: payload.access_token ?? null,
-    stripePublishableKey: payload.stripe_publishable_key ?? null,
-    isActive: true,
-    connectedAt: new Date(),
+  const cookieStore = await cookies();
+  cookieStore.set(STRIPE_CONNECT_STATE_COOKIE, signedState, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: STRIPE_CONNECT_STATE_MAX_AGE_SECONDS,
   });
+
+  redirect(connectUrl);
 }
 
 export async function getStripeConnectionStatus() {

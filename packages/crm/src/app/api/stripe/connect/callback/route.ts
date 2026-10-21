@@ -1,21 +1,50 @@
-import { NextResponse } from "next/server";
-import { completeStripeConnectFromCode } from "@/lib/payments/actions";
+// GET /api/stripe/connect/callback — Stripe Connect OAuth redirect target. All decision
+// logic lives in lib/payments/stripe-connect-callback.ts; this file wires the real
+// session, Stripe token exchange and database write around it.
+import { NextResponse, type NextRequest } from "next/server";
+import { exchangeStripeConnectCode } from "@seldonframe/payments";
+import { db } from "@/db";
+import { stripeConnections } from "@/db/schema";
+import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
 import { canonicalAppOrigin } from "@/lib/http/app-hosts";
+import { handleStripeConnectCallback } from "@/lib/payments/stripe-connect-callback";
+import { STRIPE_CONNECT_STATE_COOKIE, resolveStripeConnectStateSecret } from "@/lib/payments/stripe-connect-state";
 
-export async function GET(request: Request) {
+export const runtime = "nodejs";
+
+export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const appOrigin = canonicalAppOrigin();
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
 
-  if (!code || !state) {
-    return NextResponse.redirect(new URL("/settings/payments?error=connect_callback", appOrigin));
-  }
+  const result = await handleStripeConnectCallback(
+    { code: url.searchParams.get("code"), state: url.searchParams.get("state") },
+    {
+      getCookie: (name) => request.cookies.get(name)?.value,
+      resolveSession: async () => {
+        const user = await getCurrentUser();
+        const orgId = await getOrgId();
+        return user?.id && orgId ? { userId: user.id, orgId } : null;
+      },
+      exchange: async (code) => {
+        const secretKey = process.env.STRIPE_SECRET_KEY;
+        if (!secretKey) throw new Error("Stripe secret key is not configured");
+        return exchangeStripeConnectCode({ code, secretKey });
+      },
+      saveConnection: async ({ orgId, payload }) => {
+        await db.insert(stripeConnections).values({
+          orgId,
+          stripeAccountId: payload.stripe_user_id,
+          accessToken: payload.access_token ?? null,
+          stripePublishableKey: payload.stripe_publishable_key ?? null,
+          isActive: true,
+          connectedAt: new Date(),
+        });
+      },
+      authSecret: resolveStripeConnectStateSecret(),
+    },
+  );
 
-  try {
-    await completeStripeConnectFromCode({ code, state });
-    return NextResponse.redirect(new URL("/settings/payments?connected=1", appOrigin));
-  } catch {
-    return NextResponse.redirect(new URL("/settings/payments?error=connect_failed", appOrigin));
-  }
+  const response = NextResponse.redirect(new URL(result.redirect, appOrigin));
+  if (result.clearCookie) response.cookies.delete(STRIPE_CONNECT_STATE_COOKIE);
+  return response;
 }
