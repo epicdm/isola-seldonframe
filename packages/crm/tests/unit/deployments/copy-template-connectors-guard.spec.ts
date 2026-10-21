@@ -29,7 +29,7 @@ const CANONICAL_BYO: ConnectorBinding = {
   enabledTools: ["search_records"],
 };
 const CANONICAL_VETTED: ConnectorBinding = { kind: "vetted", id: "postiz", serviceName: POSTIZ_SECRET, enabledTools: [] };
-const COMPOSIO = { kind: "composio", id: "composio-gmail", toolkits: ["gmail"], enabledTools: [] } as unknown as ConnectorBinding;
+const COMPOSIO: ConnectorBinding = { kind: "composio", id: "composio-gmail", enabledToolkits: ["gmail"], enabledTools: [] };
 
 function run(template: ConnectorBinding[], resolve = async (h: string) => [{ address: h.startsWith("internal") ? "10.0.0.7" : PUBLIC_IP, family: 4 }]) {
   const written: ConnectorBinding[][] = [];

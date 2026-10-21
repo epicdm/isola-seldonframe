@@ -80,7 +80,7 @@ export async function buildConnectorBinding(args: {
     kind = "byo";
     id = v.id;
     endpoint = v.endpoint;
-    serviceName = args.secretScope ? agentByoServiceName(args.secretScope.agentId, v.id) : byoServiceName(v.id);
+    serviceName = args.secretScope ? agentByoServiceName(args.secretScope.agentId, v.endpoint) : byoServiceName(v.id);
   } else if (connector?.kind === "vetted") {
     const vetted = getVettedConnector(connector.id);
     if (!vetted) throw new AgentConnectorError("unknown_connector");

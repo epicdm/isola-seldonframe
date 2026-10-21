@@ -69,13 +69,14 @@ function agentTag(agentId: string): string {
   return hex(agentId, 12);
 }
 
-/** Per-agent BYO secret name: byo_a<agent tag>_<hash of the FULL slug>_<slug
- *  prefix>. The full-slug hash keeps distinct endpoints distinct even when the
- *  readable prefix is truncated; the total stays within the old 52-char
+/** Per-agent BYO secret name: byo_a<agent tag>_<128-bit digest of the full
+ *  normalised endpoint>. Keyed on the endpoint itself (not the lossy slug), so
+ *  two endpoints — including slug aliases like api.example.com vs
+ *  api-example.com — never share a secret. 50 chars, within the old 52-char
  *  byo_<48-char slug> maximum, because the runtime namespaces tool names as
  *  `${serviceName}__${tool}` and model tool names are length-limited. */
-export function agentByoServiceName(agentId: string, slug: string): string {
-  return `byo_a${agentTag(agentId)}_${hex(slug, 8)}_${slug.slice(0, 25)}`;
+export function agentByoServiceName(agentId: string, endpoint: string): string {
+  return `byo_a${agentTag(agentId)}_${hex(endpoint, 32)}`;
 }
 
 /** True only for a secret this agent's own BYO bind created. */

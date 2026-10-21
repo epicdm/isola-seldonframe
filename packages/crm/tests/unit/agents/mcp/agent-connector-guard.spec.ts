@@ -141,7 +141,7 @@ describe("2 server-derived names, store after discovery, no cross-kind overwrite
       const h = harness();
       const b = await bindVia(path, byo("https://odoo-mcp.example.com/mcp", "composio", "composio_api_key"), h);
       assert.equal(b.id, "odoo-mcp-example-com-mcp");
-      const expected = path.scope ? agentByoServiceName(AGENT_A, "odoo-mcp-example-com-mcp") : "byo_odoo-mcp-example-com-mcp";
+      const expected = path.scope ? agentByoServiceName(AGENT_A, "https://odoo-mcp.example.com/mcp") : "byo_odoo-mcp-example-com-mcp";
       assert.equal(svc(b), expected);
       assert.equal(h.stored[0].serviceName, expected);
       assert.notEqual(h.stored[0].serviceName, "composio_api_key");
@@ -190,20 +190,24 @@ describe("3 per-agent secret scope", () => {
     assert.equal(isAgentScopedSecret(AGENT_A, "byo_odoo-mcp-example-com-mcp"), false, "legacy unscoped name is not deleted");
   });
 
-  test("endpoints that differ only past the readable slug prefix never share a secret", () => {
-    const a = `example-com-${"x".repeat(30)}a`;
-    const b = `example-com-${"x".repeat(30)}b`;
-    assert.notEqual(a, b, "control: distinct ids");
-    assert.notEqual(agentByoServiceName(AGENT_A, a), agentByoServiceName(AGENT_A, b));
-    assert.equal(agentByoServiceName(AGENT_A, a), agentByoServiceName(AGENT_A, a), "control: deterministic");
-    assert.equal(isAgentScopedSecret(AGENT_A, agentByoServiceName(AGENT_A, b)), true);
+  test("distinct endpoints never share a per-agent secret — incl. slug aliases and long near-duplicates", async () => {
+    const alias1 = await bindVia({ name: "a", scope: { agentId: AGENT_A } }, byo("https://api.example.com/mcp"), harness());
+    const alias2 = await bindVia({ name: "a", scope: { agentId: AGENT_A } }, byo("https://api-example.com/mcp"), harness());
+    assert.equal(alias1.id, alias2.id, "control: the two endpoints DO alias to one slug/id");
+    assert.notEqual(svc(alias1), svc(alias2));
+    // Codex's 32-bit collision pair, as endpoints: distinct names now.
+    const e1 = "https://mcp.example.com/xxxxxxxxxn39";
+    const e2 = "https://mcp.example.com/xxxxxxxxx1lin";
+    assert.notEqual(agentByoServiceName(AGENT_A, e1), agentByoServiceName(AGENT_A, e2));
+    assert.equal(agentByoServiceName(AGENT_A, e1), agentByoServiceName(AGENT_A, e1), "control: deterministic");
+    assert.equal(isAgentScopedSecret(AGENT_A, agentByoServiceName(AGENT_A, e2)), true);
   });
 
   test("a scoped name is never longer than the old byo_<48-char slug> maximum (tool-name budget)", () => {
-    const longSlug = "x".repeat(48);
-    assert.equal(`byo_${longSlug}`.length, 52, "control: the old maximum");
-    assert.ok(agentByoServiceName(AGENT_A, longSlug).length <= 52);
-    assert.ok(`${agentByoServiceName(AGENT_A, longSlug)}__${"t".repeat(40)}`.length <= 94);
+    const longEndpoint = `https://mcp.example.com/${"x".repeat(200)}`;
+    assert.equal(`byo_${"x".repeat(48)}`.length, 52, "control: the old maximum");
+    assert.ok(agentByoServiceName(AGENT_A, longEndpoint).length <= 52);
+    assert.ok(`${agentByoServiceName(AGENT_A, longEndpoint)}__${"t".repeat(40)}`.length <= 94);
   });
 });
 
