@@ -11,7 +11,7 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { organizations, proposals, stripeConnections, users } from "@/db/schema";
 import { getStripeClient } from "@/lib/proposals/stripe-connect";
-import { getOrCreateOnboardingCallBookingSlug, getAgencySlug } from "../actions";
+import { getOrCreateOnboardingCallBookingSlug, getAgencySlug } from "../onboarding-slugs";
 import { OnboardingMiniForm } from "./_components/onboarding-mini-form";
 
 export const dynamic = "force-dynamic";

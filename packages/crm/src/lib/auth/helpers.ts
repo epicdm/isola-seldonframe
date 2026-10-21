@@ -197,3 +197,44 @@ export async function getCurrentWorkspaceRole() {
 
   return member?.role ?? user.role ?? "member";
 }
+
+/**
+ * True when this user may act in `orgId`: the same admission rules getOrgId()
+ * applies when switching the active workspace (the user's home workspace, an
+ * org_members row, organizations.ownerId / parentUserId, or ownership of the
+ * partner agency the workspace is attached to). For server actions that receive
+ * an orgId from the client: a workspace the caller cannot switch into is treated
+ * exactly like one that does not exist.
+ */
+export async function userCanAccessOrg(userId: string, orgId: string): Promise<boolean> {
+  if (!userId || !orgId) return false;
+
+  const [home] = await db.select({ orgId: users.orgId }).from(users).where(eq(users.id, userId)).limit(1);
+  if (home?.orgId === orgId) return true;
+
+  const [member] = await db
+    .select({ orgId: orgMembers.orgId })
+    .from(orgMembers)
+    .where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, userId)))
+    .limit(1);
+  if (member?.orgId) return true;
+
+  const [org] = await db
+    .select({ ownerId: organizations.ownerId, parentUserId: organizations.parentUserId, parentAgencyId: organizations.parentAgencyId })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+  if (!org) return false;
+  if (org.ownerId === userId || org.parentUserId === userId) return true;
+
+  if (org.parentAgencyId) {
+    const [agency] = await db
+      .select({ id: partnerAgencies.id })
+      .from(partnerAgencies)
+      .where(and(eq(partnerAgencies.id, org.parentAgencyId), eq(partnerAgencies.ownerUserId, userId)))
+      .limit(1);
+    if (agency?.id) return true;
+  }
+
+  return false;
+}

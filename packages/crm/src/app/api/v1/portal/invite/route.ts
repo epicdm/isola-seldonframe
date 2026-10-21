@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { contacts } from "@/db/schema";
-import { createPortalMagicLink } from "@/lib/portal/auth";
+import { createPortalMagicLink } from "@/lib/portal/magic-link";
 import {
   assertSelfServiceEnabled,
   requireManagedWorkspaceForUser,

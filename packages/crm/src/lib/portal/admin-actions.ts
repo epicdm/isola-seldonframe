@@ -9,7 +9,8 @@ import { auth } from "@/auth";
 import { assertWritable } from "@/lib/demo/server";
 import { emitSeldonEvent } from "@/lib/events/bus";
 import { checkPortalPlanGate } from "./plan-gate";
-import { createPortalMagicLink } from "./auth";
+import { createPortalMagicLink } from "./magic-link";
+import { userCanAccessOrg } from "@/lib/auth/helpers";
 import {
   pickFromAddress,
   sendPortalInviteMagicLinkEmail,
@@ -45,7 +46,8 @@ export async function setContactPortalAccessAction(input: {
     .from(organizations)
     .where(eq(organizations.id, input.orgId))
     .limit(1);
-  if (!orgRow) return { ok: false, reason: "org_not_found" };
+  // A workspace this user cannot act in is refused exactly like a missing one.
+  if (!orgRow || !(await userCanAccessOrg(session.user.id, input.orgId))) return { ok: false, reason: "org_not_found" };
 
   // Plan gate. Free tier can't enable portal access at all (the toggle
   // shows disabled in the UI; we re-check server-side as defense in
@@ -114,7 +116,8 @@ export async function sendPortalInviteAction(input: {
     .from(organizations)
     .where(eq(organizations.slug, input.orgSlug))
     .limit(1);
-  if (!org) {
+  // A workspace this user cannot act in gets the same silent no-op as a missing one.
+  if (!org || !(await userCanAccessOrg(session.user.id, org.id))) {
     // Silent no-op for security parity with the access-code path —
     // don't leak which orgs exist via timing or error shape.
     console.warn(
@@ -265,7 +268,7 @@ export async function uploadPortalDocumentAction(
     .from(organizations)
     .where(eq(organizations.id, orgId))
     .limit(1);
-  if (!orgRow) return { ok: false, reason: "org_not_found" };
+  if (!orgRow || !(await userCanAccessOrg(session.user.id, orgId))) return { ok: false, reason: "org_not_found" };
 
   const gate = await checkPortalPlanGate(orgId);
   if (!gate.allowed) {
@@ -353,7 +356,7 @@ export async function deletePortalDocumentAction(input: {
     .from(organizations)
     .where(eq(organizations.id, input.orgId))
     .limit(1);
-  if (!orgRow) return { ok: false, reason: "org_not_found" };
+  if (!orgRow || !(await userCanAccessOrg(session.user.id, input.orgId))) return { ok: false, reason: "org_not_found" };
 
   const [doc] = await db
     .select({ id: portalDocuments.id, blobPath: portalDocuments.blobPath })

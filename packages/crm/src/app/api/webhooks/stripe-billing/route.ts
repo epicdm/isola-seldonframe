@@ -5,7 +5,7 @@ import { verifyStripeWebhook } from "@seldonframe/payments";
 import { db } from "@/db";
 import { organizations, users } from "@/db/schema";
 import { getOrgSubscription, updateOrgSubscription } from "@/lib/billing/subscription";
-import { finalizeBlockPurchaseFromWebhook, finalizeSoulPurchaseFromWebhook } from "@/lib/marketplace/actions";
+import { finalizeBlockPurchaseFromWebhook, finalizeSoulPurchaseFromWebhook } from "@/lib/marketplace/fulfillment";
 import {
   handleBillingSubscriptionEvent,
   type BillingWebhookStore,

@@ -36,7 +36,7 @@ import {
 } from "./provision-client-workspace";
 import { inviteClientToPortal } from "./portal-invite";
 import { createFullWorkspace } from "@/lib/workspace/create-full";
-import { createPortalMagicLink } from "@/lib/portal/auth";
+import { createPortalMagicLink } from "@/lib/portal/magic-link";
 import { createContactForOrg } from "@/lib/contacts/create-for-org";
 import {
   CreateDeploymentSchema,

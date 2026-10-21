@@ -9,7 +9,7 @@ import {
   handleMarketplaceWebhookRequest,
   type MarketplaceWebhookStore,
 } from "@/lib/marketplace/billing/webhook-apply";
-import { provisionBuyerAgentFromPurchaseRow } from "@/lib/marketplace/actions";
+import { provisionBuyerAgentFromPurchaseRow } from "@/lib/marketplace/fulfillment";
 import { applyWalletTopupWebhook } from "@/lib/build/wallet-webhook-apply";
 import { creditTopupToWallet } from "@/lib/build/wallet-store";
 

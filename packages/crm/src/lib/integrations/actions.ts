@@ -145,7 +145,9 @@ export async function getIntegrationSettings(): Promise<IntegrationViewModel | n
   };
 }
 
-export async function updateIntegration(orgId: string, service: string, credentials: Record<string, string>) {
+// Not exported: an exported function in this "use server" module is a callable server action, and this one
+// takes the orgId from its caller. Only the session-scoped actions below call it.
+async function updateIntegration(orgId: string, service: string, credentials: Record<string, string>) {
   const integrationService = service as IntegrationService;
 
   if (!["twilio", "resend", "kit", "mailchimp", "beehiiv", "google"].includes(integrationService)) {
@@ -241,7 +243,8 @@ export async function updateIntegration(orgId: string, service: string, credenti
   revalidatePath("/emails");
 }
 
-export async function disconnectIntegration(orgId: string, service: string) {
+// Not exported, same reason as updateIntegration.
+async function disconnectIntegration(orgId: string, service: string) {
   const integrationService = service as IntegrationService;
 
   if (![
