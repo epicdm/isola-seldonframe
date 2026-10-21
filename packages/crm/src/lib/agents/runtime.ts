@@ -393,11 +393,17 @@ export async function executeTurn(input: {
   // getAIClient's behavior whenever the flag is off or any lookup
   // fails, so this is a no-op today until Max flips the flag.
   // Public pilot pin: a metered turn of the APPROVED pilot workspace
-  // (PUBLIC_PILOT_ORG_ID / PUBLIC_PILOT_AGENT_ID — the same identity the route
-  // meters on) resolves the platform client directly, so a workspace BYOK key
-  // saved for Studio Test cannot switch the pilot off. Any other workspace
-  // resolves exactly as before; the guard below is unchanged.
-  const pinPilotPlatform = input.publicPilotSpend === true && isConfiguredPublicPilotTarget(agent.orgId, agent.id);
+  // (PUBLIC_PILOT_ORG_ID) that is ALSO the approved concierge — the agent the
+  // route's verified relay binding names (HMAC claims + UPLINK_RELAY_WORKSPACE_ID
+  // / UPLINK_RELAY_AGENT_SLUG) — resolves the platform client directly, so a
+  // workspace BYOK key saved for Studio Test cannot switch the concierge off.
+  // Every other agent (same workspace or not) resolves exactly as before; the
+  // guard below is unchanged.
+  const relayBinding = input.trustedRelayToolContext?.binding;
+  const pinPilotPlatform = input.publicPilotSpend === true
+    && isConfiguredPublicPilotTarget(agent.orgId, agent.id)
+    && relayBinding?.workspaceId === agent.orgId
+    && relayBinding?.agentId === agent.id;
   const aiResolution = await resolveRuntimeAiClient(
     pinPilotPlatform ? { orgId: agent.orgId, platformOnly: true } : { orgId: agent.orgId },
   );

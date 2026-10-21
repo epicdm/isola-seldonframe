@@ -5,10 +5,11 @@
 // Defect: a workspace BYOK key (needed for Studio Test) made getAIClient
 // resolve provider "anthropic", so every metered public-pilot turn hit the
 // pilot guard and returned llm_not_configured.
-// Fix: a metered turn of the APPROVED pilot workspace (PUBLIC_PILOT_ORG_ID /
-// PUBLIC_PILOT_AGENT_ID — the identity the public route already meters on)
-// resolves the platform client directly. Every other workspace, every
-// non-pilot turn and Studio Test resolve exactly as before.
+// Fix: a metered turn of the APPROVED pilot workspace that is also the approved
+// concierge (the agent the route's verified relay binding names) resolves the
+// platform client directly. Workspace-wide pilot metering is NOT workspace-wide
+// model selection: every other agent of the pilot workspace, every other
+// workspace, every non-pilot turn and Studio Test resolve exactly as before.
 //
 // Run: node --import tsx --experimental-test-module-mocks --test tests/unit/agents/public-pilot-platform-pin.spec.ts
 
@@ -85,7 +86,10 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 }) as typeof fetch;
 
 const PILOT_ORG = "11111111-1111-4111-8111-111111111111";
-const PILOT_AGENT = "22222222-2222-4222-8222-222222222222";
+// Live ids (2026-10-21): the WhatsApp relay concierge (uplink_sf-relay-pl-prod SF_AGENT_ID) and the agent
+// PUBLIC_PILOT_AGENT_ID names today ("Personal Line Assistant (DRAFT - sandbox)").
+const CONCIERGE_AGENT = "28a55c69-ef04-416f-9c91-7d72e9e21345";
+const PILOT_AGENT = "a5e7235d-9fe1-409a-b824-d7810fc13ab1";
 const OTHER_ORG = "33333333-3333-4333-8333-333333333333";
 const OTHER_AGENT = "44444444-4444-4444-8444-444444444444";
 // Fake, non-credential placeholders (never real keys).
@@ -160,55 +164,104 @@ beforeEach(() => {
   setPilotEnv();
 });
 
-describe("public pilot turn — platform pin on the approved pilot workspace", () => {
-  test("(1) pilot turn with a workspace BYOK key resolves the PLATFORM client and proceeds", async () => {
-    setWorkspace({ orgId: PILOT_ORG, agentId: PILOT_AGENT, byok: true });
-    const result = await runtime.executeTurn({ conversationId: "conv-1", userMessage: "hi", publicPilotSpend: true });
+// The verified relay binding the public route builds (route.ts) only after the
+// relay proof's HMAC/freshness/expected agent and the configured relay scope
+// (UPLINK_RELAY_WORKSPACE_ID / UPLINK_RELAY_AGENT_SLUG) all matched.
+function relayContext(workspaceId: string, agentId: string) {
+  return {
+    kind: "chatwoot" as const,
+    proof: "fake-proof",
+    binding: {
+      accountId: 1,
+      inboxId: 2,
+      chatwootConversationId: "3",
+      workspaceId,
+      agentId,
+      agentSlug: "ws--concierge",
+      sessionId: "session-1",
+    },
+  };
+}
+
+async function pilotTurn(agentId: string, orgId: string, relay?: ReturnType<typeof relayContext>) {
+  return runtime.executeTurn({
+    conversationId: "conv-1",
+    userMessage: "hi",
+    publicPilotSpend: true,
+    ...(relay ? { trustedRelayToolContext: relay } : {}),
+  });
+}
+
+function assertRefusedWithoutProviderCall(result: Awaited<ReturnType<Runtime["executeTurn"]>>, label: string) {
+  assert.equal(result.ok, false, label);
+  if (!result.ok) assert.equal(result.reason, "llm_not_configured", label);
+  assert.equal(seen.length, 0, `${label}: no provider call`);
+}
+
+describe("public pilot turn — platform pin only for the approved concierge in the approved workspace", () => {
+  test("(0) field-distinctness control: concierge, configured pilot agent and other ids genuinely differ", () => {
+    assert.notEqual(CONCIERGE_AGENT, PILOT_AGENT);
+    assert.equal(process.env.PUBLIC_PILOT_AGENT_ID, PILOT_AGENT, "PUBLIC_PILOT_AGENT_ID is NOT the concierge (live state)");
+    assert.notEqual(OTHER_ORG, PILOT_ORG);
+    assert.equal(process.env.PUBLIC_PILOT_ORG_ID, PILOT_ORG);
+    const binding = relayContext(PILOT_ORG, CONCIERGE_AGENT).binding;
+    assert.notEqual(binding.workspaceId, binding.agentId, "binding workspace and agent fields are distinct values");
+  });
+
+  test("(1) concierge (28a55c69) metered relay turn with a workspace BYOK key resolves the PLATFORM client and proceeds", async () => {
+    setWorkspace({ orgId: PILOT_ORG, agentId: CONCIERGE_AGENT, byok: true });
+    const result = await pilotTurn(CONCIERGE_AGENT, PILOT_ORG, relayContext(PILOT_ORG, CONCIERGE_AGENT));
     assert.equal(result.ok, true, `expected ok, got ${JSON.stringify(result)}`);
     assert.ok(seen.length >= 1, "a provider call was made");
     for (const call of seen) {
-      assert.equal(call.host, "api.deepseek.com", "every pilot call goes to the platform endpoint");
+      assert.equal(call.host, "api.deepseek.com", "every concierge call goes to the platform endpoint");
       assert.equal(call.apiKey, PLATFORM_KEY, "the platform key is used");
-      assert.notEqual(call.apiKey, BYOK_KEY, "the BYOK key is never sent on a pilot turn");
+      assert.notEqual(call.apiKey, BYOK_KEY, "the BYOK key is never sent on the concierge pilot turn");
       assert.equal(call.model, "deepseek-flash");
     }
   });
 
-  test("(2) control — pilot turn with NO platform key still refuses llm_not_configured, zero provider calls", async () => {
+  test("(2) control — concierge turn with NO platform key still refuses llm_not_configured", async () => {
     setPilotEnv({ MODEL_API_KEY_FILE: undefined });
-    setWorkspace({ orgId: PILOT_ORG, agentId: PILOT_AGENT, byok: true });
-    const result = await runtime.executeTurn({ conversationId: "conv-1", userMessage: "hi", publicPilotSpend: true });
-    assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.reason, "llm_not_configured");
-    assert.equal(seen.length, 0);
+    setWorkspace({ orgId: PILOT_ORG, agentId: CONCIERGE_AGENT, byok: true });
+    assertRefusedWithoutProviderCall(await pilotTurn(CONCIERGE_AGENT, PILOT_ORG, relayContext(PILOT_ORG, CONCIERGE_AGENT)), "no platform key");
   });
 
   test("(2b) control — pilot guard still refuses a non-deepseek-flash model or a non-deepseek endpoint", async () => {
     for (const overrides of [{ MODEL_NAME: "deepseek-v4-pro" }, { MODEL_BASE_URL: "https://example.com/anthropic" }]) {
       seen.length = 0;
       setPilotEnv(overrides);
-      setWorkspace({ orgId: PILOT_ORG, agentId: PILOT_AGENT, byok: true });
-      const result = await runtime.executeTurn({ conversationId: "conv-1", userMessage: "hi", publicPilotSpend: true });
-      assert.equal(result.ok, false, JSON.stringify(overrides));
-      if (!result.ok) assert.equal(result.reason, "llm_not_configured", JSON.stringify(overrides));
-      assert.equal(seen.length, 0, JSON.stringify(overrides));
+      setWorkspace({ orgId: PILOT_ORG, agentId: CONCIERGE_AGENT, byok: true });
+      assertRefusedWithoutProviderCall(
+        await pilotTurn(CONCIERGE_AGENT, PILOT_ORG, relayContext(PILOT_ORG, CONCIERGE_AGENT)),
+        JSON.stringify(overrides),
+      );
     }
   });
 
-  test("(3) another tenant's metered turn with BYOK is NOT re-routed — today's refusal, zero provider calls", async () => {
-    // Multi-gate control: the pin keys on the workspace id, so the other
-    // tenant must genuinely differ from the configured pilot workspace.
-    assert.notEqual(OTHER_ORG, process.env.PUBLIC_PILOT_ORG_ID);
-    assert.equal(process.env.PUBLIC_PILOT_ORG_ID, PILOT_ORG);
-    setWorkspace({ orgId: OTHER_ORG, agentId: OTHER_AGENT, byok: true });
-    const result = await runtime.executeTurn({ conversationId: "conv-1", userMessage: "hi", publicPilotSpend: true });
-    assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.reason, "llm_not_configured");
-    assert.equal(seen.length, 0, "the platform key is never spent for another tenant");
+  test("(6) another public agent in the SAME workspace (a5e7235d) with BYOK is unchanged — fails closed as today", async () => {
+    setWorkspace({ orgId: PILOT_ORG, agentId: PILOT_AGENT, byok: true });
+    assertRefusedWithoutProviderCall(await pilotTurn(PILOT_AGENT, PILOT_ORG), "same-workspace agent, no relay binding");
+    seen.length = 0;
+    // Even a binding naming the concierge does not pin a different agent's turn (agent field must match).
+    assertRefusedWithoutProviderCall(
+      await pilotTurn(PILOT_AGENT, PILOT_ORG, relayContext(PILOT_ORG, CONCIERGE_AGENT)),
+      "same-workspace agent, binding for the concierge",
+    );
   });
 
-  test("(4) non-pilot turn on the pilot workspace with BYOK still uses the BYOK key", async () => {
-    setWorkspace({ orgId: PILOT_ORG, agentId: PILOT_AGENT, byok: true });
+  test("(6b) concierge metered turn WITHOUT the verified relay binding (e.g. web widget) is unchanged — fails closed as today", async () => {
+    setWorkspace({ orgId: PILOT_ORG, agentId: CONCIERGE_AGENT, byok: true });
+    assertRefusedWithoutProviderCall(await pilotTurn(CONCIERGE_AGENT, PILOT_ORG), "concierge, no relay binding");
+  });
+
+  test("(3) another tenant's metered relay turn with BYOK is NOT re-routed — today's refusal", async () => {
+    setWorkspace({ orgId: OTHER_ORG, agentId: OTHER_AGENT, byok: true });
+    assertRefusedWithoutProviderCall(await pilotTurn(OTHER_AGENT, OTHER_ORG, relayContext(OTHER_ORG, OTHER_AGENT)), "other tenant");
+  });
+
+  test("(4) non-pilot turn of the concierge with BYOK still uses the BYOK key (positive control: fake provider sees calls)", async () => {
+    setWorkspace({ orgId: PILOT_ORG, agentId: CONCIERGE_AGENT, byok: true });
     const result = await runtime.executeTurn({ conversationId: "conv-1", userMessage: "hi" });
     assert.equal(result.ok, true, `expected ok, got ${JSON.stringify(result)}`);
     assert.ok(seen.length >= 1);
@@ -222,6 +275,7 @@ describe("public pilot turn — platform pin on the approved pilot workspace", (
     setWorkspace({ orgId: OTHER_ORG, agentId: OTHER_AGENT, byok: true });
     const result = await runtime.executeTurn({ conversationId: "conv-1", userMessage: "hi" });
     assert.equal(result.ok, true, `expected ok, got ${JSON.stringify(result)}`);
+    assert.ok(seen.length >= 1);
     for (const call of seen) {
       assert.equal(call.host, "api.anthropic.com");
       assert.equal(call.apiKey, BYOK_KEY);
@@ -230,12 +284,12 @@ describe("public pilot turn — platform pin on the approved pilot workspace", (
 
   test("(5) Studio Test resolution unchanged: getAIClient stays BYOK-first (byok -> allowed, none -> needs_byok)", async () => {
     const { resolveStudioBuildGate } = await import("../../../src/lib/agent-templates/studio-build-gate");
-    setWorkspace({ orgId: PILOT_ORG, agentId: PILOT_AGENT, byok: true });
+    setWorkspace({ orgId: PILOT_ORG, agentId: CONCIERGE_AGENT, byok: true });
     const withKey = await client.getAIClient({ orgId: PILOT_ORG });
     assert.equal(withKey.mode, "byok");
     assert.equal(withKey.provider, "anthropic");
     assert.deepEqual(resolveStudioBuildGate(withKey.mode), { ok: true });
-    setWorkspace({ orgId: PILOT_ORG, agentId: PILOT_AGENT, byok: false });
+    setWorkspace({ orgId: PILOT_ORG, agentId: CONCIERGE_AGENT, byok: false });
     const withoutKey = await client.getAIClient({ orgId: PILOT_ORG });
     assert.equal(withoutKey.provider, "platform");
     assert.equal(resolveStudioBuildGate(withoutKey.mode).ok, false);
