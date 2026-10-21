@@ -43,6 +43,7 @@ import {
   cachedToolParams,
   withMovingCacheBreakpoint,
   serializeToolResultCapped,
+  toolResultCapFor,
   capErrorText,
   type LooseMessage,
 } from "./turn-token-economy";
@@ -451,7 +452,7 @@ export async function runStatelessAgentTurn(
           // Hard-capped (token economy, 2026-07-16): an unbounded connector
           // payload (e.g. GMAIL_FETCH_EMAILS) must never ride the loop at
           // full size — it gets re-sent every remaining iteration.
-          content: serializeToolResultCapped(output),
+          content: serializeToolResultCapped(output, toolResultCapFor(tu.name)),
         });
         // F-F item 2 — a short target/proof suffix when the result has a
         // cheap id field (never the raw payload; extractToolProof caps

@@ -24,6 +24,26 @@
  *  return a tighter shape, not a bigger blob. */
 export const TOOL_RESULT_MAX_CHARS = 20_000;
 
+/** Per-tool overrides of TOOL_RESULT_MAX_CHARS, keyed by the WRAPPED tool name
+ *  the model calls. Deliberately minimal: ONE read-only Doc-text tool whose
+ *  whole value is the full text (owner decision 2026-10-21, "option B"). The
+ *  acceptance document's plain text is 72,097 bytes; 80,000 chars leaves ~10%
+ *  headroom for JSON escaping (newlines/quotes) and the result envelope. Every
+ *  other tool keeps the 20k default. Over-limit results are still truncated
+ *  WITH the explicit marker — never silently. */
+export const TOOL_RESULT_CAP_OVERRIDES: Readonly<Record<string, number>> = {
+  composio__GOOGLEDOCS_GET_DOCUMENT_PLAINTEXT: 80_000,
+};
+
+/** The result cap for a given (wrapped) tool name: its override, else the
+ *  20k default. Unknown/absent names get the default. */
+export function toolResultCapFor(toolName: string | undefined | null): number {
+  if (toolName && Object.prototype.hasOwnProperty.call(TOOL_RESULT_CAP_OVERRIDES, toolName)) {
+    return TOOL_RESULT_CAP_OVERRIDES[toolName]!;
+  }
+  return TOOL_RESULT_MAX_CHARS;
+}
+
 /** Max chars of a tool ERROR message fed back to the model. Connector errors
  *  can embed whole upstream response bodies; the model only needs the head to
  *  recover. */
