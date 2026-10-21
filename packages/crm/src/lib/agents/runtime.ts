@@ -17,7 +17,14 @@
 //   10. Activity-bridge: if first turn, write activity row to operator's CRM
 //   11. Return assistant response
 
-"use server";
+// SECURITY (def-uplink-executeturn-exposed-as-server-action-2026-10-21): this
+// module is intentionally NOT a "use server" module. executeTurn performs no
+// caller authentication; it must stay a server-internal function reached only
+// through authenticated route handlers and server callers (run-channel-turn,
+// eval-runner). Marking it "use server" registered executeTurn as a
+// dispatchable Server Action on every dashboard page that transitively imports
+// it, and /agents/* is not covered by the proxy matcher, so an unauthenticated
+// POST could drive any tenant's agent. Do not re-add the directive here.
 
 import { and, asc, eq, sql } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
