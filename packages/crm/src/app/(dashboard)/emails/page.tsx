@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { contacts } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { createEmailTemplateAction, listEmails, listEmailTemplates } from "@/lib/emails/actions";
+import { countSentEmails } from "@/lib/emails/sent-count";
 import {
   disconnectIntegrationAction,
   getEmailIntegrationsSettings,
@@ -92,6 +93,7 @@ export default async function EmailsPage({
     listOutboundTriggers().catch(() => []),
   ]);
   const newLeadsLast30Days = Number(newLeadsRow.c ?? 0);
+  const sentCount = countSentEmails(rows);
 
   return (
     <section className="animate-page-enter space-y-4 sm:space-y-6">
@@ -112,9 +114,9 @@ export default async function EmailsPage({
         </div>
         <p className="text-sm sm:text-base text-muted-foreground mt-1">
           Send a one-off message or save a template to reuse for campaigns.{" "}
-          {rows.length > 0 && (
+          {sentCount > 0 && (
             <span className="text-muted-foreground/70">
-              {rows.length} email{rows.length !== 1 ? "s" : ""} sent so far.
+              {sentCount} email{sentCount !== 1 ? "s" : ""} sent so far.
             </span>
           )}
         </p>
@@ -142,6 +144,8 @@ export default async function EmailsPage({
           status: r.status,
           provider: r.provider,
           sentAt: r.sentAt ? r.sentAt.toISOString() : null,
+          providerConfigured:
+            typeof r.metadata?.providerConfigured === "boolean" ? r.metadata.providerConfigured : null,
         }))}
         createTemplateAction={createEmailTemplateAction}
         emailIntegrations={

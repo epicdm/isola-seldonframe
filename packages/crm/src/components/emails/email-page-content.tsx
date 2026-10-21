@@ -35,6 +35,8 @@ type SentRow = {
   status: string;
   provider: string;
   sentAt: string | null;
+  /** metadata.providerConfigured from the send path; false = no email provider was configured. */
+  providerConfigured?: boolean | null;
 };
 
 type Tab = "templates" | "sent" | "settings";
@@ -84,12 +86,15 @@ function statusBadge(status: string) {
 // What the Sent list may truthfully say about a row. "manual" rows were never
 // handed to any transport (stored as "sent" anyway), and SMTP2GO has no
 // delivery webhook here, so its "sent" only means the API accepted it.
-function sentStatus(row: { status: string; provider: string }): { label: string; className: string } {
+function sentStatus(row: { status: string; provider: string; providerConfigured?: boolean | null }): { label: string; className: string } {
   const provider = row.provider.toLowerCase();
   const status = row.status.toLowerCase();
 
   if (provider === "manual") {
-    return { label: "Not sent — no email provider configured", className: statusBadge("not-sent") };
+    // Only the send path records providerConfigured=false; other "manual" rows
+    // (e.g. portal notifications) were never sent but say nothing about config.
+    const label = row.providerConfigured === false ? "Not sent — no email provider configured" : "Not sent";
+    return { label, className: statusBadge("not-sent") };
   }
 
   if (provider === "smtp2go" && status === "sent") {

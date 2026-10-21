@@ -18,6 +18,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 
 import { EmailPageContent } from "../../../src/components/emails/email-page-content";
+import { countSentEmails } from "../../../src/lib/emails/sent-count";
 
 afterEach(() => cleanup());
 
@@ -32,7 +33,15 @@ const integrations = {
   },
 };
 
-type Row = { id: string; toEmail: string; subject: string; status: string; provider: string; sentAt: string | null };
+type Row = {
+  id: string;
+  toEmail: string;
+  subject: string;
+  status: string;
+  provider: string;
+  sentAt: string | null;
+  providerConfigured?: boolean | null;
+};
 const row = (id: string, provider: string, status: string): Row => ({
   id,
   toEmail: `${id}@example.test`,
@@ -66,15 +75,21 @@ function badgesFor(rows: Row[]) {
 }
 
 describe("Sent screen status semantics", () => {
-  test("manual row: says not sent, never 'sent', not green", () => {
-    const [b] = badgesFor([row("m1", "manual", "sent")]);
+  test("manual row from the send path (providerConfigured=false): not sent, no provider, not green", () => {
+    const [b] = badgesFor([{ ...row("m1", "manual", "sent"), providerConfigured: false }]);
     assert.equal(b.text, "Not sent — no email provider configured");
     assert.doesNotMatch(b.cls, /text-positive/);
   });
 
-  test("manual row stays 'not sent' whatever status was stored", () => {
+  test("manual row with no config record (e.g. portal notification): 'Not sent', no config claim", () => {
     const [b] = badgesFor([row("m2", "manual", "queued")]);
-    assert.equal(b.text, "Not sent — no email provider configured");
+    assert.equal(b.text, "Not sent");
+    assert.doesNotMatch(b.cls, /text-positive/);
+  });
+
+  test("header count: manual rows are not counted as sent (control: real sends are)", () => {
+    assert.equal(countSentEmails([row("m3", "manual", "sent"), row("m4", "manual", "queued")]), 0);
+    assert.equal(countSentEmails([row("r4", "resend", "sent"), row("s4", "smtp2go", "sent"), row("m5", "manual", "sent")]), 2);
   });
 
   test("smtp2go row without a delivery event: 'Submitted to SMTP2GO', not green", () => {
