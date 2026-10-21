@@ -17,6 +17,12 @@ import path from "node:path";
 import { createRuntimeMcpClient, publicOnlyFetch } from "../../../../src/lib/agents/mcp/runtime-client";
 import { updateAgentTemplate } from "../../../../src/lib/agent-templates/store";
 import {
+  bindTemplateConnector,
+  refreshTemplateConnector,
+  setTemplateConnectorTools,
+  unbindTemplateConnector,
+} from "../../../../src/lib/agent-templates/mcp-actions";
+import {
   crossTenantDroppedCount,
   withCrossTenantSafeConnectors,
 } from "../../../../src/lib/agents/mcp/connector-identity";
@@ -230,9 +236,44 @@ describe("Codex delta fixes (b169f38e)", () => {
     const r = await updateAgentTemplate({ id: "t1", deps, patch: { connectors: [POSTIZ], connectorsNotCopied: null }, trustedConnectorsWrite: true });
     assert.equal(r.ok, true);
     assert.equal("connectorsNotCopied" in writes[0].blueprint, false, "cleared");
-    assert.match(read("lib/agent-templates/template-mcp-server.ts"), /patch: \{ connectors, connectorsNotCopied: null \}/);
+    assert.match(read("lib/agent-templates/template-mcp-server.ts"), /patch: opts\?\.dismissNotCopied \? \{ connectors, connectorsNotCopied: null \} : \{ connectors \}/);
     // Type-level: TemplateBlueprintPatch only admits null for this key.
     const bad: Parameters<typeof updateAgentTemplate>[0]["patch"] = { greeting: "x" };
     assert.equal("connectorsNotCopied" in bad, false, "control: ordinary patches don't touch it");
+  });
+});
+
+describe("only a successful bind dismisses the not-copied notice", () => {
+  const PUB = async () => [{ address: "93.184.216.34", family: 4 }];
+  function deps(existing: ConnectorBinding[]) {
+    const saves: Array<{ dismiss: boolean }> = [];
+    return {
+      saves,
+      d: {
+        loadBlueprint: async () => ({ connectors: existing }),
+        saveConnectors: async (_c: ConnectorBinding[], opts?: { dismissNotCopied?: boolean }) => { saves.push({ dismiss: !!opts?.dismissNotCopied }); },
+        storeSecret: async () => {},
+        discoverTools: async () => [{ name: "t", description: "", inputSchema: { type: "object" } }],
+        getSecret: async () => "k",
+        removeSecret: async () => {},
+        resolve: PUB,
+      } as never,
+    };
+  }
+
+  test("a successful bind dismisses it", async () => {
+    const h = deps([]);
+    const r = await bindTemplateConnector({ orgId: "o", templateId: "t", connector: { kind: "vetted", id: "postiz", serviceName: "x" }, apiKey: "k" }, h.d);
+    assert.equal(r.ok, true);
+    assert.deepEqual(h.saves, [{ dismiss: true }]);
+  });
+
+  test("controls: tool toggle, refresh and removal leave it in place", async () => {
+    const h = deps([POSTIZ]);
+    await setTemplateConnectorTools({ orgId: "o", templateId: "t", connectorId: "postiz", enabledTools: [] }, h.d);
+    await refreshTemplateConnector({ orgId: "o", templateId: "t", connectorId: "postiz" }, h.d);
+    await unbindTemplateConnector({ orgId: "o", templateId: "t", connectorId: "postiz" }, h.d);
+    assert.ok(h.saves.length >= 2, "control: the edits did save");
+    assert.ok(h.saves.every((s) => !s.dismiss), JSON.stringify(h.saves));
   });
 });

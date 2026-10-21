@@ -64,14 +64,14 @@ function realTemplateConnectorDeps(args: {
       if (!template || template.builderOrgId !== args.orgId) return null;
       return (template.blueprint ?? {}) as AgentBlueprint;
     },
-    saveConnectors: async (connectors: ConnectorBinding[]) => {
+    saveConnectors: async (connectors: ConnectorBinding[], opts?: { dismissNotCopied?: boolean }) => {
       // Persist via the template-blueprint merge path (connectors replaces the
       // array). updateAgentTemplate stamps updatedAt; it does NOT touch status.
       await updateAgentTemplate({
         id: args.templateId,
-        // A connector was (re)bound/removed through the bind flow: dismiss any
-        // install-time "connectors were not copied" notice.
-        patch: { connectors, connectorsNotCopied: null },
+        // Only a successful bind dismisses the install-time "connectors were
+        // not copied" notice; other connector edits leave it in place.
+        patch: opts?.dismissNotCopied ? { connectors, connectorsNotCopied: null } : { connectors },
         trustedConnectorsWrite: true,
       });
     },

@@ -56,7 +56,10 @@ export type TemplateConnectorDeps = {
    *  null when the template is missing / not owned by the caller. */
   loadBlueprint: () => Promise<AgentBlueprint | null>;
   /** Persist the new connectors array onto the template blueprint. */
-  saveConnectors: (connectors: ConnectorBinding[]) => Promise<void>;
+  /** `dismissNotCopied` is set ONLY by a successful bind, so the install-time
+   *  "connectors were not copied" notice clears when a connector is actually
+   *  connected — never on a tool toggle, refresh, removal or toolkit change. */
+  saveConnectors: (connectors: ConnectorBinding[], opts?: { dismissNotCopied?: boolean }) => Promise<void>;
   /** Store the bearer key ENCRYPTED for (builder workspace, serviceName). */
   storeSecret: (args: {
     workspaceId: string;
@@ -118,7 +121,7 @@ export async function bindTemplateConnector(
   }
 
   const connectors = mergeConnectorBinding(blueprint.connectors, binding);
-  await deps.saveConnectors(connectors);
+  await deps.saveConnectors(connectors, { dismissNotCopied: true });
 
   return { ok: true, connectorId: binding.id, toolCount: binding.tools?.length ?? 0 };
 }
