@@ -13,14 +13,27 @@ import { createMcpClient, type McpClient } from "./client";
 import { AgentConnectorError, noRedirectFetch } from "./agent-connector-guard";
 import { assertPublicHttpUrl, type DnsResolver } from "@/lib/security/ssrf-guard";
 
-/** A fetch that re-checks every request URL is public https before sending. */
+/** Resolve `work`, or reject as soon as `signal` aborts (the client's request
+ *  timeout) — so a stalled DNS lookup can never outlive the MCP timeout. */
+function untilAborted<T>(work: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+  if (!signal) return work;
+  if (signal.aborted) return Promise.reject(new AgentConnectorError("endpoint_not_allowed"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new AgentConnectorError("endpoint_not_allowed"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+/** A fetch that re-checks every request URL is public https before sending.
+ *  Fails closed on a non-https URL, a blocked address, a DNS error, or an abort. */
 export function publicOnlyFetch(base: typeof fetch = fetch, resolve?: DnsResolver): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     let ok = false;
     try {
       ok = new URL(raw).protocol === "https:";
-      if (ok) await assertPublicHttpUrl(raw, resolve ? { resolve } : {});
+      if (ok) await untilAborted(assertPublicHttpUrl(raw, resolve ? { resolve } : {}), init?.signal);
     } catch {
       ok = false;
     }

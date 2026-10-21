@@ -531,13 +531,11 @@ export default async function AgentTemplatePage({
         className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-300"
       >
         {connectorsNotCopied} connector(s) from the original agent were not copied — they need your
-        own connection. Add them under Connectors &amp; Tools.
+        own connection. Add them under Connectors &amp; Tools — this notice clears once you connect one.
       </p>
     ) : null;
 
   const editor = (
-    <>
-    {connectorsNotCopiedNotice}
     <AgentTemplateEditor
       templateId={template.id}
       surface={surface}
@@ -567,7 +565,6 @@ export default async function AgentTemplatePage({
       }))}
       collapsibleScript
     />
-    </>
   );
 
   // Setup mode (spec §1): incomplete lifecycle -> the one-stage-per-screen
@@ -671,6 +668,8 @@ export default async function AgentTemplatePage({
   // forces the compact home layout below regardless of completion.
   if (lifecycleMode === "setup") {
     return (
+      <>
+      {connectorsNotCopiedNotice}
       <SetupModeShell
         templateId={template.id}
         templateName={template.name}
@@ -682,12 +681,15 @@ export default async function AgentTemplatePage({
         initialStageId={initialStageId}
         noAutoAdvanceStageIds={isCelebratingRun ? ["run"] : []}
       />
+      </>
     );
   }
 
   // Home mode: every stage complete (or `?view=full`) -> the existing
   // compact one-page accordion, unchanged.
   return (
+    <>
+    {connectorsNotCopiedNotice}
     <AgentLifecycleAccordion
       templateName={template.name}
       templateStatus={template.status}
@@ -698,5 +700,6 @@ export default async function AgentTemplatePage({
       bodies={bodies}
       defaultOpenId={defaultOpenStageId(stages)}
     />
+    </>
   );
 }

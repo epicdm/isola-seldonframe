@@ -415,6 +415,9 @@ export type TemplateBlueprintPatch = Partial<
   // runtime default applies fresh again; an absent key leaves it untouched.
   verify?: AgentBlueprint["verify"] | null;
   guardrails?: AgentBlueprint["guardrails"] | null;
+  /** Only `null` (clear) is accepted: the bind-flow save dismisses the
+   *  "connectors were not copied" notice once a connector is connected. */
+  connectorsNotCopied?: null;
 };
 
 /**

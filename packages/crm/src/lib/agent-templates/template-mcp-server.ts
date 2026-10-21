@@ -69,7 +69,9 @@ function realTemplateConnectorDeps(args: {
       // array). updateAgentTemplate stamps updatedAt; it does NOT touch status.
       await updateAgentTemplate({
         id: args.templateId,
-        patch: { connectors },
+        // A connector was (re)bound/removed through the bind flow: dismiss any
+        // install-time "connectors were not copied" notice.
+        patch: { connectors, connectorsNotCopied: null },
         trustedConnectorsWrite: true,
       });
     },

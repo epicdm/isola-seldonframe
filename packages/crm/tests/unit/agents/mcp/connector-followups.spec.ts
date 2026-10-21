@@ -14,7 +14,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-import { createRuntimeMcpClient } from "../../../../src/lib/agents/mcp/runtime-client";
+import { createRuntimeMcpClient, publicOnlyFetch } from "../../../../src/lib/agents/mcp/runtime-client";
+import { updateAgentTemplate } from "../../../../src/lib/agent-templates/store";
 import {
   crossTenantDroppedCount,
   withCrossTenantSafeConnectors,
@@ -177,5 +178,61 @@ describe("P3 cheap follow-ups", () => {
     const existing: ConnectorBinding[] = [{ kind: "composio", id: "c1", enabledToolkits: ["slack", "gmail"], enabledTools: [] }];
     assert.equal(isConnectorsPatchAllowed(existing, [{ kind: "composio", id: "c1", enabledToolkits: ["gmail", "slack"], enabledTools: ["composio__X"] }]), true);
     assert.equal(isConnectorsPatchAllowed([LEGACY], [{ ...LEGACY, enabledTools: [] } as ConnectorBinding]), true, "legacy shape: tool patch allowed");
+  });
+});
+
+describe("Codex delta fixes (b169f38e)", () => {
+  test("the install notice renders above both page shells, not inside the collapsed editor", () => {
+    const s = read("app/(dashboard)/studio/agents/[id]/page.tsx");
+    const editor = s.slice(s.indexOf("const editor = ("), s.indexOf("const editor = (") + 400);
+    assert.equal(editor.includes("connectorsNotCopiedNotice"), false, "not inside the editor");
+    assert.match(s, /\{connectorsNotCopiedNotice\}\s*<SetupModeShell/);
+    assert.match(s, /\{connectorsNotCopiedNotice\}\s*<AgentLifecycleAccordion/);
+    assert.equal((s.match(/\{connectorsNotCopiedNotice\}/g) ?? []).length, 2, "control: exactly the two shells");
+  });
+
+  test("a stalled DNS check is cut off by the request's abort signal (timeout)", async () => {
+    let sent = 0;
+    const base = (async () => { sent += 1; return new Response("{}"); }) as unknown as typeof fetch;
+    const never = () => new Promise<never>(() => {});
+    const ac = new AbortController();
+    const started = Date.now();
+    setTimeout(() => ac.abort(), 50);
+    await assert.rejects(
+      publicOnlyFetch(base, never as never)("https://mcp.example.com/mcp", { method: "POST", signal: ac.signal }),
+      /endpoint_not_allowed/,
+    );
+    assert.ok(Date.now() - started < 2000, "returned promptly after the abort");
+    assert.equal(sent, 0, "nothing was sent");
+  });
+
+  test("control: an un-aborted public lookup still sends the request", async () => {
+    let sent = 0;
+    const base = (async () => { sent += 1; return new Response("{}"); }) as unknown as typeof fetch;
+    const ac = new AbortController();
+    await publicOnlyFetch(base, async () => [{ address: "66.118.37.29", family: 4 }])("https://mcp.example.com/mcp", { signal: ac.signal });
+    assert.equal(sent, 1);
+  });
+
+  test("an inherited connectorsNotCopied is never carried into a new copy; the fresh count wins", () => {
+    assert.deepEqual(withCrossTenantSafeConnectors({ connectors: [POSTIZ], connectorsNotCopied: 5 } as never), { connectors: [POSTIZ] });
+    assert.deepEqual(withCrossTenantSafeConnectors({ greeting: "hi", connectorsNotCopied: 3 } as never), { greeting: "hi" });
+    assert.deepEqual(withCrossTenantSafeConnectors({ connectors: [LEGACY], connectorsNotCopied: 9 } as never), { connectors: [], connectorsNotCopied: 1 });
+  });
+
+  test("the bind-flow save dismisses the notice; an untrusted save cannot set a count", async () => {
+    const writes: Array<{ blueprint: Record<string, unknown> }> = [];
+    const row = { id: "t1", builderOrgId: "o1", blueprint: { connectors: [], connectorsNotCopied: 2 } };
+    const deps = {
+      findById: async () => row as never,
+      update: async (_id: string, patch: unknown) => { writes.push(patch as { blueprint: Record<string, unknown> }); return row as never; },
+    };
+    const r = await updateAgentTemplate({ id: "t1", deps, patch: { connectors: [POSTIZ], connectorsNotCopied: null }, trustedConnectorsWrite: true });
+    assert.equal(r.ok, true);
+    assert.equal("connectorsNotCopied" in writes[0].blueprint, false, "cleared");
+    assert.match(read("lib/agent-templates/template-mcp-server.ts"), /patch: \{ connectors, connectorsNotCopied: null \}/);
+    // Type-level: TemplateBlueprintPatch only admits null for this key.
+    const bad: Parameters<typeof updateAgentTemplate>[0]["patch"] = { greeting: "x" };
+    assert.equal("connectorsNotCopied" in bad, false, "control: ordinary patches don't touch it");
   });
 });

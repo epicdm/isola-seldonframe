@@ -77,10 +77,13 @@ export function crossTenantDroppedCount(blueprint: { connectors?: ConnectorBindi
 export function withCrossTenantSafeConnectors<T extends { connectors?: ConnectorBinding[] }>(
   blueprint: T,
 ): T & { connectorsNotCopied?: number } {
-  if (blueprint == null || blueprint.connectors === undefined) return blueprint;
-  const kept = crossTenantSafeConnectors(blueprint.connectors);
-  const dropped = blueprint.connectors.length - kept.length;
-  return dropped > 0
-    ? { ...blueprint, connectors: kept, connectorsNotCopied: dropped }
-    : { ...blueprint, connectors: kept };
+  if (blueprint == null) return blueprint;
+  // Never inherit a count from the source: it describes THAT copy, not this one.
+  const { connectorsNotCopied: _inherited, ...rest } = blueprint as T & { connectorsNotCopied?: unknown };
+  void _inherited;
+  const base = rest as T;
+  if (base.connectors === undefined) return base;
+  const kept = crossTenantSafeConnectors(base.connectors);
+  const dropped = base.connectors.length - kept.length;
+  return dropped > 0 ? { ...base, connectors: kept, connectorsNotCopied: dropped } : { ...base, connectors: kept };
 }
