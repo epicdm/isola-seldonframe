@@ -81,9 +81,9 @@ export function extractOrgIdExpr(relativeFile: string, line: number): string {
   //   `{ orgId: <expr> }` — explicit expression
   //   `{ orgId }` — shorthand (identifier `orgId` in scope)
   let third = args[2].trim();
-  // EPIC 2026-10-21: an emit may also carry preLoggedEventId (its log row was written with the state change); it does
+  // EPIC 2026-10-21: an emit may also carry preLoggedEventId / throwOnDispatchFailure (delivery options); they do
   // not affect which org the event belongs to, so it is ignored here.
-  third = third.replace(/,\s*preLoggedEventId(\s*:\s*[^,}]+)?\s*(?=\})/, "");
+  third = third.replace(/,\s*(preLoggedEventId|throwOnDispatchFailure)(\s*:\s*[^,}]+)?/g, "").replace(/\s+\}$/, " }");
   const shorthand = /^\{\s*orgId\s*\}$/.exec(third);
   if (shorthand) return "orgId";
   const explicit = /^\{\s*orgId\s*:\s*([^}]+?)\s*\}$/.exec(third);
@@ -249,9 +249,9 @@ function splitTopLevelArgs(body: string): string[] {
 
 /** Extract the orgId expression from a `{ orgId }` / `{ orgId: <expr> }` arg. */
 function parseOrgIdArg(third: string, ctx: string): string {
-  // EPIC 2026-10-21: an emit may also carry preLoggedEventId (its log row was written with the state change); it does
+  // EPIC 2026-10-21: an emit may also carry preLoggedEventId / throwOnDispatchFailure (delivery options); they do
   // not affect which org the event belongs to, so it is ignored here.
-  third = third.replace(/,\s*preLoggedEventId(\s*:\s*[^,}]+)?\s*(?=\})/, "");
+  third = third.replace(/,\s*(preLoggedEventId|throwOnDispatchFailure)(\s*:\s*[^,}]+)?/g, "").replace(/\s+\}$/, " }");
   const shorthand = /^\{\s*orgId\s*\}$/.exec(third);
   if (shorthand) return "orgId";
   const explicit = /^\{\s*orgId\s*:\s*([^}]+?)\s*\}$/.exec(third);
