@@ -64,8 +64,8 @@ import {
   cachedSystemBlocks,
   cachedToolParams,
   withMovingCacheBreakpoint,
-  serializeToolResultCapped,
-  toolResultCapFor,
+  toolResultContentFor,
+  historyToolResultBlocks,
   capErrorText,
   type LooseMessage,
 } from "./turn-token-economy";
@@ -292,24 +292,11 @@ export async function executeTurn(input: {
       // this history — an unbounded historical payload would tax every turn
       // that follows it, forever.
       if (turn.toolResults && turn.toolResults.length > 0) {
-        // Per-tool cap needs the tool NAME; results carry only the call id, so
-        // map it from this turn's tool calls (unknown id → the 20k default).
-        const toolNameById = new Map(
-          (turn.toolCalls ?? []).map((tc) => [tc.id, tc.name] as const),
-        );
+        // Per-tool cap needs the tool NAME; results carry only the call id -
+        // historyToolResultBlocks maps it from this turn's tool calls.
         historyMessages.push({
           role: "user",
-          content: turn.toolResults.map((tr) => ({
-            type: "tool_result" as const,
-            tool_use_id: tr.toolCallId,
-            content: tr.ok
-              ? serializeToolResultCapped(
-                  tr.output,
-                  toolResultCapFor(toolNameById.get(tr.toolCallId)),
-                )
-              : `Error: ${capErrorText(tr.error ?? "unknown")}`,
-            is_error: !tr.ok,
-          })),
+          content: historyToolResultBlocks(turn.toolCalls, turn.toolResults),
         });
       }
     }
@@ -715,7 +702,7 @@ export async function executeTurn(input: {
           // payload must never ride the loop at full size — it gets re-sent
           // every remaining iteration AND every later turn's history rebuild.
           // The FULL output still persists on the turn row (allToolResults).
-          content: serializeToolResultCapped(output, toolResultCapFor(tu.name)),
+          content: toolResultContentFor(tu.name, output),
         });
       } catch (err) {
         const result: AgentToolResult = {

@@ -44,6 +44,54 @@ export function toolResultCapFor(toolName: string | undefined | null): number {
   return TOOL_RESULT_MAX_CHARS;
 }
 
+/** The default over-cap guidance (unchanged wording for every tool that has
+ *  no specific hint). */
+export const DEFAULT_TRUNCATION_HINT =
+  "Ask for a narrower query (fewer items / specific ids) if you need more.";
+
+/** Per-tool over-cap guidance. The Docs plain-text read has NO paging/range
+ *  argument, so suggesting a "narrower query" would be false; it tells the
+ *  model the read is partial and must be reported as such. The marker prefix
+ *  ("[tool result truncated: showing X of Y chars.") is identical for every
+ *  tool - the agent instructions key on it. */
+export const TOOL_TRUNCATION_HINTS: Readonly<Record<string, string>> = {
+  composio__GOOGLEDOCS_GET_DOCUMENT_PLAINTEXT:
+    "This document is longer than the per-read limit and this tool cannot read further; tell the user the read is PARTIAL (only the first part was read).",
+};
+
+/** Serialize ONE tool output for the model with that tool's cap + hint. The
+ *  single entry point every model-facing tool_result site uses (stateless
+ *  loop, live loop, live history rebuild). */
+export function toolResultContentFor(
+  toolName: string | undefined | null,
+  output: unknown,
+): string {
+  const hint =
+    toolName && Object.prototype.hasOwnProperty.call(TOOL_TRUNCATION_HINTS, toolName)
+      ? TOOL_TRUNCATION_HINTS[toolName]!
+      : DEFAULT_TRUNCATION_HINT;
+  return serializeToolResultCapped(output, toolResultCapFor(toolName), hint);
+}
+
+/** Rebuild a past turn's tool_result blocks for the history replay. Results
+ *  carry only the call id, so the tool NAME (which selects the per-tool cap)
+ *  is mapped from that turn's tool calls; an unmatched id gets the default.
+ *  Failed results keep the capped error text. Pure. */
+export function historyToolResultBlocks(
+  toolCalls: ReadonlyArray<{ id: string; name: string }> | null | undefined,
+  toolResults: ReadonlyArray<{ toolCallId: string; ok: boolean; output?: unknown; error?: string }>,
+): Array<{ type: "tool_result"; tool_use_id: string; content: string; is_error: boolean }> {
+  const nameById = new Map((toolCalls ?? []).map((tc) => [tc.id, tc.name] as const));
+  return toolResults.map((tr) => ({
+    type: "tool_result" as const,
+    tool_use_id: tr.toolCallId,
+    content: tr.ok
+      ? toolResultContentFor(nameById.get(tr.toolCallId), tr.output)
+      : `Error: ${capErrorText(tr.error ?? "unknown")}`,
+    is_error: !tr.ok,
+  }));
+}
+
 /** Max chars of a tool ERROR message fed back to the model. Connector errors
  *  can embed whole upstream response bodies; the model only needs the head to
  *  recover. */
@@ -61,6 +109,7 @@ export const TOOL_ERROR_MAX_CHARS = 2_000;
 export function serializeToolResultCapped(
   output: unknown,
   cap: number = TOOL_RESULT_MAX_CHARS,
+  hint: string = DEFAULT_TRUNCATION_HINT,
 ): string {
   let json: string;
   try {
@@ -72,7 +121,7 @@ export function serializeToolResultCapped(
   return (
     json.slice(0, cap) +
     `\n…[tool result truncated: showing ${cap} of ${json.length} chars. ` +
-    `Ask for a narrower query (fewer items / specific ids) if you need more.]`
+    `${hint}]`
   );
 }
 
