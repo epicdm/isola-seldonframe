@@ -1,8 +1,10 @@
 // Chatwoot customer link: production wiring (DB store, env, token file). Server-only.
 import { readFileSync } from "node:fs";
 import { and, desc, eq } from "drizzle-orm";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 
 import { db } from "@/db";
+import * as schema from "@/db/schema";
 import { activities, contacts } from "@/db/schema";
 
 import { loadChatwootLinkTarget, loadChatwootLookupConfig, type EnvLike } from "./config";
@@ -10,7 +12,8 @@ import { makeChatwootReader, type Fetch } from "./reader";
 import { chatwootLinkKey, CHATWOOT_LINK_ACTIVITY_TYPE } from "./record";
 import type { ChatwootLinkDeps, ChatwootLinkStore } from "./service";
 
-type Db = typeof db;
+/** Any drizzle Postgres database over this schema (the app's neon-http client, or node-postgres in tests). */
+type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 
 /** Every query carries the workspace id in its WHERE clause. */
 export function makeChatwootLinkStore(database: Db = db): ChatwootLinkStore {

@@ -18,7 +18,7 @@ import { makeChatwootLinkStore } from "@/lib/chatwoot-link/wiring";
 
 const url = process.env.CHATWOOT_LINK_TEST_DATABASE_URL;
 const pool = new Pool({ connectionString: url ?? "postgres://invalid.invalid/none", max: 2 });
-const database = drizzle(pool, { schema, casing: "snake_case" }) as unknown as NonNullable<Parameters<typeof makeChatwootLinkStore>[0]>;
+const database = drizzle(pool, { schema, casing: "snake_case" });
 
 const ORG_A = randomUUID();
 const ORG_B = randomUUID();

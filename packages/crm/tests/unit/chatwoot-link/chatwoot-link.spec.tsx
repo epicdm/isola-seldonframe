@@ -428,6 +428,25 @@ describe("Codex review 2026-10-21 regressions", () => {
     assert.ok((await confirmChatwootLink(plain!, { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d)).ok);
   });
 
+  test("IDEMPOTENT: confirming the current pair again writes nothing and returns the same link (control: a different pair writes a row)", async () => {
+    const { store, acts } = memStore();
+    const d = depsFor(ORG_A, store);
+    const first = await confirmChatwootLink(admin(), { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d);
+    const again = await confirmChatwootLink(admin(), { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d);
+    assert.deepEqual(again, first);
+    assert.equal(acts.length, 1);
+    assert.ok((await confirmChatwootLink(admin(), { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 17 }, d)).ok);
+    assert.equal(acts.length, 2);
+  });
+
+  test("EXHAUSTED SCAN: more than 10,000 unsigned rows newer than the link -> nothing shown, NOT 'unlinked' (control: 450 rows still linked, above)", async () => {
+    const { store } = memStore();
+    const d = depsFor(ORG_A, store);
+    assert.ok((await confirmChatwootLink(admin(), { contactId: CONTACT_A, chatwootContactId: 501, conversationId: 41 }, d)).ok);
+    for (let i = 0; i < 10_000; i++) await store.insertLinkActivity({ id: randomUUID(), orgId: ORG_A, contactId: CONTACT_A, userId: USER_ADMIN, subject: "noise", metadata: {} });
+    assert.deepEqual(await getChatwootLinkState(ORG_A, CONTACT_A, d), { state: "unavailable" });
+  });
+
   test("CONVERSATION CAP: a match with more conversations than are listed is flagged incomplete (control: CONTACT_A's two are complete)", async () => {
     const { store } = memStore();
     const busy = await findChatwootCandidates(admin(), CONTACT_A3, depsFor(ORG_A, store));

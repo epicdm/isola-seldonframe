@@ -98,7 +98,7 @@ export function ChatwootLinkView({
           </ul>
           {view.incomplete ? (
             <p data-testid="chatwoot-incomplete" className="text-xs text-muted-foreground">
-              Chatwoot has more matching contacts than were checked, so this list may be incomplete.
+              More matching Chatwoot contacts or conversations may exist than are listed here; this list may be incomplete.
             </p>
           ) : null}
           {!canConfirm ? <p className="text-xs text-muted-foreground">A workspace owner or admin can confirm a match.</p> : null}

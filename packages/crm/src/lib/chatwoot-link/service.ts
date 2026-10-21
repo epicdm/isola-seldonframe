@@ -62,8 +62,9 @@ export type ConfirmResult =
 
 const MAX_CONTACTS = 5;
 // The contact's chatwoot_link_confirmed rows are read newest first, a page at a time, until one verifies or history ends. Rows written by
-// other paths never verify. LINK_SCAN_MAX_PAGES only bounds the work under a deliberate flood of thousands of rows on one contact; past it
-// the result is fail-closed (no link shown, candidates show again), never a wrong link.
+// other paths never verify. LINK_SCAN_MAX_PAGES only bounds the work under a deliberate flood of 10,000+ rows on one contact; an exhausted
+// scan is "unavailable" (the card is not shown at all), never "unlinked" (which would offer candidates as if no link existed) and never a
+// wrong link.
 const LINK_SCAN_PAGE = 200;
 const LINK_SCAN_MAX_PAGES = 50;
 const MAX_CONVERSATIONS_PER_CONTACT = 10;
@@ -87,15 +88,27 @@ export async function getChatwootLinkState(orgId: string, contactId: string, dep
   if (!deps.target || !deps.key || !UUID.test(contactId)) return { state: "unavailable" };
   const contact = await deps.store.getContact(orgId, contactId);
   if (!contact) return { state: "unavailable" };
+  const found = await currentLink(orgId, contactId, deps.store, deps.target, deps.key);
+  if (found === "exhausted") return { state: "unavailable" };
+  return found ? linked(deps.target, found) : { state: "unlinked" };
+}
+
+async function currentLink(
+  orgId: string,
+  contactId: string,
+  store: ChatwootLinkStore,
+  target: ChatwootLinkTarget,
+  key: string,
+): Promise<ChatwootLinkRecord | null | "exhausted"> {
   for (let page = 0; page < LINK_SCAN_MAX_PAGES; page++) {
-    const rows = await deps.store.linkActivities(orgId, contactId, LINK_SCAN_PAGE, page * LINK_SCAN_PAGE);
+    const rows = await store.linkActivities(orgId, contactId, LINK_SCAN_PAGE, page * LINK_SCAN_PAGE);
     for (const row of rows) {
-      const rec = verifyChatwootLink(row, { orgId, contactId, accountId: deps.target.accountId }, deps.key);
-      if (rec) return linked(deps.target, rec);
+      const rec = verifyChatwootLink(row, { orgId, contactId, accountId: target.accountId }, key);
+      if (rec) return rec;
     }
-    if (rows.length < LINK_SCAN_PAGE) break;
+    if (rows.length < LINK_SCAN_PAGE) return null;
   }
-  return { state: "unlinked" };
+  return "exhausted";
 }
 
 function linked(target: ChatwootLinkTarget, rec: ChatwootLinkRecord): Extract<LinkState, { state: "linked" }> {
@@ -179,6 +192,11 @@ export async function confirmChatwootLink(
     return { ok: false, code: "chatwoot_unreachable" };
   }
   if (!candidates.some((c) => c.chatwootContactId === cwContact && c.conversationId === conv)) return { ok: false, code: "not_a_candidate" };
+  // Idempotent: confirming the pair that is already the current link (a retry, a double click) returns it and writes nothing.
+  const existing = await currentLink(actor.orgId, contactId, deps.store, deps.target, deps.key);
+  if (existing && existing !== "exhausted" && existing.chatwootContactId === cwContact && existing.conversationId === conv) {
+    return { ok: true, link: linked(deps.target, existing) };
+  }
   const rowId = (deps.newId ?? randomUUID)();
   const rec: ChatwootLinkRecord = {
     rowId,
