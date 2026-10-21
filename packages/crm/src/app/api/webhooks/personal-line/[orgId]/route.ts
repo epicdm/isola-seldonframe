@@ -21,9 +21,8 @@ export async function POST(request: Request, context: { params: Promise<{ orgId:
     const r = await handlePersonalLineLifecycle(request, orgId, {
       config: () => resolveLifecycleConfig(process.env),
       store: drizzleLifecycleStore,
-      emit: (type, data, org) => emitSeldonEvent(type, data, { orgId: org }),
+      emit: (type, data, org, preLoggedEventId) => emitSeldonEvent(type, data, { orgId: org, preLoggedEventId }),
       move: (input) => moveDealToStage(input),
-      emitStage: (data, org) => emitSeldonEvent("deal.stage_changed", data, { orgId: org }),
     });
     return NextResponse.json(r.body, { status: r.status, headers: { "cache-control": "no-store" } });
   } catch (err) {

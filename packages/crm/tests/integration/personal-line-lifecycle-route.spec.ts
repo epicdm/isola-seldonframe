@@ -252,31 +252,45 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     assert.equal((await r3.json()).status, "duplicate");
   });
 
-  test("Codex r1 P1: crash AFTER the stage write but BEFORE deal.stage_changed -> the reclaimed event repairs the missing event exactly once, no second activity", async () => {
+  test("Codex r2: a RECLAIM racing the original worker (both run the whole event) -> exactly one activity, one pl.* log row, one deal.stage_changed", async () => {
     configure();
-    assert.equal((await post(EPIC, body("pl.signup_started", "subj_crash"))).status, 200);
-    const raw = body("pl.line_created", "subj_crash");
+    assert.equal((await post(EPIC, body("pl.signup_started", "subj_race2"))).status, 200);
+    const raw = body("pl.line_created", "subj_race2");
     const e = JSON.parse(raw);
-    const [d] = await plDealOf(EPIC, "subj_crash");
-    // simulate the crashed worker: claim recorded, intent recorded, card moved, NO event, NO activity, NOT finished
+    // a stale unfinished claim => BOTH concurrent deliveries can reclaim/claim and process
     await db.execute(sql`insert into integration_event_inbox (org_id, provider, event_id, external_id, type, occurred_at, detected_at, version, received_at)
-      values (${EPIC}::uuid, 'personal_line', ${e.event_id}, 'subj_crash', 'pl.line_created', now(), now(), 2, now() - interval '5 minutes')`);
-    await db.execute(sql`update integration_subject_facts set facts = facts || ${JSON.stringify({ move_intent: { event_id: e.event_id, deal_id: d.id, from: "Signup started", to: "Line created" } })}::jsonb
-      where org_id = ${EPIC}::uuid and external_id = 'subj_crash'`);
-    await db.update(S.deals).set({ stage: "Line created" }).where(eq(S.deals.id, d.id));
+      values (${EPIC}::uuid, 'personal_line', ${e.event_id}, 'subj_race2', 'pl.line_created', now(), now(), 2, now() - interval '5 minutes')`);
+    const { drizzleLifecycleStore, processLifecycleEvent, parseLifecycleEvent } = await import("@/lib/personal-line/lifecycle");
+    const { moveDealToStage } = await import("@/lib/deals/stage-move");
+    const { emitSeldonEvent } = await import("@/lib/events/bus");
+    const ev = parseLifecycleEvent(raw)!;
+    const store = await drizzleLifecycleStore();
+    // force BOTH workers past the claim (the second sees the first's fresh claim otherwise): give the second its own "new"
+    const s2 = { ...store, claimEvent: async () => "new" as const };
+    const emit = (t: any, d: any, o: string, id: string) => emitSeldonEvent(t, d, { orgId: o, preLoggedEventId: id });
+    const [a, b] = await Promise.all([
+      processLifecycleEvent(EPIC, ev, store, emit, (i) => moveDealToStage(i)),
+      processLifecycleEvent(EPIC, ev, s2, emit, (i) => moveDealToStage(i)),
+    ]);
+    assert.equal(a.status, "processed"); assert.equal(b.status, "processed");
+    const [d] = await plDealOf(EPIC, "subj_race2");
+    assert.equal(d.stage, "Line created");
+    assert.equal(await count(sql`select count(*)::int n from activities where org_id = ${EPIC}::uuid and metadata->>'event_id' = ${e.event_id}`), 1);
+    assert.equal(await count(sql`select count(*)::int n from workflow_event_log where org_id = ${EPIC}::uuid and event_type = 'pl.line_created' and payload->>'eventId' = ${e.event_id}`), 1);
+    assert.equal((await stageEvents(EPIC)).filter((x: any) => x.dealId === d.id && x.to === "Line created").length, 1);
+  });
+
+  test("Codex r2: the stage write and its deal.stage_changed row are ONE statement — a lost CAS writes neither", async () => {
+    configure();
+    assert.equal((await post(EPIC, body("pl.signup_started", "subj_cas"))).status, 200);
+    const [d] = await plDealOf(EPIC, "subj_cas");
     const before = (await stageEvents(EPIC)).filter((x: any) => x.dealId === d.id).length;
-    const r = await post(EPIC, raw);
-    assert.equal(r.status, 200);
-    assert.match((await r.json()).deal, /event_repaired$/);
-    const evs = (await stageEvents(EPIC)).filter((x: any) => x.dealId === d.id);
-    assert.equal(evs.length, before + 1);
-    assert.deepEqual([evs.at(-1).from, evs.at(-1).to, evs.at(-1).actor?.ref], ["Signup started", "Line created", e.event_id]);
-    // a further redelivery: duplicate, no third event
-    await post(EPIC, raw);
+    const { moveDealToStage } = await import("@/lib/deals/stage-move");
+    // two movers from the same read: exactly one wins; the loser gets conflict and logs nothing
+    const rs = await Promise.all([1, 2, 3].map(() => moveDealToStage({ orgId: EPIC, dealId: d.id, stage: "Line created", actor: { kind: "integration", name: "personal_line", ref: "t" }, forwardOnly: true })));
+    const ok = rs.filter((r) => r.ok).length;
+    assert.equal(ok, 1);
     assert.equal((await stageEvents(EPIC)).filter((x: any) => x.dealId === d.id).length, before + 1);
-    // positive twin: an ordinary later event still moves the card and logs normally
-    assert.equal((await post(EPIC, body("pl.app_activated", "subj_crash"))).status, 200);
-    assert.equal((await plDealOf(EPIC, "subj_crash"))[0].stage, "App activated");
   });
 
   test("Codex r1 P1: crash between contact insert and identity insert -> the replay reuses THAT contact (deterministic id), never a second one", async () => {
@@ -300,6 +314,9 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     const dup = JSON.stringify({ ...base, event_id: randomUUID() }).replace('"tenant":"epic"', '"tenant":"epic","tenant":"epic"');
     assert.ok(dup.includes('"tenant":"epic","tenant":"epic"'));
     assert.equal((await post(EPIC, dup)).status, 422);
+    const escaped = JSON.stringify({ ...base, event_id: randomUUID() }).replace('"tenant":"epic"', '"tenant":"other","ten\\u0061nt":"epic"');
+    assert.ok(escaped.includes("\\u0061"));
+    assert.equal((await post(EPIC, escaped)).status, 422);
     assert.equal((await post(EPIC, JSON.stringify({ ...base, event_id: randomUUID(), occurred_at: "2026-10-21T15:07:58+00:00" }))).status, 200);
   });
 

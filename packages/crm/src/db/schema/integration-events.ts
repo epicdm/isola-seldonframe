@@ -21,6 +21,9 @@ export const integrationEventInbox = pgTable(
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
     applied: boolean("applied").notNull().default(false),
     outcome: text("outcome"),
+    /** exactly-once markers, each set in the SAME statement that writes its effect */
+    activityLogged: boolean("activity_logged").notNull().default(false),
+    eventLogged: boolean("event_logged").notNull().default(false),
   },
   (table) => [
     primaryKey({ columns: [table.orgId, table.provider, table.eventId] }),

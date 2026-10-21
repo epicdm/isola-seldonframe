@@ -81,6 +81,16 @@ describe("REST stage writers validate against the deal's pipeline and emit deal.
     assert.equal((await events()).length, 1);
   });
 
+  test("validation is against the deal's OWN pipeline: a stage that exists only in another pipeline is refused; the kanban core path refuses too", async () => {
+    const [p2] = await db.insert(S.pipelines).values({ orgId: ORG, name: "Second", stages: [{ name: "Intake", color: "#000", probability: 0 }, { name: "Done", color: "#111", probability: 100 }], isDefault: false }).returning({ id: S.pipelines.id });
+    const [d2] = await db.insert(S.deals).values({ orgId: ORG, contactId, pipelineId: p2.id, title: "p2", stage: "Intake", probability: 0 }).returning({ id: S.deals.id });
+    assert.equal((await patch(d2.id, { stage: "Lost" })).status, 422);            // Lost is a DEFAULT-pipeline stage only
+    assert.equal((await patch(d2.id, { stage: "Done" })).status, 200);            // positive twin: its own pipeline's stage
+    const { moveDealToStage } = await import("@/lib/deals/stage-move");       // the body of moveDealStageAction (kanban)
+    const r = await moveDealToStage({ orgId: ORG, dealId: dealId, stage: "Proposal", actor: { kind: "user" } });
+    assert.deepEqual([r.ok, (r as any).error], [false, "unknown_stage"]);
+  });
+
   test("POST with an unknown stage -> 422 and nothing created; positive twins: a real stage, and no stage = the pipeline's first stage", async () => {
     const before = (await db.select().from(S.deals).where(eq(S.deals.orgId, ORG))).length;
     assert.equal((await create({ contactId, title: "x", stage: "Proposal" })).status, 422);

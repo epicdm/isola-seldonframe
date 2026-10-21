@@ -1,7 +1,9 @@
 -- EPIC 2026-10-21 — signed integration events (first provider: Personal Line): durable, idempotent ingress.
 -- Ported from the 2026-10-11 account slice (its 0081, never deployed), renumbered, plus the deal-projection columns.
 -- HAND-WRITTEN. Additive only + idempotent (IF NOT EXISTS). Matches src/db/schema/integration-events.ts. No rows seeded.
---   integration_event_inbox     one row per (org, provider, event_id); a redelivery is a no-op; outcome = what happened
+--   integration_event_inbox     one row per (org, provider, event_id); a redelivery is a no-op; outcome = what happened;
+--                               activity_logged / event_logged are exactly-once markers, each set in the same statement
+--                               that writes its effect
 --   integration_subject_facts   merged facts per external subject, and the ONE deal that projects it:
 --                               projected_deal_id is claimed (compare-and-set on NULL) BEFORE the deal is inserted with
 --                               that id, so two concurrent events can never create two deals for one subject;
@@ -19,6 +21,8 @@ CREATE TABLE IF NOT EXISTS integration_event_inbox (
   received_at timestamptz NOT NULL DEFAULT now(),
   applied boolean NOT NULL DEFAULT false,
   outcome text,
+  activity_logged boolean NOT NULL DEFAULT false,
+  event_logged boolean NOT NULL DEFAULT false,
   PRIMARY KEY (org_id, provider, event_id)
 );
 

@@ -26,6 +26,11 @@
 //                       or into a stage the pipeline no longer has, is left where it is.
 //       stage name missing from the pipeline -> no deal write (the event and facts are still recorded)
 //   5 one native activity (timeline entry) per event; 6 emit pl.* on the bus (workflow_event_log)
+// Exactly-once effects WITHOUT a transaction (neon-http has none) — Codex r1/r2: every side effect is ONE SQL statement
+// that both claims a per-event marker on the inbox row and writes the effect (activity_logged / event_logged), and the
+// stage move writes deals.stage and its deal.stage_changed log row in one statement (lib/deals/stage-move.ts). Two
+// workers on the same event (a reclaim racing a slow original) can both run; each effect still happens at most once,
+// and a crash leaves either both halves of an effect or neither.
 import { randomUUID } from "node:crypto";
 import { findStage } from "@/lib/deals/stages";
 import type { StageMoveResult } from "@/lib/deals/stage-move";
@@ -81,6 +86,7 @@ export function parseLifecycleEvent(raw: string): PlLifecycleEvent | null {
   // Codex r1 P2: JSON.parse keeps the LAST of duplicated members; a signed body must not be ambiguous. Every key this
   // contract knows is distinct across the envelope and facts, and no accepted value can contain a quote, so a key
   // appearing twice anywhere is a duplicate member.
+  if (raw.includes("\\")) return null;   // Codex r2: no accepted value needs an escape; an escaped key could hide a duplicate
   const seen = new Set<string>();
   for (const m of raw.matchAll(/"([A-Za-z0-9_]+)"\s*:/g)) { if (seen.has(m[1])) return null; seen.add(m[1]); }
   let v: unknown;
@@ -147,15 +153,7 @@ export interface LifecycleStore extends LinkStore {
   /** Upsert the subject's facts row (merge facts, last_version = greatest). Creates the row the projection claims on. */
   mergeFacts(orgId: string, subjectId: string, rank: number, facts: Record<string, unknown>): Promise<void>;
   defaultPipeline(orgId: string): Promise<{ id: string; stages: PipelineStage[] } | null>;
-  readProjection(orgId: string, subjectId: string): Promise<{ dealId: string | null; createdAt: Date | null; intent: MoveIntent | null }>;
-  /** Persist "this event is about to move the card from X to Y" BEFORE the move, so a crash between the move and its
-   *  deal.stage_changed can be repaired when the event is reclaimed (Codex r1 P1). */
-  recordMoveIntent(orgId: string, subjectId: string, intent: MoveIntent): Promise<void>;
-  readDealStage(orgId: string, dealId: string): Promise<string | null>;
-  /** Was a deal.stage_changed with actor.ref = eventId logged for this deal? / a pl.* event with this eventId? / its activity? */
-  stageEventLogged(orgId: string, dealId: string, eventId: string): Promise<boolean>;
-  lifecycleEventLogged(orgId: string, type: string, eventId: string): Promise<boolean>;
-  activityLogged(orgId: string, eventId: string): Promise<boolean>;
+  readProjection(orgId: string, subjectId: string): Promise<{ dealId: string | null; createdAt: Date | null }>;
   /** CAS: set projected_deal_id iff it is NULL. */
   claimProjection(orgId: string, subjectId: string, dealId: string): Promise<boolean>;
   /** Insert the deal with exactly this id; false if it already exists. */
@@ -164,15 +162,17 @@ export interface LifecycleStore extends LinkStore {
   dealExists(orgId: string, dealId: string): Promise<boolean>;
   /** Record the line's account id on the deal once known (signup started precedes the line). Never overwrites one. */
   attachAccountId(orgId: string, dealId: string, plAccountId: string): Promise<void>;
-  addActivity(orgId: string, contactId: string, a: { type: string; subject: string; metadata: Record<string, unknown>; completedAt: Date }): Promise<boolean>;
+  /** ONE statement: mark the event's activity as written AND insert it. true = written now; false = already written / no user. */
+  addActivityOnce(orgId: string, eventId: string, contactId: string, a: { type: string; subject: string; metadata: Record<string, unknown>; completedAt: Date }): Promise<boolean>;
+  /** ONE statement: mark the event's pl.* log row as written AND insert it. Returns the log id, or null if already logged. */
+  logEventOnce(orgId: string, eventId: string, type: PlLifecycleType, payload: Record<string, unknown>): Promise<string | null>;
 }
 
-export type MoveIntent = { event_id: string; deal_id: string; from: string; to: string };
-export type EmitStageChanged = (data: { dealId: string; from: string; to: string; actor: { kind: "integration"; name: string; ref: string } }, orgId: string) => Promise<void>;
 export type MoveFn = (input: { orgId: string; dealId: string; stage: string; actor: { kind: "integration"; name: string; ref?: string | null }; forwardOnly: true }) => Promise<StageMoveResult>;
-export type Emit = (type: PlLifecycleType, data: Record<string, unknown>, orgId: string) => Promise<void>;
+/** Dispatch an ALREADY-LOGGED event (in-memory listeners, wait resume, subscriptions) — never logs a second row. */
+export type Emit = (type: PlLifecycleType, data: Record<string, unknown>, orgId: string, preLoggedEventId: string) => Promise<void>;
 
-export async function projectDeal(orgId: string, e: PlLifecycleEvent, contactId: string, store: LifecycleStore, move: MoveFn, emitStage: EmitStageChanged): Promise<string> {
+export async function projectDeal(orgId: string, e: PlLifecycleEvent, contactId: string, store: LifecycleStore, move: MoveFn): Promise<string> {
   const target = STAGE_FOR[e.type];
   const pipe = await store.defaultPipeline(orgId);
   if (!pipe) return "no_default_pipeline";
@@ -193,7 +193,7 @@ export async function projectDeal(orgId: string, e: PlLifecycleEvent, contactId:
     if (await store.claimProjection(orgId, e.subjectId, id)) {
       created = await store.insertDeal(orgId, dealRow(id));
       await store.markProjectionCreated(orgId, e.subjectId);
-      proj = { dealId: id, createdAt: new Date(), intent: null };
+      proj = { dealId: id, createdAt: new Date() };
     } else {
       proj = await store.readProjection(orgId, e.subjectId);
     }
@@ -209,19 +209,7 @@ export async function projectDeal(orgId: string, e: PlLifecycleEvent, contactId:
   }
   if (e.plAccountId) await store.attachAccountId(orgId, proj.dealId, e.plAccountId);
   const dealId = proj.dealId;
-  // Repair (reclaim after a crash): THIS event already moved the card but its deal.stage_changed was never logged.
-  const intent = proj.intent;
-  if (!created && intent && intent.event_id === e.eventId && intent.deal_id === dealId && intent.to === target.stage
-      && (await store.readDealStage(orgId, dealId)) === target.stage && !(await store.stageEventLogged(orgId, dealId, e.eventId))) {
-    await emitStage({ dealId, from: intent.from, to: intent.to, actor: { kind: "integration", name: PL_PROVIDER, ref: e.eventId } }, orgId);
-    return `moved:${intent.from}->${intent.to}:event_repaired`;
-  }
   for (let attempt = 0; attempt < 3; attempt++) {
-    const from = created ? null : await store.readDealStage(orgId, dealId);
-    if (from !== null) {
-      const cur = findStage(pipe.stages, from);
-      if (cur && t.index > cur.index) await store.recordMoveIntent(orgId, e.subjectId, { event_id: e.eventId, deal_id: dealId, from, to: target.stage });
-    }
     const r = await move({ orgId, dealId, stage: target.stage, actor: { kind: "integration", name: PL_PROVIDER, ref: e.eventId }, forwardOnly: true });
     if (r.ok) return `moved:${r.from}->${r.to}`;
     if (r.error === "conflict") continue;
@@ -237,7 +225,7 @@ export type ProcessResult =
   | { status: "processed"; contactId: string; deal: string; activity: boolean }
   | { status: "failed"; reason: string };
 
-export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, store: LifecycleStore, emit: Emit, move: MoveFn, emitStage: EmitStageChanged): Promise<ProcessResult> {
+export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, store: LifecycleStore, emit: Emit, move: MoveFn): Promise<ProcessResult> {
   const rank = STAGE_FOR[e.type].rank;
   const claim = await store.claimEvent(orgId, e, rank);
   if (claim === "duplicate") return { status: "duplicate" };
@@ -248,9 +236,8 @@ export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, 
     return { status: "failed", reason: link.reason };
   }
   await store.mergeFacts(orgId, e.subjectId, rank, { ...e.facts, ...(e.plAccountId ? { pl_account_id: e.plAccountId } : {}) });
-  const deal = await projectDeal(orgId, e, link.contactId, store, move, emitStage);
-  // Effects are deduplicated per event id, so a reclaimed event never repeats a timeline entry or a pl.* emission.
-  const activity = (await store.activityLogged(orgId, e.eventId)) ? false : await store.addActivity(orgId, link.contactId, {
+  const deal = await projectDeal(orgId, e, link.contactId, store, move);
+  const activity = await store.addActivityOnce(orgId, e.eventId, link.contactId, {
     type: "personal_line",
     subject: SUBJECT[e.type] + (e.occurredAt ? "" : " (time it happened unknown; detection time shown)"),
     metadata: {
@@ -259,7 +246,9 @@ export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, 
     },
     completedAt: new Date(e.occurredAt ?? e.detectedAt),
   });
-  if (!(await store.lifecycleEventLogged(orgId, e.type, e.eventId))) await emit(e.type, { contactId: link.contactId, subjectId: e.subjectId, plAccountId: e.plAccountId, eventId: e.eventId, occurredAt: e.occurredAt, detectedAt: e.detectedAt, facts: e.facts, deal }, orgId);
+  const payload = { contactId: link.contactId, subjectId: e.subjectId, plAccountId: e.plAccountId, eventId: e.eventId, occurredAt: e.occurredAt, detectedAt: e.detectedAt, facts: e.facts, deal };
+  const logId = await store.logEventOnce(orgId, e.eventId, e.type, payload);
+  if (logId) await emit(e.type, payload, orgId, logId);
   await store.finishEvent(orgId, e.eventId, true, deal);
   return { status: "processed", contactId: link.contactId, deal, activity };
 }
@@ -270,7 +259,6 @@ export type WebhookDeps = {
   store(): Promise<LifecycleStore>;
   emit: Emit;
   move: MoveFn;
-  emitStage: EmitStageChanged;
   nowS?: () => number;
 };
 
@@ -295,7 +283,7 @@ export async function handlePersonalLineLifecycle(request: Request, orgId: strin
     console.warn(`[pl-lifecycle] refused: tenant/workspace mismatch`);
     return { status: 403, body: { ok: false, error: "tenant_workspace_mismatch" } };
   }
-  const result = await processLifecycleEvent(mapped, event, await deps.store(), deps.emit, deps.move, deps.emitStage);
+  const result = await processLifecycleEvent(mapped, event, await deps.store(), deps.emit, deps.move);
   console.info(`[pl-lifecycle] ${event.type} ${event.eventId} -> ${result.status}${result.status === "processed" ? ` ${result.deal}` : ""}`);
   if (result.status === "failed") return { status: 409, body: { ok: false, error: result.reason } };
   // Codex r1 P1: an unfinished claim is NOT a success; the sender must retry it later.
@@ -347,31 +335,9 @@ export async function drizzleLifecycleStore(): Promise<LifecycleStore> {
       return p ? { id: p.id, stages: Array.isArray(p.stages) ? p.stages : [] } : null;
     },
     async readProjection(orgId, subjectId) {
-      const [r] = await db.select({ dealId: facts.projectedDealId, createdAt: facts.projectedDealCreatedAt, f: facts.facts }).from(facts)
+      const [r] = await db.select({ dealId: facts.projectedDealId, createdAt: facts.projectedDealCreatedAt }).from(facts)
         .where(and(eq(facts.orgId, orgId), eq(facts.provider, P), eq(facts.externalId, subjectId))).limit(1);
-      const intent = (r?.f as Record<string, unknown> | undefined)?.move_intent as MoveIntent | undefined;
-      return { dealId: r?.dealId ?? null, createdAt: r?.createdAt ?? null, intent: intent ?? null };
-    },
-    async recordMoveIntent(orgId, subjectId, intent) {
-      await db.update(facts).set({ facts: sql`${facts.facts} || ${JSON.stringify({ move_intent: intent })}::jsonb`, updatedAt: new Date() })
-        .where(and(eq(facts.orgId, orgId), eq(facts.provider, P), eq(facts.externalId, subjectId)));
-    },
-    async readDealStage(orgId, dealId) {
-      const [r] = await db.select({ stage: deals.stage }).from(deals).where(and(eq(deals.orgId, orgId), eq(deals.id, dealId))).limit(1);
-      return r?.stage ?? null;
-    },
-    async stageEventLogged(orgId, dealId, eventId) {
-      const r: any = await db.execute(sql`select 1 from workflow_event_log where org_id = ${orgId}::uuid and event_type = 'deal.stage_changed'
-        and payload->>'dealId' = ${dealId} and payload->'actor'->>'ref' = ${eventId} limit 1`);
-      return (r.rows ?? r).length > 0;
-    },
-    async lifecycleEventLogged(orgId, type, eventId) {
-      const r: any = await db.execute(sql`select 1 from workflow_event_log where org_id = ${orgId}::uuid and event_type = ${type} and payload->>'eventId' = ${eventId} limit 1`);
-      return (r.rows ?? r).length > 0;
-    },
-    async activityLogged(orgId, eventId) {
-      const r: any = await db.execute(sql`select 1 from activities where org_id = ${orgId}::uuid and type = 'personal_line' and metadata->>'event_id' = ${eventId} limit 1`);
-      return (r.rows ?? r).length > 0;
+      return { dealId: r?.dealId ?? null, createdAt: r?.createdAt ?? null };
     },
     async claimProjection(orgId, subjectId, dealId) {
       const rows = await db.update(facts).set({ projectedDealId: dealId })
@@ -399,7 +365,7 @@ export async function drizzleLifecycleStore(): Promise<LifecycleStore> {
         .set({ customFields: sql`${deals.customFields} || ${JSON.stringify({ plAccountId })}::jsonb` })
         .where(and(eq(deals.orgId, orgId), eq(deals.id, dealId), sql`NOT (${deals.customFields} ? 'plAccountId')`));
     },
-    async addActivity(orgId, contactId, a) {
+    async addActivityOnce(orgId, eventId, contactId, a) {
       const [org] = await db.select({ ownerId: organizations.ownerId }).from(organizations).where(eq(organizations.id, orgId)).limit(1);
       let userId = org?.ownerId ?? null;
       if (!userId) {
@@ -407,8 +373,23 @@ export async function drizzleLifecycleStore(): Promise<LifecycleStore> {
         userId = u?.id ?? null;
       }
       if (!userId) return false; // activities.user_id is NOT NULL; a workspace with no user gets the bus event only
-      await db.insert(activities).values({ orgId, contactId, userId, type: a.type, subject: a.subject, metadata: a.metadata, completedAt: a.completedAt });
-      return true;
+      const r: any = await db.execute(sql`with c as (
+          update integration_event_inbox set activity_logged = true
+          where org_id = ${orgId}::uuid and provider = ${P} and event_id = ${eventId} and activity_logged = false returning 1)
+        insert into activities (org_id, contact_id, user_id, type, subject, metadata, completed_at)
+        select ${orgId}::uuid, ${contactId}::uuid, ${userId}::uuid, ${a.type}, ${a.subject}, ${JSON.stringify(a.metadata)}::jsonb, ${a.completedAt.toISOString()}::timestamptz from c
+        returning id`);
+      return (r.rows ?? r).length === 1;
+    },
+    async logEventOnce(orgId, eventId, type, payload) {
+      const r: any = await db.execute(sql`with c as (
+          update integration_event_inbox set event_logged = true
+          where org_id = ${orgId}::uuid and provider = ${P} and event_id = ${eventId} and event_logged = false returning 1)
+        insert into workflow_event_log (org_id, event_type, payload)
+        select ${orgId}::uuid, ${type}, ${JSON.stringify(payload)}::jsonb from c
+        returning id`);
+      const rows = r.rows ?? r;
+      return rows.length === 1 ? String(rows[0].id) : null;
     },
   };
 }

@@ -56,6 +56,12 @@ export type EmitOptions = {
    * that 2c's optional shape allowed.
    */
   orgId: string;
+  /**
+   * EPIC 2026-10-21: the event's workflow_event_log row was ALREADY written by the caller, in the same SQL statement as
+   * the state change it records (lib/deals/stage-move.ts, lib/personal-line/lifecycle.ts), so the change and its
+   * audit row commit together. When set, step 2 (append) is skipped and this id is used; nothing else changes.
+   */
+  preLoggedEventId?: string;
 };
 
 export async function emitSeldonEvent<T extends EventType>(
@@ -81,8 +87,8 @@ export async function emitSeldonEvent<T extends EventType>(
   await bus.emit(type, data);
 
   // 2. Durable persistence to workflow_event_log.
-  let eventLogId: string | null = null;
-  try {
+  let eventLogId: string | null = options.preLoggedEventId ?? null;
+  if (!options.preLoggedEventId) try {
     const storage = new DrizzleRuntimeStorage(db);
     eventLogId = await storage.appendEventLog({
       orgId: options.orgId,

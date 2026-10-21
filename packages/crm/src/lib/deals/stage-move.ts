@@ -15,7 +15,7 @@
 //
 // No "use server" here on purpose: this is a server-side function, never an action a browser can call directly.
 // Callers authenticate first and pass the orgId they proved.
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { contacts, deals, organizations, pipelines, type PipelineStage } from "@/db/schema";
 import { emitSeldonEvent } from "@/lib/events/bus";
@@ -80,17 +80,25 @@ export async function moveDealToStage(input: {
       ? input.probability
       : Number(target.stage.probability ?? 0);
 
-  const moved = await db
-    .update(deals)
-    .set({
-      stage,
-      probability,
-      updatedAt: new Date(),
-      closedAt: probability === 100 || stage.toLowerCase().includes("won") || stage.toLowerCase().includes("lost") ? new Date() : null,
-    })
-    .where(and(eq(deals.orgId, orgId), eq(deals.id, dealId), eq(deals.stage, existingDeal.stage)))
-    .returning({ id: deals.id });
-  if (moved.length !== 1) return { ok: false, error: "conflict", from: existingDeal.stage };
+  const actor =
+    input.actor.kind === "integration"
+      ? { kind: "integration" as const, name: input.actor.name, ref: input.actor.ref ?? null }
+      : { kind: input.actor.kind };
+  const eventData = { dealId, from: existingDeal.stage, to: stage, actor };
+  const closes = probability === 100 || stage.toLowerCase().includes("won") || stage.toLowerCase().includes("lost");
+  // ONE statement (Codex r1/r2): the compare-and-set stage write AND its deal.stage_changed audit row commit together,
+  // so a crash can never leave a moved card without its event (neon-http has no interactive transactions).
+  const moved: any = await db.execute(sql`with moved as (
+      update deals set stage = ${stage}, probability = ${probability}, updated_at = now(),
+        closed_at = ${closes ? new Date().toISOString() : null}::timestamptz
+      where org_id = ${orgId}::uuid and id = ${dealId}::uuid and stage = ${existingDeal.stage}
+      returning id)
+    insert into workflow_event_log (org_id, event_type, payload)
+    select ${orgId}::uuid, 'deal.stage_changed', ${JSON.stringify(eventData)}::jsonb from moved
+    returning id`);
+  const movedRows = moved.rows ?? moved;
+  if (movedRows.length !== 1) return { ok: false, error: "conflict", from: existingDeal.stage };
+  const eventLogId = String(movedRows[0].id);
 
   // ── the kanban move's side effects, unchanged in content and order ─────────────────────────────────────────────
   const [updatedDeal] = await db
@@ -116,11 +124,8 @@ export async function moveDealToStage(input: {
     lifetimeValue: Number(updatedDeal?.value ?? 0),
   });
 
-  const actor =
-    input.actor.kind === "integration"
-      ? { kind: "integration" as const, name: input.actor.name, ref: input.actor.ref ?? null }
-      : { kind: input.actor.kind };
-  await emitSeldonEvent("deal.stage_changed", { dealId, from: existingDeal.stage, to: stage, actor }, { orgId });
+  // dispatch the already-logged event (listeners, wait resume, subscriptions) without a second log row
+  await emitSeldonEvent("deal.stage_changed", eventData, { orgId, preLoggedEventId: eventLogId });
 
   const dealValue = Number(updatedDeal?.value ?? 0);
   const stageLower = stage.toLowerCase();
