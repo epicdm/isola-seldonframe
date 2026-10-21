@@ -32,6 +32,8 @@
 // no DB / network. The default deps (wired in actions.ts at the activation seam)
 // supply the real implementations.
 
+import { canonicalTemplateBindings } from "@/lib/agents/mcp/agent-connector-guard";
+import type { DnsResolver } from "@/lib/security/ssrf-guard";
 import type {
   CreateFullWorkspaceInput,
   CreateFullWorkspaceResult,
@@ -220,6 +222,8 @@ export type CopyTemplateConnectorsDeps = {
     orgId: string;
     connectors: ConnectorBinding[];
   }) => Promise<{ ok: true } | { ok: false; error: string }>;
+  /** DNS resolver for the public-endpoint check (tests inject; prod = dns.lookup). */
+  resolve?: DnsResolver;
 };
 
 export type CopyTemplateConnectorsResult =
@@ -237,10 +241,16 @@ export async function copyTemplateConnectorsToAgent(
   args: { builderOrgId: string; agentTemplateId: string; clientOrgId: string },
 ): Promise<CopyTemplateConnectorsResult> {
   try {
-    const connectors = await deps.loadTemplateConnectors({
-      builderOrgId: args.builderOrgId,
-      agentTemplateId: args.agentTemplateId,
-    });
+    // The write below is TRUSTED (it may add bindings), so copy only bindings
+    // the hardened bind flow could have produced — never an edited template's
+    // pointer at another secret or an internal/attacker host.
+    const connectors = await canonicalTemplateBindings(
+      await deps.loadTemplateConnectors({
+        builderOrgId: args.builderOrgId,
+        agentTemplateId: args.agentTemplateId,
+      }),
+      { resolve: deps.resolve },
+    );
     // No connectors → no-op (preserve the native path; never write the blueprint).
     if (!connectors || connectors.length === 0) {
       return { ok: true, copied: 0 };

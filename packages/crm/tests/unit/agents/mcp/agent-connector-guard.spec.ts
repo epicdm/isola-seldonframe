@@ -190,6 +190,15 @@ describe("3 per-agent secret scope", () => {
     assert.equal(isAgentScopedSecret(AGENT_A, "byo_odoo-mcp-example-com-mcp"), false, "legacy unscoped name is not deleted");
   });
 
+  test("endpoints that differ only past the readable slug prefix never share a secret", () => {
+    const a = `example-com-${"x".repeat(30)}a`;
+    const b = `example-com-${"x".repeat(30)}b`;
+    assert.notEqual(a, b, "control: distinct ids");
+    assert.notEqual(agentByoServiceName(AGENT_A, a), agentByoServiceName(AGENT_A, b));
+    assert.equal(agentByoServiceName(AGENT_A, a), agentByoServiceName(AGENT_A, a), "control: deterministic");
+    assert.equal(isAgentScopedSecret(AGENT_A, agentByoServiceName(AGENT_A, b)), true);
+  });
+
   test("a scoped name is never longer than the old byo_<48-char slug> maximum (tool-name budget)", () => {
     const longSlug = "x".repeat(48);
     assert.equal(`byo_${longSlug}`.length, 52, "control: the old maximum");

@@ -21,7 +21,7 @@
 
 import { createHash } from "node:crypto";
 import { assertPublicHttpUrl, type DnsResolver } from "@/lib/security/ssrf-guard";
-import type { ConnectorBinding } from "./connectors";
+import { getVettedConnector, type ConnectorBinding } from "./connectors";
 
 /** Fixed, UI-safe error codes. Nothing else ever leaves the bind path. */
 export type AgentConnectorErrorCode =
@@ -61,15 +61,21 @@ export function byoServiceName(slug: string): string {
   return `byo_${slug}`;
 }
 
-function agentTag(agentId: string): string {
-  return createHash("sha256").update(agentId).digest("hex").slice(0, 12);
+function hex(value: string, n: number): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, n);
 }
 
-/** Per-agent BYO secret name. Bounded to the same 52-char maximum as
- *  byo_<48-char slug>, because the runtime namespaces tool names as
+function agentTag(agentId: string): string {
+  return hex(agentId, 12);
+}
+
+/** Per-agent BYO secret name: byo_a<agent tag>_<hash of the FULL slug>_<slug
+ *  prefix>. The full-slug hash keeps distinct endpoints distinct even when the
+ *  readable prefix is truncated; the total stays within the old 52-char
+ *  byo_<48-char slug> maximum, because the runtime namespaces tool names as
  *  `${serviceName}__${tool}` and model tool names are length-limited. */
 export function agentByoServiceName(agentId: string, slug: string): string {
-  return `byo_a${agentTag(agentId)}_${slug.slice(0, 34)}`;
+  return `byo_a${agentTag(agentId)}_${hex(slug, 8)}_${slug.slice(0, 25)}`;
 }
 
 /** True only for a secret this agent's own BYO bind created. */
@@ -128,4 +134,37 @@ export function isConnectorsPatchAllowed(
   if (!Array.isArray(incoming)) return false;
   const known = new Set((existing ?? []).map(identityOf));
   return incoming.every((b) => b && typeof b === "object" && known.has(identityOf(b)));
+}
+
+/**
+ * Keep only bindings whose identity is what the hardened bind flow would have
+ * produced: vetted = registry id + registry secret name; byo = public https
+ * endpoint with the derived id and byo_<slug> secret name; composio = no
+ * endpoint / secret pointer. Used before a template's connectors are copied
+ * onto a client agent (a TRUSTED write), so an edited template cannot point a
+ * client binding at another secret or an internal/attacker host.
+ */
+export async function canonicalTemplateBindings(
+  bindings: ConnectorBinding[] | undefined,
+  opts: { resolve?: DnsResolver } = {},
+): Promise<ConnectorBinding[]> {
+  const out: ConnectorBinding[] = [];
+  for (const b of Array.isArray(bindings) ? bindings : []) {
+    const r = (b ?? {}) as { kind?: unknown; id?: unknown; serviceName?: unknown; endpoint?: unknown };
+    if (r.kind === "vetted") {
+      const v = typeof r.id === "string" ? getVettedConnector(r.id) : undefined;
+      if (v && r.serviceName === v.secretService && r.endpoint === undefined) out.push(b);
+    } else if (r.kind === "byo") {
+      if (typeof r.endpoint !== "string") continue;
+      try {
+        const v = await validateAgentByoEndpoint(r.endpoint, opts);
+        if (r.id === v.id && r.serviceName === byoServiceName(v.id)) out.push(b);
+      } catch {
+        // not public https → dropped
+      }
+    } else if (r.kind === "composio") {
+      if (r.serviceName === undefined && r.endpoint === undefined) out.push(b);
+    }
+  }
+  return out;
 }
