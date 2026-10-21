@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Mail } from "lucide-react";
 import { BUILT_IN_EVENT_TYPE_SUGGESTIONS, isValidEventType } from "@/lib/events/event-types";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { countSentEmails, wasHandedToTransport } from "@/lib/emails/sent-count";
 
 /*
   Square UI class reference (source of truth):
@@ -90,10 +91,14 @@ function sentStatus(row: { status: string; provider: string; providerConfigured?
   const provider = row.provider.toLowerCase();
   const status = row.status.toLowerCase();
 
-  if (provider === "manual") {
+  if (!wasHandedToTransport(row)) {
+    // "manual" or a provider id with no implementation: nothing was sent.
     // Only the send path records providerConfigured=false; other "manual" rows
     // (e.g. portal notifications) were never sent but say nothing about config.
-    const label = row.providerConfigured === false ? "Not sent — no email provider configured" : "Not sent";
+    const label =
+      provider === "manual" && row.providerConfigured === false
+        ? "Not sent — no email provider configured"
+        : "Not sent";
     return { label, className: statusBadge("not-sent") };
   }
 
@@ -137,7 +142,7 @@ export function EmailPageContent({
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "templates", label: `Templates (${templates.length})` },
-    { key: "sent", label: `Sent (${sent.length})` },
+    { key: "sent", label: `Sent (${countSentEmails(sent)})` },
   ];
 
   return (
@@ -492,7 +497,9 @@ export function EmailPageContent({
                           </p>
                         </div>
                         <p className="shrink-0 text-[12px] tracking-tight text-foreground">
-                          {row.sentAt ? new Date(row.sentAt).toLocaleDateString([], { month: "short", day: "numeric" }) : "—"}
+                          {row.sentAt && wasHandedToTransport(row)
+                            ? new Date(row.sentAt).toLocaleDateString([], { month: "short", day: "numeric" })
+                            : "—"}
                         </p>
                       </div>
 

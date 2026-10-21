@@ -18,7 +18,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 
 import { EmailPageContent } from "../../../src/components/emails/email-page-content";
-import { countSentEmails } from "../../../src/lib/emails/sent-count";
+import { countSentEmails, TRANSPORT_PROVIDER_IDS } from "../../../src/lib/emails/sent-count";
 
 afterEach(() => cleanup());
 
@@ -90,6 +90,11 @@ describe("Sent screen status semantics", () => {
   test("header count: manual rows are not counted as sent (control: real sends are)", () => {
     assert.equal(countSentEmails([row("m3", "manual", "sent"), row("m4", "manual", "queued")]), 0);
     assert.equal(countSentEmails([row("r4", "resend", "sent"), row("s4", "smtp2go", "sent"), row("m5", "manual", "sent")]), 2);
+    assert.equal(
+      countSentEmails(["failed", "bounced", "complained", "queued"].map((s, i) => row(`x${i}`, "resend", s))),
+      0,
+      "failed/bounced/complained/queued are not sends",
+    );
   });
 
   test("smtp2go row without a delivery event: 'Submitted to SMTP2GO', not green", () => {
@@ -109,6 +114,62 @@ describe("Sent screen status semantics", () => {
     assert.deepEqual(b.map((x) => x.text), ["sent", "delivered", "bounced"]);
     assert.match(b[0].cls, /text-positive/);
     assert.match(b[2].cls, /text-negative/);
+  });
+
+  test("provider with no implementation (sendgrid) renders 'Not sent'", () => {
+    const [b] = badgesFor([row("g1", "sendgrid", "sent")]);
+    assert.equal(b.text, "Not sent");
+    assert.doesNotMatch(b.cls, /text-positive/);
+  });
+
+  test("tab label uses the same count as the header (only real sent/delivered)", () => {
+    const rows = [
+      row("t1", "resend", "sent"),
+      row("t2", "smtp2go", "sent"),
+      row("t3", "smtp2go", "delivered"),
+      row("t4", "manual", "sent"),
+      row("t5", "sendgrid", "sent"),
+      row("t6", "resend", "bounced"),
+      row("t7", "resend", "queued"),
+    ];
+    render(
+      <EmailPageContent
+        templates={[]}
+        sent={rows}
+        createTemplateAction={noop}
+        emailIntegrations={integrations}
+        saveIntegrationAction={noop}
+        disconnectIntegrationAction={noop}
+      />,
+    );
+    assert.equal(countSentEmails(rows), 3);
+    assert.ok(screen.getByRole("button", { name: "Sent (3)" }), "tab label must equal the header count");
+  });
+
+  test("dates: not-sent rows show '—'; real sends keep their date (control)", () => {
+    const rows = [row("d1", "manual", "sent"), row("d2", "sendgrid", "sent"), row("d3", "resend", "sent")];
+    const { container } = render(
+      <EmailPageContent
+        templates={[]}
+        sent={rows}
+        createTemplateAction={noop}
+        emailIntegrations={integrations}
+        saveIntegrationAction={noop}
+        disconnectIntegrationAction={noop}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Sent \(/ }));
+    const dates = Array.from(container.querySelectorAll("p.shrink-0")).map((el) => (el.textContent ?? "").trim());
+    assert.equal(dates.length, 3, "one date cell per row");
+    assert.equal(dates[0], "—");
+    assert.equal(dates[1], "—");
+    assert.notEqual(dates[2], "—");
+    assert.match(dates[2], /21/);
+  });
+
+  test("TRANSPORT_PROVIDER_IDS matches the emailProviders registry", async () => {
+    const { emailProviders } = await import("../../../src/lib/emails/providers");
+    assert.deepEqual([...TRANSPORT_PROVIDER_IDS].sort(), Object.keys(emailProviders).sort());
   });
 
   test("control: smtp2go failure still reads as failed", () => {
