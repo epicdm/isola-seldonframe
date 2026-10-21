@@ -279,6 +279,36 @@ describe("Stripe Connect callback: signed state, bound to the session that start
     assert.deepEqual(exchangeCalls, []);
   });
 
+  // ── /settings/payments (Law 26): never offer a Connect button that can only fail ──
+  const renderPaymentsPage = async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { default: Page } = await import("@/app/(dashboard)/settings/payments/page");
+    return renderToStaticMarkup(await Page());
+  };
+  const NOT_AVAILABLE = "Stripe payments are not available for this workspace";
+
+  test("LAW 26: with no STRIPE_CONNECT_CLIENT_ID, /settings/payments says Stripe is not available and shows no Connect button", async () => {
+    as(ATTACKER, ORG_ATTACKER, null);
+    const saved = process.env.STRIPE_CONNECT_CLIENT_ID;
+    delete process.env.STRIPE_CONNECT_CLIENT_ID;
+    try {
+      const html = await renderPaymentsPage();
+      assert.ok(html.includes(NOT_AVAILABLE), "plain not-available notice rendered");
+      assert.ok(!html.includes("Connect Stripe"), "no Connect Stripe button");
+      assert.ok(!/<form/i.test(html), "no form that would call the start action");
+    } finally {
+      process.env.STRIPE_CONNECT_CLIENT_ID = saved;
+    }
+  });
+
+  test("LAW 26 control: with STRIPE_CONNECT_CLIENT_ID set, the page shows the Connect button and no not-available notice", async () => {
+    as(ATTACKER, ORG_ATTACKER, null);
+    assert.ok(process.env.STRIPE_CONNECT_CLIENT_ID, "control precondition: client id set");
+    const html = await renderPaymentsPage();
+    assert.ok(html.includes("Connect Stripe"), "Connect Stripe button rendered");
+    assert.ok(!html.includes(NOT_AVAILABLE));
+  });
+
   test("no external host other than the stubbed Stripe token endpoint was contacted", () => {
     assert.deepEqual(externalFetchCalls, []);
   });

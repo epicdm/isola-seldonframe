@@ -1,3 +1,4 @@
+import { isStripeConnectConfigured } from "@seldonframe/payments";
 import { startStripeConnectAction, getStripeConnectionStatus } from "@/lib/payments/actions";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { getOrgFeatures } from "@/lib/billing/features";
@@ -12,6 +13,8 @@ export default async function PaymentsSettingsPage() {
   const subscription = await getOrgSubscription(orgId);
   const features = getOrgFeatures(subscription.tier ?? "free");
   const hasCloudAccess = subscription.tier !== "free" && subscription.tier !== "starter";
+  // Law 26: without the Connect client id the start action can only fail, so say so instead of offering the button.
+  const connectAvailable = isStripeConnectConfigured();
 
   return (
     <section className="animate-page-enter space-y-4">
@@ -36,11 +39,15 @@ export default async function PaymentsSettingsPage() {
             <p className="text-label text-[hsl(var(--color-text-secondary))]">No Stripe account connected.</p>
           )}
 
-          <form action={startStripeConnectAction}>
-            <button type="submit" className="crm-button-primary h-10 px-4">
-              {status ? "Reconnect Stripe" : "Connect Stripe"}
-            </button>
-          </form>
+          {connectAvailable ? (
+            <form action={startStripeConnectAction}>
+              <button type="submit" className="crm-button-primary h-10 px-4">
+                {status ? "Reconnect Stripe" : "Connect Stripe"}
+              </button>
+            </form>
+          ) : (
+            <p className="text-label text-[hsl(var(--color-text-secondary))]">Stripe payments are not available for this workspace.</p>
+          )}
         </UpgradeGate>
         {!features.managedEmail ? (
           <p className="text-xs text-[hsl(var(--color-text-muted))]">Upgrade to Cloud to unlock platform-managed payment flows and billing tools.</p>
