@@ -31,6 +31,11 @@
 // stage move writes deals.stage and its deal.stage_changed log row in one statement (lib/deals/stage-move.ts). Two
 // workers on the same event (a reclaim racing a slow original) can both run; each effect still happens at most once,
 // and a crash leaves either both halves of an effect or neither.
+// DISPATCH (Codex r3): after a durable log row is written, its in-process dispatch (listeners, wait resume, subscription
+// enqueue) is marked on the inbox row (event_dispatched / stage_dispatched). A reclaimed event re-dispatches any of ITS
+// logged rows not yet marked — the pl.* row found by its eventId, the deal.stage_changed row by actor.ref = eventId
+// (written in the same statement as the move, so it proves this event made that move). Dispatch is therefore
+// at-least-once; wait resume (CAS) and subscription enqueue (unique idempotency key) absorb a repeat.
 import { randomUUID } from "node:crypto";
 import { findStage } from "@/lib/deals/stages";
 import type { StageMoveResult } from "@/lib/deals/stage-move";
@@ -166,11 +171,17 @@ export interface LifecycleStore extends LinkStore {
   addActivityOnce(orgId: string, eventId: string, contactId: string, a: { type: string; subject: string; metadata: Record<string, unknown>; completedAt: Date }): Promise<boolean>;
   /** ONE statement: mark the event's pl.* log row as written AND insert it. Returns the log id, or null if already logged. */
   logEventOnce(orgId: string, eventId: string, type: PlLifecycleType, payload: Record<string, unknown>): Promise<string | null>;
+  /** Dispatch bookkeeping (Codex r3). */
+  dispatchState(orgId: string, eventId: string): Promise<{ eventDispatched: boolean; stageDispatched: boolean }>;
+  markDispatched(orgId: string, eventId: string, which: "event" | "stage"): Promise<void>;
+  /** This event's own logged rows: its pl.* row, and the deal.stage_changed row whose actor.ref is this event. */
+  findLoggedEvent(orgId: string, type: string, eventId: string): Promise<{ id: string; payload: Record<string, unknown> } | null>;
+  findLoggedStageMove(orgId: string, eventId: string): Promise<{ id: string; payload: Record<string, unknown> } | null>;
 }
 
 export type MoveFn = (input: { orgId: string; dealId: string; stage: string; actor: { kind: "integration"; name: string; ref?: string | null }; forwardOnly: true }) => Promise<StageMoveResult>;
 /** Dispatch an ALREADY-LOGGED event (in-memory listeners, wait resume, subscriptions) — never logs a second row. */
-export type Emit = (type: PlLifecycleType, data: Record<string, unknown>, orgId: string, preLoggedEventId: string) => Promise<void>;
+export type Emit = (type: PlLifecycleType | "deal.stage_changed", data: Record<string, unknown>, orgId: string, preLoggedEventId: string) => Promise<void>;
 
 export async function projectDeal(orgId: string, e: PlLifecycleEvent, contactId: string, store: LifecycleStore, move: MoveFn): Promise<string> {
   const target = STAGE_FOR[e.type];
@@ -237,6 +248,15 @@ export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, 
   }
   await store.mergeFacts(orgId, e.subjectId, rank, { ...e.facts, ...(e.plAccountId ? { pl_account_id: e.plAccountId } : {}) });
   const deal = await projectDeal(orgId, e, link.contactId, store, move);
+  // the move (if any) dispatched inside moveDealToStage; record that, or re-dispatch THIS event's logged move after a crash
+  const ds = await store.dispatchState(orgId, e.eventId);
+  if (!ds.stageDispatched) {
+    if (!deal.startsWith("moved:")) {
+      const prior = await store.findLoggedStageMove(orgId, e.eventId);
+      if (prior) await emit("deal.stage_changed", prior.payload, orgId, prior.id);
+    }
+    await store.markDispatched(orgId, e.eventId, "stage");
+  }
   const activity = await store.addActivityOnce(orgId, e.eventId, link.contactId, {
     type: "personal_line",
     subject: SUBJECT[e.type] + (e.occurredAt ? "" : " (time it happened unknown; detection time shown)"),
@@ -248,7 +268,14 @@ export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, 
   });
   const payload = { contactId: link.contactId, subjectId: e.subjectId, plAccountId: e.plAccountId, eventId: e.eventId, occurredAt: e.occurredAt, detectedAt: e.detectedAt, facts: e.facts, deal };
   const logId = await store.logEventOnce(orgId, e.eventId, e.type, payload);
-  if (logId) await emit(e.type, payload, orgId, logId);
+  if (logId) {
+    await emit(e.type, payload, orgId, logId);
+    await store.markDispatched(orgId, e.eventId, "event");
+  } else if (!ds.eventDispatched) {
+    const prior = await store.findLoggedEvent(orgId, e.type, e.eventId);   // logged by a worker that crashed before dispatch
+    if (prior) await emit(e.type, prior.payload, orgId, prior.id);
+    await store.markDispatched(orgId, e.eventId, "event");
+  }
   await store.finishEvent(orgId, e.eventId, true, deal);
   return { status: "processed", contactId: link.contactId, deal, activity };
 }
@@ -380,6 +407,26 @@ export async function drizzleLifecycleStore(): Promise<LifecycleStore> {
         select ${orgId}::uuid, ${contactId}::uuid, ${userId}::uuid, ${a.type}, ${a.subject}, ${JSON.stringify(a.metadata)}::jsonb, ${a.completedAt.toISOString()}::timestamptz from c
         returning id`);
       return (r.rows ?? r).length === 1;
+    },
+    async dispatchState(orgId, eventId) {
+      const [r] = await db.select({ e: inbox.eventDispatched, s: inbox.stageDispatched }).from(inbox)
+        .where(and(eq(inbox.orgId, orgId), eq(inbox.provider, P), eq(inbox.eventId, eventId))).limit(1);
+      return { eventDispatched: !!r?.e, stageDispatched: !!r?.s };
+    },
+    async markDispatched(orgId, eventId, which) {
+      await db.update(inbox).set(which === "event" ? { eventDispatched: true } : { stageDispatched: true })
+        .where(and(eq(inbox.orgId, orgId), eq(inbox.provider, P), eq(inbox.eventId, eventId)));
+    },
+    async findLoggedEvent(orgId, type, eventId) {
+      const r: any = await db.execute(sql`select id, payload from workflow_event_log where org_id = ${orgId}::uuid and event_type = ${type} and payload->>'eventId' = ${eventId} order by emitted_at limit 1`);
+      const row = (r.rows ?? r)[0];
+      return row ? { id: String(row.id), payload: row.payload } : null;
+    },
+    async findLoggedStageMove(orgId, eventId) {
+      const r: any = await db.execute(sql`select id, payload from workflow_event_log where org_id = ${orgId}::uuid and event_type = 'deal.stage_changed'
+        and payload->'actor'->>'kind' = 'integration' and payload->'actor'->>'ref' = ${eventId} order by emitted_at limit 1`);
+      const row = (r.rows ?? r)[0];
+      return row ? { id: String(row.id), payload: row.payload } : null;
     },
     async logEventOnce(orgId, eventId, type, payload) {
       const r: any = await db.execute(sql`with c as (

@@ -280,6 +280,38 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     assert.equal((await stageEvents(EPIC)).filter((x: any) => x.dealId === d.id && x.to === "Line created").length, 1);
   });
 
+  test("Codex r3: crash AFTER the durable log rows but BEFORE their dispatch -> the reclaimed event dispatches them (no new log rows); a later replay does not", async () => {
+    configure();
+    assert.equal((await post(EPIC, body("pl.signup_started", "subj_disp"))).status, 200);
+    const raw = body("pl.line_created", "subj_disp");
+    const e = JSON.parse(raw);
+    const [d] = await plDealOf(EPIC, "subj_disp");
+    // the crashed worker's durable state: card moved + its stage row (same statement), pl.* row logged, nothing dispatched, not finished
+    await db.update(S.deals).set({ stage: "Line created" }).where(eq(S.deals.id, d.id));
+    await db.execute(sql`insert into workflow_event_log (org_id, event_type, payload) values (${EPIC}::uuid, 'deal.stage_changed',
+      ${JSON.stringify({ dealId: d.id, from: "Signup started", to: "Line created", actor: { kind: "integration", name: "personal_line", ref: e.event_id } })}::jsonb)`);
+    await db.execute(sql`insert into workflow_event_log (org_id, event_type, payload) values (${EPIC}::uuid, 'pl.line_created', ${JSON.stringify({ eventId: e.event_id, subjectId: "subj_disp" })}::jsonb)`);
+    await db.execute(sql`insert into integration_event_inbox (org_id, provider, event_id, external_id, type, occurred_at, detected_at, version, received_at, event_logged, activity_logged)
+      values (${EPIC}::uuid, 'personal_line', ${e.event_id}, 'subj_disp', 'pl.line_created', now(), now(), 2, now() - interval '5 minutes', true, false)`);
+    // drive the real processor + real store; the dispatcher is recorded (the route wires it to emitSeldonEvent with
+    // preLoggedEventId, which never writes a log row — asserted below by the unchanged row count)
+    const { drizzleLifecycleStore, processLifecycleEvent, parseLifecycleEvent } = await import("@/lib/personal-line/lifecycle");
+    const { moveDealToStage } = await import("@/lib/deals/stage-move");
+    const seen: Array<[string, string]> = [];
+    const emit = async (t: string, _d: unknown, _o: string, id: string) => { seen.push([t, id]); };
+    const logRows = async () => count(sql`select count(*)::int n from workflow_event_log where org_id = ${EPIC}::uuid and (payload->>'eventId' = ${e.event_id} or payload->'actor'->>'ref' = ${e.event_id})`);
+    const before = await logRows();
+    const store = await drizzleLifecycleStore();
+    const r = await processLifecycleEvent(EPIC, parseLifecycleEvent(raw)!, store, emit as any, (i) => moveDealToStage(i));
+    assert.equal(r.status, "processed");
+    assert.deepEqual(seen.map((x) => x[0]).sort(), ["deal.stage_changed", "pl.line_created"]);   // both re-dispatched, by their stored ids
+    assert.ok(seen.every((x) => /^[0-9a-f-]{36}$/.test(x[1])));
+    assert.equal(await logRows(), before);                                  // no new log rows
+    const again = await processLifecycleEvent(EPIC, parseLifecycleEvent(raw)!, store, emit as any, (i) => moveDealToStage(i));
+    assert.equal(again.status, "duplicate");
+    assert.equal(seen.length, 2);                                           // no further dispatch
+  });
+
   test("Codex r2: the stage write and its deal.stage_changed row are ONE statement — a lost CAS writes neither", async () => {
     configure();
     assert.equal((await post(EPIC, body("pl.signup_started", "subj_cas"))).status, 200);

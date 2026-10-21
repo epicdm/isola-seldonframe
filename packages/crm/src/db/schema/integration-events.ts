@@ -24,6 +24,9 @@ export const integrationEventInbox = pgTable(
     /** exactly-once markers, each set in the SAME statement that writes its effect */
     activityLogged: boolean("activity_logged").notNull().default(false),
     eventLogged: boolean("event_logged").notNull().default(false),
+    /** in-process dispatch of the logged rows done (at-least-once; see lib/personal-line/lifecycle.ts) */
+    eventDispatched: boolean("event_dispatched").notNull().default(false),
+    stageDispatched: boolean("stage_dispatched").notNull().default(false),
   },
   (table) => [
     primaryKey({ columns: [table.orgId, table.provider, table.eventId] }),

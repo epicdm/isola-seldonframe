@@ -3,7 +3,8 @@
 -- HAND-WRITTEN. Additive only + idempotent (IF NOT EXISTS). Matches src/db/schema/integration-events.ts. No rows seeded.
 --   integration_event_inbox     one row per (org, provider, event_id); a redelivery is a no-op; outcome = what happened;
 --                               activity_logged / event_logged are exactly-once markers, each set in the same statement
---                               that writes its effect
+--                               that writes its effect; event_dispatched / stage_dispatched record that the logged rows'
+--                               in-process dispatch ran (a reclaim re-dispatches the ones that did not)
 --   integration_subject_facts   merged facts per external subject, and the ONE deal that projects it:
 --                               projected_deal_id is claimed (compare-and-set on NULL) BEFORE the deal is inserted with
 --                               that id, so two concurrent events can never create two deals for one subject;
@@ -23,6 +24,8 @@ CREATE TABLE IF NOT EXISTS integration_event_inbox (
   outcome text,
   activity_logged boolean NOT NULL DEFAULT false,
   event_logged boolean NOT NULL DEFAULT false,
+  event_dispatched boolean NOT NULL DEFAULT false,
+  stage_dispatched boolean NOT NULL DEFAULT false,
   PRIMARY KEY (org_id, provider, event_id)
 );
 
