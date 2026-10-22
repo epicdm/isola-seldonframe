@@ -11,7 +11,8 @@
 //              configuration, soul/theme/branding, marketplace, deployments, client-portal access, proposals.
 //              Guarded by requireWorkspaceAdmin() (or getOrgIdAsWorkspaceAdmin as the DI default) before any effect.
 //   owner    — member management (invite, remove, role change, staff permissions): workspace owner, parent-agency
-//              owner or platform admin, on the app sign-in. Unchanged authority from the invite action.
+//              owner or platform admin, on the app sign-in. Unchanged authority from the invite action. Also actions that are
+//              owner-only by live's own inline rule and proven by live's owner-only-guards spec (billing portal).
 //   staff    — legitimate day-to-day work, allowed for staff: contacts (list/create/edit field), activities and tasks,
 //              deals (list/create/move), bookings (list/create/complete/cancel/notes/no-show/reschedule/block time),
 //              conversations (operator-portal messages, SMS reply, draft approvals), sending email to a contact,
@@ -29,8 +30,12 @@
 //              modules by this correction (payments-internal, emails-internal, deployed-agent-for-event, publish-guard,
 //              and the agents store / eval runner / block installer / openclaw orchestration / portal counts / soul
 //              installer, export-workspace-as-agent modules are no longer "use server"), so none is a client-callable action.
-//   target   — (no action in this category in the combined branch: completeStripeConnectFromCode is deleted by the
-//              integrated Stripe Connect signed-state candidate 641c89b5; its callback re-checks owner/admin at completion.)
+//   target   — owner/admin of the workspace NAMED IN THE INPUT (requireWorkspaceAdminFor), checked after the action's own session
+//              and access check: the onboarding/checkout start actions and the client-portal admin actions. The caller's
+//              ACTIVE workspace is irrelevant to them, so the active-workspace guard is deliberately not used. Covered by a
+//              dedicated test (staff refused, owner passes) because the generic admin sweep cannot name a target.
+//              (completeStripeConnectFromCode is gone: the integrated Stripe Connect signed-state code replaced it; its callback
+//              re-checks owner/admin of the signed workspace at completion.)
 
 export type StaffAccessCategory = "admin" | "target" | "owner" | "staff" | "self" | "session" | "platform" | "public" | "internal";
 
@@ -68,8 +73,8 @@ export const SERVER_ACTION_POLICY: Record<string, StaffAccessCategory> = {
   "app/pricing/_actions.ts#confirmFreeWithCardAction": "self",
   "app/pricing/_actions.ts#createSetupIntentAction": "self",
   "app/pricing/_actions.ts#selectFreeTierAction": "self",
-  "app/start/actions.ts#applyOnboardingMiniFormAction": "admin",
-  "app/start/actions.ts#createLiveSellCheckoutAction": "admin",
+  "app/start/actions.ts#applyOnboardingMiniFormAction": "target",
+  "app/start/actions.ts#createLiveSellCheckoutAction": "target",
   "lib/activation/agent-picks-actions.ts#enableStarterAgentAction": "admin",
   "lib/activation/share-actions.ts#markShareUsedAction": "admin",
   "lib/activities/actions.ts#completeTaskAction": "staff",
@@ -138,7 +143,7 @@ export const SERVER_ACTION_POLICY: Record<string, StaffAccessCategory> = {
   "lib/ai/seldon-actions.ts#saveSeldonBlockAction": "admin",
   "lib/auth/actions.ts#signOutAllSessionsAction": "self",
   "lib/auth/actions.ts#signupAction": "public",
-  "lib/billing/actions.ts#createBillingPortalSessionAction": "admin",
+  "lib/billing/actions.ts#createBillingPortalSessionAction": "owner",
   "lib/billing/actions.ts#selectPlanAction": "admin",
   "lib/billing/orgs.ts#claimAnonymousWorkspaceForEmail": "self",
   "lib/billing/orgs.ts#createManagedOrganizationAction": "self",
@@ -330,10 +335,10 @@ export const SERVER_ACTION_POLICY: Record<string, StaffAccessCategory> = {
   "lib/portal/actions.ts#markPortalResourceViewedAction": "public",
   "lib/portal/actions.ts#sendPortalMessageAction": "public",
   "lib/portal/actions.ts#togglePortalMessagePinAction": "public",
-  "lib/portal/admin-actions.ts#deletePortalDocumentAction": "admin",
-  "lib/portal/admin-actions.ts#sendPortalInviteAction": "admin",
-  "lib/portal/admin-actions.ts#setContactPortalAccessAction": "admin",
-  "lib/portal/admin-actions.ts#uploadPortalDocumentAction": "admin",
+  "lib/portal/admin-actions.ts#deletePortalDocumentAction": "target",
+  "lib/portal/admin-actions.ts#sendPortalInviteAction": "target",
+  "lib/portal/admin-actions.ts#setContactPortalAccessAction": "target",
+  "lib/portal/admin-actions.ts#uploadPortalDocumentAction": "target",
   "lib/portal/auth.ts#clearPortalSessionAction": "public",
   "lib/portal/auth.ts#establishPortalDemoSession": "public",
   "lib/portal/auth.ts#establishPortalMagicSession": "public",

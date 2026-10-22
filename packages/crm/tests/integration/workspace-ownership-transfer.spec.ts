@@ -197,8 +197,12 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
 
   test("before: mint the tokens that the transfer must kill (a 7-day session, an unused magic link, a legacy no-iat session, a support session)", async () => {
     const now = Date.now();
-    // Minted for info@, not the platform admin (Codex r1): read paths do not re-authorise, so they are valid now (positive control);
-    // after the transfer info@ IS authorised, so the cut-off is the only thing that can kill them.
+    // EPIC 2026-10-21 (staff access): read paths now re-authorise on every request, so info@ must already hold a role in this
+    // workspace for its tokens to be valid before the transfer (it did not need one while a live session was never re-checked).
+    // It is an ADMIN member before; the transfer then makes it the owner (membership upserted to owner).
+    await db.execute(sql`insert into org_members (org_id, user_id, role) values (${EPIC}::uuid, ${INFO}::uuid, 'admin') on conflict do nothing`);
+    // Minted for info@, not the platform admin (Codex r1): they are valid now (positive control);
+    // after the transfer info@ IS the owner, so the cut-off is the only thing that can kill them.
     preSession7d = signAt("session", INFO_EMAIL, now - 60_000);
     preUnusedMagic = signAt("magic", INFO_EMAIL, now - 30_000);
     preLegacySession = S.signOperatorToken({ orgId: EPIC, email: INFO_EMAIL, kind: "session", exp: now - 10_000 + S.OPERATOR_SESSION_TTL_MS });
@@ -422,7 +426,8 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     const r = await OP.inviteWorkspaceOperatorAction({ orgSlug: EPIC_SLUG, email: STAFF_EMAIL });
     assert.equal(r.ok, true, JSON.stringify(r));
     const staff = await one<{ id: string; role: string }>(sql`select u.id, m.role from users u join org_members m on m.user_id = u.id and m.org_id = ${EPIC}::uuid where u.email = ${STAFF_EMAIL}`);
-    assert.equal(staff?.role, "admin");
+    // EPIC 2026-10-21 (staff access): an invite now grants STAFF by default (admin only when chosen).
+    assert.equal(staff?.role, "staff");
     const asked = await OP.requestOperatorMagicLinkAction({ orgSlug: EPIC_SLUG, email: STAFF_EMAIL });
     assert.equal(asked.ok && asked.expiresAt !== "", true);
     const consumed = await withOperatorCookie(null, async () => ({ r: await OP.consumeOperatorMagicLink({ orgSlug: EPIC_SLUG, token: signAt("magic", STAFF_EMAIL, Date.now()) }), c: operatorCookie() }));

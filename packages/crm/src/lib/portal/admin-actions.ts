@@ -33,7 +33,8 @@ export async function setContactPortalAccessAction(input: {
   contactId: string;
   enabled: boolean;
 }): Promise<{ ok: true; enabled: boolean } | { ok: false; reason: string }> {
-  await requireWorkspaceAdmin();
+  // EPIC 2026-10-21: authority is checked on the TARGET workspace below (requireWorkspaceAdminFor), after this action's own
+  // session check; the caller's ACTIVE workspace is irrelevant to it.
   assertWritable();
 
   const session = await auth();
@@ -102,7 +103,8 @@ export async function sendPortalInviteAction(input: {
   orgSlug: string;
   email: string;
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
-  await requireWorkspaceAdmin();
+  // EPIC 2026-10-21: authority is checked on the TARGET workspace below (requireWorkspaceAdminFor), after this action's own
+  // session check; the caller's ACTIVE workspace is irrelevant to it.
   assertWritable();
 
   const session = await auth();
@@ -249,7 +251,8 @@ export async function uploadPortalDocumentAction(
   | { ok: true; documentId: string }
   | { ok: false; reason: string }
 > {
-  await requireWorkspaceAdmin();
+  // EPIC 2026-10-21: authority is checked on the TARGET workspace below (requireWorkspaceAdminFor), after this action's own
+  // session check; the caller's ACTIVE workspace is irrelevant to it.
   assertWritable();
 
   const session = await auth();
@@ -347,7 +350,8 @@ export async function deletePortalDocumentAction(input: {
   documentId: string;
   orgId: string;
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
-  await requireWorkspaceAdmin();
+  // EPIC 2026-10-21: authority is checked on the TARGET workspace below (requireWorkspaceAdminFor), after this action's own
+  // session check; the caller's ACTIVE workspace is irrelevant to it.
   assertWritable();
 
   const session = await auth();

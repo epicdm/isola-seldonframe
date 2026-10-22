@@ -31,19 +31,24 @@ export function isWorkspaceRoleForbiddenError(error: unknown): error is Workspac
   return (error as { code?: unknown } | null)?.code === WORKSPACE_ROLE_FORBIDDEN;
 }
 
-/**
- * Throws WorkspaceRoleForbiddenError unless the caller is owner or admin of the active workspace.
- * When NOBODY is signed in there is nothing to authorize: it returns, and the action's own session check answers with its
- * own typed "unauthorized" / "auth_required" exactly as it did before this guard existed (logged-out visitors of the public
- * marketplace pages depend on that contract). Anyone who IS signed in without owner/admin standing here - staff, a removed
- * member, a stranger - is refused.
- */
-export async function requireWorkspaceAdmin(): Promise<void> {
+/** Options for the role guards. */
+export type RoleGuardOptions = {
+  /**
+   * Let a request with NO signed-in person through, so the action's own session check answers with its own typed
+   * "unauthorized" / "auth_required" (logged-out visitors of the public marketplace pages depend on that contract).
+   * Default false: the guard is STRICT - a caller who is not signed in is refused like anyone else without owner/admin
+   * standing. Only the five public-marketplace actions in lib/marketplace opt in; each reads its own session before any effect.
+   */
+  allowAnonymous?: boolean;
+};
+
+/** Throws WorkspaceRoleForbiddenError unless the caller is owner or admin of the active workspace (strict by default). */
+export async function requireWorkspaceAdmin(opts: RoleGuardOptions = {}): Promise<void> {
   const role = await getCurrentWorkspaceRole();
   if (isWorkspaceAdminRole(role)) return;
-  if (!(await getCurrentUser())) return;
-  // contract:throw-ok: role refusal for a signed-in non-admin; the UI never offers these actions to staff, and a masked
-  // failure is the intended fail-closed outcome. The page layouts redirect staff before any of these controls render.
+  if (opts.allowAnonymous === true && !(await getCurrentUser())) return;
+  // contract:throw-ok: role refusal for a caller without owner/admin standing; the UI never offers these actions to staff, and a
+  // masked failure is the intended fail-closed outcome. The page layouts redirect staff before any of these controls render.
   throw new WorkspaceRoleForbiddenError(role);
 }
 
@@ -54,6 +59,12 @@ export async function requireWorkspaceAdmin(): Promise<void> {
  */
 export async function getOrgIdAsWorkspaceAdmin(): Promise<string | null> {
   await requireWorkspaceAdmin();
+  return getOrgId();
+}
+
+/** Same, for the public-marketplace actions only: a logged-out visitor falls through to the action's typed auth_required. */
+export async function getOrgIdAsWorkspaceAdminOrAnonymous(): Promise<string | null> {
+  await requireWorkspaceAdmin({ allowAnonymous: true });
   return getOrgId();
 }
 
@@ -87,8 +98,7 @@ export async function orgIdForCallerRead(orgIdOverride?: unknown): Promise<strin
 export async function requireWorkspaceAdminFor(orgId: string | null | undefined): Promise<void> {
   const role = await getCallerRoleIn(orgId);
   if (isWorkspaceAdminRole(role)) return;
-  if (!(await getCurrentUser())) return; // nobody signed in: the action's own session check answers (see requireWorkspaceAdmin)
-  // contract:throw-ok: role refusal for a signed-in non-admin of the target workspace (see requireWorkspaceAdmin).
+  // contract:throw-ok: role refusal for a caller without owner/admin standing in the target workspace (see requireWorkspaceAdmin).
   throw new WorkspaceRoleForbiddenError(role);
 }
 

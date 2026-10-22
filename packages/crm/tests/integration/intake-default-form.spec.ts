@@ -94,6 +94,8 @@ describe("workspace default intake form (scratch Postgres, rendered pages and ro
         getOrgId: async () => currentOrg,
         requireAuth: async () => ({ user: { id: "op-user", orgId: currentOrg } }),
         getCurrentUser: async () => ({ id: "op-user", orgId: currentOrg }),
+        // EPIC 2026-10-21 (staff access): the form actions are owner/admin actions and ask for the caller's workspace role.
+        getCurrentWorkspaceRole: async () => "owner",
       },
     });
     mock.module("next/cache", { namedExports: { revalidatePath: () => undefined, revalidateTag: () => undefined, unstable_cache: (fn: (...a: unknown[]) => unknown) => fn } });

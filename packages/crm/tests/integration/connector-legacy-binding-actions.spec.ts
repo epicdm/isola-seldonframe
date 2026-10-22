@@ -57,7 +57,8 @@ before(async () => {
     namedExports: { auth: async () => null, signIn: async () => {}, signOut: async () => {}, handlers: {} },
   });
   mock.module(url("src/lib/auth/helpers.ts"), {
-    namedExports: { getOrgId: async () => ORG, getCurrentUser: async () => ({ id: "u1", orgId: ORG }) },
+    // EPIC 2026-10-21 (staff access): connector actions are owner/admin actions and ask for the caller's workspace role.
+    namedExports: { getOrgId: async () => ORG, getCurrentUser: async () => ({ id: "u1", orgId: ORG }), getCurrentWorkspaceRole: async () => "owner" },
   });
   mock.module(url("src/lib/secrets.ts"), {
     namedExports: {

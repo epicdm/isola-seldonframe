@@ -485,24 +485,61 @@ describe("Staff access (scratch Postgres, production driver)", { skip: !enabled 
     assert.notDeepEqual(confirmed, { ok: false, code: "forbidden" }, "the owner is not told 'forbidden'");
   });
 
-  test("logged-out callers: the guard passes through (typed 'auth_required', no side effect); signed-in non-admins are still refused", async () => {
+  test("logged-out callers: the guard is STRICT by default (refused, no side effect); only the public-marketplace actions opt in and keep their typed auth_required", async () => {
     asNextAuth(null);
-    await RW.requireWorkspaceAdmin(); // nobody signed in: nothing to authorize, the action's own check answers
-    await RW.requireWorkspaceAdminFor(W);
-    const { installAgentListingAction } = await import("@/lib/marketplace/actions");
+    await assert.rejects(() => RW.requireWorkspaceAdmin(), (e: unknown) => isRoleRefusal(e), "nobody signed in is refused like anyone else");
+    await assert.rejects(() => RW.requireWorkspaceAdminFor(W), (e: unknown) => isRoleRefusal(e));
+    await RW.requireWorkspaceAdmin({ allowAnonymous: true }); // the explicit opt-in used by the public-marketplace actions only
     const { setWorkspaceTestModeAction } = await import("@/lib/test-mode/actions");
-    const loggedOut = (await installAgentListingAction({ slug: "x" })) as { ok: boolean; reason?: string };
-    assert.deepEqual({ ok: loggedOut.ok, reason: loggedOut.reason }, { ok: false, reason: "auth_required" }, "typed answer, not a masked throw");
+    const { getOrgIdAsWorkspaceAdmin } = await import("@/lib/auth/require-workspace-role");
+    await assert.rejects(() => getOrgIdAsWorkspaceAdmin(), (e: unknown) => isRoleRefusal(e), "the strict DI resolver refuses too");
     const on = new FormData();
     on.set("testMode", "true");
-    await setWorkspaceTestModeAction(on).then(() => assert.fail("an anonymous test-mode switch must not succeed"), (e: unknown) => assert.equal(isRoleRefusal(e), false, "it refuses by its own session check"));
+    await assert.rejects(() => setWorkspaceTestModeAction(on), (e: unknown) => isRoleRefusal(e), "an anonymous settings write is refused by the role guard");
     const [tm] = await rows<{ test_mode: boolean }>(sql`select test_mode from organizations where id = ${W}::uuid`);
     assert.equal(tm.test_mode, false, "no side effect for an anonymous caller");
-    // Control: a signed-in person with no standing in W (stranger) and a staff member are still refused by the same guard.
+    // The five public-marketplace actions answer a logged-out visitor with their own typed result (no masked throw).
+    const mk = await import("@/lib/marketplace/actions");
+    const rental = await import("@/lib/marketplace/rental");
+    const typed = async (fn: () => Promise<unknown>) => { try { return { threw: false, value: await fn() as { ok?: boolean; reason?: string } }; } catch (e) { return { threw: true, role: isRoleRefusal(e) }; } };
+    const install = await typed(() => mk.installAgentListingAction({ slug: "x" }));
+    assert.deepEqual({ threw: install.threw, reason: (install as { value?: { reason?: string } }).value?.reason }, { threw: false, reason: "auth_required" }, "install: typed auth_required");
+    const rent = await typed(() => rental.generateAgentRentalKeyAction({ slug: "x" }));
+    assert.deepEqual({ threw: rent.threw, reason: (rent as { value?: { reason?: string } }).value?.reason }, { threw: false, reason: "auth_required" }, "rental key: typed auth_required");
+    for (const fn of [mk.finalizeSoulListingPurchaseReturnAction, mk.purchaseSoulListingAction, mk.submitSoulListingReviewAction]) {
+      const r = await typed(() => fn(new FormData()));
+      assert.notEqual((r as { role?: boolean }).role, true, `${fn.name} is not role-refused for a logged-out visitor (its own check answers)`);
+    }
+    // A signed-in person with no standing in W (stranger) and a staff member are refused by the same guard, including on those five.
     asNextAuth(OUTSIDER, OUT_HOME, W);
     await assert.rejects(() => RW.requireWorkspaceAdminFor(W), (e: unknown) => isRoleRefusal(e));
     asOperator(STAFF);
-    await assert.rejects(() => RW.requireWorkspaceAdmin(), (e: unknown) => isRoleRefusal(e));
+    await assert.rejects(() => RW.requireWorkspaceAdmin({ allowAnonymous: true }), (e: unknown) => isRoleRefusal(e), "the opt-in never lets a signed-in non-admin through");
+    assert.equal(await outcome(() => mk.installAgentListingAction({ slug: "x" })), "refused", "staff on install is refused");
+  });
+
+  test("target actions: staff of W is refused on the workspace named in the input (and owner passes); the removed member is refused too", async () => {
+    const start = await import("@/app/start/actions");
+    const padmin = await import("@/lib/portal/admin-actions");
+    const file = new File(["fixture"], "fixture.txt", { type: "text/plain" });
+    const upload = new FormData();
+    upload.set("orgId", W); upload.set("contactId", U(90)); upload.set("file", file);
+    const calls: Array<[string, () => Promise<unknown>]> = [
+      ["createLiveSellCheckoutAction", () => start.createLiveSellCheckoutAction({ prospectName: "P", prospectFirstName: "P", prospectEmail: "p@fixture.test", previewWorkspaceId: W })],
+      ["applyOnboardingMiniFormAction", () => start.applyOnboardingMiniFormAction({ orgId: W } as never)],
+      ["setContactPortalAccessAction", () => padmin.setContactPortalAccessAction({ orgId: W, contactId: U(90), enabled: true })],
+      ["sendPortalInviteAction", () => padmin.sendPortalInviteAction({ orgSlug: SLUG, email: "client@fixture.test" })],
+      ["uploadPortalDocumentAction", () => padmin.uploadPortalDocumentAction(upload)],
+      ["deletePortalDocumentAction", () => padmin.deletePortalDocumentAction({ documentId: U(91), orgId: W })],
+    ];
+    for (const [name, call] of calls) {
+      asNextAuth(STAFF, W, W);
+      assert.equal(await outcome(call), "refused", `${name}: staff of W is refused`);
+      asNextAuth(OUTSIDER, OUT_HOME, W);
+      assert.equal(await outcome(call), "ran", `${name}: a stranger gets the action's own org_not_found, not a role refusal (no standing is revealed)`);
+      asNextAuth(OWNER, OWNER_HOME, W);
+      assert.equal(await outcome(call), "ran", `${name}: control - the owner passes the role check`);
+    }
   });
 
   test("target workspace: a staff member of W who OWNS another workspace cannot change W from there (home / client-supplied targets)", async () => {

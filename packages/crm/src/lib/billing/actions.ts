@@ -215,7 +215,9 @@ export async function selectPlanAction(formData: FormData) {
 }
 
 export async function createBillingPortalSessionAction() {
-  await requireWorkspaceAdmin();
+  // EPIC 2026-10-21: no admin guard here on purpose. The billing portal is OWNER-only and this action enforces that itself
+  // (isWorkspaceOwnerLike, answering a non-owner with the upgrade redirect); live's owner-only-guards spec proves it for
+  // admin, member and stranger. An extra admin guard would turn that redirect into a masked error for staff.
   const session = await auth();
   const userId = session?.user?.id;
 

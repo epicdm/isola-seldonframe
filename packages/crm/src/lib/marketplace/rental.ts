@@ -26,7 +26,7 @@ import { marketplaceListings } from "@/db/schema";
 import { getOrgId } from "@/lib/auth/helpers";
 import { mintRentalKey, RENTAL_KEY_DEFAULT_TTL_SECONDS } from "@/lib/marketplace/rental-token";
 import { getRentalSigningSecret } from "@/lib/marketplace/rental-secret";
-import { getOrgIdAsWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { getOrgIdAsWorkspaceAdminOrAnonymous } from "@/lib/auth/require-workspace-role";
 import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 export type GenerateRentalKeyResult =
@@ -50,10 +50,10 @@ export async function generateAgentRentalKeyAction(
   input: {
     slug: string;
   },
-  _deps: GenerateRentalKeyDeps = { getOrgId: getOrgIdAsWorkspaceAdmin },
+  _deps: GenerateRentalKeyDeps = { getOrgId: getOrgIdAsWorkspaceAdminOrAnonymous },
 ): Promise<GenerateRentalKeyResult> {
   // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
-  _deps = (await serverSideDeps(_deps)) ?? { getOrgId: getOrgIdAsWorkspaceAdmin };
+  _deps = (await serverSideDeps(_deps)) ?? { getOrgId: getOrgIdAsWorkspaceAdminOrAnonymous };
   const orgId = await _deps.getOrgId();
   // Logged-out (or on www., where the host-only session cookie isn't sent) →
   // structured signal so the buy box redirects to sign-in rather than rendering

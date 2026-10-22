@@ -62,7 +62,8 @@ export type LiveSellCheckoutResult = {
 export async function createLiveSellCheckoutAction(
   input: LiveSellCheckoutInput,
 ): Promise<ActionResult<LiveSellCheckoutResult>> {
-  await requireWorkspaceAdmin();
+  // EPIC 2026-10-21: authority is checked on the TARGET workspace below (requireWorkspaceAdminFor), after this action's own
+  // session check; the caller's ACTIVE workspace is irrelevant to it.
   const session = await auth();
   if (!session?.user?.id) return { ok: false, error: "unauthorized" };
 
@@ -245,7 +246,8 @@ export async function applyOnboardingMiniFormAction(input: {
   hours_text?: string;
   google_reviews_url?: string;
 }): Promise<ActionResult<void>> {
-  await requireWorkspaceAdmin();
+  // EPIC 2026-10-21: authority is checked on the TARGET workspace below (requireWorkspaceAdminFor), after this action's own
+  // session check; the caller's ACTIVE workspace is irrelevant to it.
   const session = await auth();
   if (!session?.user?.id) return { ok: false, error: "unauthorized" };
   // The orgId comes from the client: only a workspace this user may act in.

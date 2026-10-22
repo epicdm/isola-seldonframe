@@ -37,7 +37,7 @@ import { buyerSetupPath } from "@/lib/marketplace/buyer/buyer-routes";
 import { hasDeclaredTemplateVariables } from "@/lib/agent-templates/generalize";
 import { hasOrgInstalledListing, markOrgInstalledListing, provisionBuyerAgentFromListing, finalizeSoulPurchaseFromWebhook, enableBlockForOrg } from "@/lib/marketplace/fulfillment";
 import type { ListingInstallRow } from "@/lib/marketplace/fulfillment";
-import { getOrgIdAsWorkspaceAdmin, requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
+import { getOrgIdAsWorkspaceAdminOrAnonymous, requireWorkspaceAdmin } from "@/lib/auth/require-workspace-role";
 import { serverSideDeps } from "@/lib/auth/server-side-deps";
 
 type GeneratedFile = { path: string; content: string };
@@ -309,11 +309,11 @@ export type BuyBoxAuthDeps = {
 
 export async function installAgentListingAction(
   input: { slug: string },
-  _deps: BuyBoxAuthDeps = { getCurrentUser, getOrgId: getOrgIdAsWorkspaceAdmin },
+  _deps: BuyBoxAuthDeps = { getCurrentUser, getOrgId: getOrgIdAsWorkspaceAdminOrAnonymous },
 ) {
   // EPIC 2026-10-21: injected deps are honoured only outside a request (unit tests); see lib/auth/server-side-deps.ts.
   // The production getOrgId is the owner/admin-guarded resolver; a logged-out visitor still gets the typed auth_required.
-  _deps = (await serverSideDeps(_deps)) ?? { getCurrentUser, getOrgId: getOrgIdAsWorkspaceAdmin };
+  _deps = (await serverSideDeps(_deps)) ?? { getCurrentUser, getOrgId: getOrgIdAsWorkspaceAdminOrAnonymous };
   assertWritable();
 
   const user = await _deps.getCurrentUser();
@@ -534,7 +534,9 @@ export async function finalizeMarketplacePurchaseReturnAction(formData: FormData
 }
 
 export async function finalizeSoulListingPurchaseReturnAction(formData: FormData) {
-  await requireWorkspaceAdmin();
+  // EPIC 2026-10-21: called from the PUBLIC soul-marketplace pages; a logged-out visitor falls through to this action's own
+  // session check (strict guard for everyone who is signed in without owner/admin standing).
+  await requireWorkspaceAdmin({ allowAnonymous: true });
   assertWritable();
 
   const user = await getCurrentUser();
@@ -581,7 +583,9 @@ export async function finalizeSoulListingPurchaseReturnAction(formData: FormData
 }
 
 export async function purchaseSoulListingAction(formData: FormData) {
-  await requireWorkspaceAdmin();
+  // EPIC 2026-10-21: called from the PUBLIC soul-marketplace pages; a logged-out visitor falls through to this action's own
+  // session check (strict guard for everyone who is signed in without owner/admin standing).
+  await requireWorkspaceAdmin({ allowAnonymous: true });
   assertWritable();
 
   const user = await getCurrentUser();
@@ -685,7 +689,9 @@ export async function purchaseSoulListingAction(formData: FormData) {
 }
 
 export async function submitSoulListingReviewAction(formData: FormData) {
-  await requireWorkspaceAdmin();
+  // EPIC 2026-10-21: called from the PUBLIC soul-marketplace pages; a logged-out visitor falls through to this action's own
+  // session check (strict guard for everyone who is signed in without owner/admin standing).
+  await requireWorkspaceAdmin({ allowAnonymous: true });
   assertWritable();
 
   const user = await getCurrentUser();
