@@ -574,7 +574,9 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
   test("rollback restores ownership, homes and memberships, and does NOT revive revoked sessions", async () => {
     const r = await T.rollbackWorkspaceOwnershipTransfer({ orgId: EPIC, transferActionId, actor: superActor });
     assert.equal(r.ok, true, JSON.stringify(r));
-    assert.deepEqual(await ownerState(), { owner: SUPER, superHome: EPIC, infoHome: INFO_HOME, members: [] });
+    // EPIC 2026-10-21 (staff access): info@ held an ADMIN membership BEFORE the transfer (the fixture grants it so its tokens are valid
+    // before the transfer); the rollback restores exactly that pre-transfer state, so the admin membership is back.
+    assert.deepEqual(await ownerState(), { owner: SUPER, superHome: EPIC, infoHome: INFO_HOME, members: [`${INFO}:admin`] });
     assert.equal((await one<{ role: string }>(sql`select role from users where id = ${INFO}::uuid`))?.role, "member", "rollback restores the recorded role");
     const validAfter = (await one<{ v: string }>(sql`select operator_sessions_valid_after v from organizations where id = ${EPIC}::uuid`))?.v;
     assert.ok(validAfter && new Date(validAfter).getTime() > cutoff, "the cut-off only moves forward");
