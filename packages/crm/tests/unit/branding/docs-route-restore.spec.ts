@@ -68,12 +68,21 @@ describe("bundled /docs on a branded host", () => {
     assert.ok(proxy.includes('"/docs/:path*"'));
   });
 
-  it("every sidebar link either resolves to a real page or is deliberately hidden (no dead link is introduced)", () => {
-    const sidebar = readFileSync(join(appDir, "docs", "docs-sidebar.tsx"), "utf8");
-    const hrefs = [...sidebar.matchAll(/href: "(\/docs[^"]*)"/g)].map((m) => m[1]);
-    assert.ok(hrefs.length > 20, `found ${hrefs.length} sidebar links`);
-    for (const h of hrefs) {
-      assert.ok(docsRoutes.includes(h), `${h} has no page`);
+  it("navigation never links to a hidden or missing docs page (sidebar and docs home)", () => {
+    for (const file of ["docs-sidebar.tsx", "page.tsx"]) {
+      const src = readFileSync(join(appDir, "docs", file), "utf8");
+      const hrefs = [...src.matchAll(/href[:=] ?"(\/docs[^"#]*)/g)].map((m) => m[1]).filter((h) => h !== "/docs");
+      assert.ok(hrefs.length > (file === "page.tsx" ? 10 : 20), `${file}: found ${hrefs.length} docs links`);
+      for (const h of hrefs) {
+        assert.ok(docsRoutes.includes(h), `${file}: ${h} has no page`);
+        assert.equal(shouldHideVendorMarketingPath(h, "Uplink"), false, `${file}: ${h} is hidden but linked`);
+      }
     }
+  });
+
+  it("the docs home states no upstream plan price (the billing section is gone from the home page)", () => {
+    const home = readFileSync(join(appDir, "docs", "page.tsx"), "utf8");
+    assert.equal(/\$(29|49|99|199|299)/.test(home), false);
+    assert.equal(home.includes("/docs/billing"), false);
   });
 });

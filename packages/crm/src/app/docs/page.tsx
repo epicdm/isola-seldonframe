@@ -24,7 +24,6 @@ import {
   Layout,
   Mail,
   Zap,
-  CreditCard,
   Code2,
   Users,
   GraduationCap,
@@ -207,16 +206,6 @@ export default function DocsHome() {
             { title: "API keys", description: "Programmatic access for custom integrations", href: "/docs#api" },
             { title: "Webhooks", description: "Push events to external services on booking/form submission/etc.", href: "/docs#webhooks" },
             { title: "GitHub", description: "Source code, examples, contributing guide", href: "https://github.com/seldonframe/seldonframe" },
-          ]}
-        />
-
-        <CategoryBlock
-          icon={<CreditCard className="size-5" />}
-          title="Billing"
-          items={[
-            { title: "Pricing", description: "Builder $29, Managed $49, Agency $99/$199/$299", href: "/docs/billing/pricing" },
-            { title: "Managed AI included", description: "AI is bundled on every plan — no key to paste, no usage wallet", href: "/docs/billing/pricing" },
-            { title: "Invoices", description: "Stripe customer portal for receipts + payment methods", href: "/docs/billing/invoices" },
           ]}
         />
       </section>

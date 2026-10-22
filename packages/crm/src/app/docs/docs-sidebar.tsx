@@ -104,15 +104,6 @@ const CATEGORIES: DocCategory[] = [
       { label: "Google Calendar", href: "/docs/integrations/google-calendar" },
     ],
   },
-  {
-    id: "billing",
-    label: "Billing & plans",
-    items: [
-      { label: "Pricing", href: "/docs/billing/pricing" },
-      { label: "Plan tiers", href: "/docs/billing/tiers" },
-      { label: "Invoices & receipts", href: "/docs/billing/invoices" },
-    ],
-  },
 ];
 
 export function DocsSidebar() {
