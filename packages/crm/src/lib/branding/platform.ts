@@ -120,7 +120,15 @@ const brandedMarketingPrefixes = [
   "/blog",
   "/guides",
   "/charts",
-  "/docs",
+  // The bundled product documentation under /docs is served on a branded host.
+  // Only the vendor-pricing articles stay hidden: /docs/billing/* states the
+  // upstream vendor's own plan prices and fees, which are not this operator's
+  // prices. /docs/mcp is the vendor builder-MCP onboarding path.
+  "/docs/billing",
+  "/docs/mcp",
+  // Served from the (marketing) route group with the vendor marketing shell.
+  "/docs/mcp-servers",
+  "/docs/quickstart",
   "/demo",
   "/compare",
   "/alternatives",
