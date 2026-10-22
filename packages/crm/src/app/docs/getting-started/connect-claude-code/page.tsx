@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Connect Claude Code.
 
-import { ArticleShell, Callout, CodeBlock, InAppLink, Step } from "../../article-shell";
+import { ArticleShell, Callout, CodeBlock, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export const metadata = {
   title: "Connect Claude Code · Docs",
@@ -16,6 +16,7 @@ export default function Page() {
       lede="SeldonFrame ships with an MCP server. Paste your token into Claude Code and build, test, publish, and operate client workspaces from natural language."
       githubPath="app/docs/getting-started/connect-claude-code/page.tsx"
     >
+      <UpstreamNotice kinds={["mcp", "plans", "hosts"]} />
       <h2>What you'll get</h2>
       <p>
         Once Claude Code is connected, you can say things like:
@@ -38,7 +39,7 @@ export default function Page() {
         It's an npm package. In any Claude Code project:
         <CodeBlock language="bash">{`claude mcp add seldonframe \\
   --transport http \\
-  --url https://app.seldonframe.com/api/mcp \\
+  --url https://uplink.epic.dm/api/mcp/v1 \\
   --header "Authorization: Bearer <your-token>"`}</CodeBlock>
         Or use the local stdio server (no token, scoped to a single
         workspace via env var):

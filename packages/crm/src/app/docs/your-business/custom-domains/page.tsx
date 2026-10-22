@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Custom domains.
 
-import { ArticleShell, Callout, CodeBlock, InAppLink, Step } from "../../article-shell";
+import { ArticleShell, Callout, CodeBlock, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -8,9 +8,10 @@ export default function Page() {
       category="Your business"
       categoryHref="/docs"
       title="Custom domains"
-      lede="Replace your-name.app.seldonframe.com with www.yourbiz.com. SSL is automatic, takes 5 minutes."
+      lede="Replace your-name.uplink.epic.dm with www.yourbiz.com. SSL is automatic, takes 5 minutes."
       githubPath="app/docs/your-business/custom-domains/page.tsx"
     >
+      <UpstreamNotice kinds={["domains", "hosts"]} />
       <h2>Setup</h2>
 
       <Step n={1} title="Add the domain in SeldonFrame">
@@ -59,7 +60,7 @@ export default function Page() {
 
       <h2>Subdomain still works</h2>
       <p>
-        Your <code>your-name.app.seldonframe.com</code> subdomain stays
+        Your <code>your-name.uplink.epic.dm</code> subdomain stays
         live as a backup, even after you set up a custom domain. Useful
         for testing.
       </p>

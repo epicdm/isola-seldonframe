@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Learn (footer link).
 
-import { ArticleShell, ComingSoon, InAppLink } from "../article-shell";
+import { ArticleShell, ComingSoon, InAppLink, UpstreamNotice } from "../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="Tutorials, video walkthroughs, and end-to-end guides for building real things on SeldonFrame."
       githubPath="app/docs/learn/page.tsx"
     >
+      <UpstreamNotice kinds={["signup"]} />
       <h2>Featured walkthroughs</h2>
       <p>
         Each is a complete, end-to-end build you can follow along with.

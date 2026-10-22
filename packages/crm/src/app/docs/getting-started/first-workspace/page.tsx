@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Build your first workspace.
 
-import { ArticleShell, Callout, InAppLink, Step } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export const metadata = {
   title: "Build your first workspace · Docs",
@@ -16,6 +16,7 @@ export default function Page() {
       lede="Start with a client URL, apply their brand and service facts, run the agent evals, publish, and hand off the workspace."
       githubPath="app/docs/getting-started/first-workspace/page.tsx"
     >
+      <UpstreamNotice kinds={["signup", "mcp", "hosts"]} />
       <h2>Step-by-step</h2>
 
       <Step n={1} title="Sign up as the agency operator">
@@ -46,7 +47,7 @@ export default function Page() {
 
       <Step n={5} title="Publish and hand off">
         The public site is available at{" "}
-        <code>your-workspace.app.seldonframe.com</code>. Want a custom
+        <code>your-workspace.uplink.epic.dm</code>. Want a custom
         domain like <code>www.clientbiz.com</code>? See{" "}
         <InAppLink href="/docs/your-business/custom-domains">Custom domains</InAppLink>.
         Keep the agency master view and invite the client to their branded

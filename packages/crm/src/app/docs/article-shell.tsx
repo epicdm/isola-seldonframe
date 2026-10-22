@@ -147,6 +147,31 @@ export function Callout({
   );
 }
 
+// Upstream instructions that do NOT apply to EPIC's Uplink deployment. One place for the wording.
+// Nothing here may claim that an integration is configured or usable for EPIC: say "check with EPIC".
+export const UPSTREAM_NOTICES = {
+  signup: `Sign up, "Start building" and similar steps describe upstream's hosted SeldonFrame service. They do not apply to EPIC's Uplink deployment. Ask EPIC how access to Uplink is arranged.`,
+  plans: `Plans, tiers, prices and plan limits mentioned in these docs are upstream SeldonFrame's. They are not EPIC's Uplink plans or prices. Ask EPIC for current terms.`,
+  keys: `Connecting your own Stripe, Twilio, Resend, Anthropic/OpenAI or Google accounts is upstream's self-service setup. Whether an integration is available to you on EPIC's Uplink, and how it is set up, is not described here: check with EPIC.`,
+  mcp: `The Claude Code / MCP quickstart is written for upstream's hosted SeldonFrame (its server address, tokens and tool list). Whether your account can use it on EPIC's Uplink: check with EPIC. Do not paste upstream tokens or addresses.`,
+  domains: `Custom-domain self-service is an upstream feature. Whether and how EPIC sets up a custom domain for your Uplink workspace: check with EPIC. Uplink workspace sites are served at <name>.uplink.epic.dm.`,
+  hosts: `Example addresses in this article may be upstream's. On Uplink the app is uplink.epic.dm and workspace sites are <name>.uplink.epic.dm. Any other path or snippet shown here that was not checked against Uplink is unverified: check with EPIC.`,
+} as const;
+
+export type UpstreamNoticeKind = keyof typeof UPSTREAM_NOTICES;
+
+export function UpstreamNotice({ kinds }: { kinds: UpstreamNoticeKind[] }) {
+  return (
+    <Callout variant="warn" title="Upstream instructions - not applicable to EPIC's Uplink">
+      <ul className="list-disc space-y-1 pl-5">
+        {kinds.map((kind) => (
+          <li key={kind}>{UPSTREAM_NOTICES[kind]}</li>
+        ))}
+      </ul>
+    </Callout>
+  );
+}
+
 /** Code block that wraps cleanly and looks like a terminal. */
 export function CodeBlock({ children, language }: { children: string; language?: string }) {
   return (

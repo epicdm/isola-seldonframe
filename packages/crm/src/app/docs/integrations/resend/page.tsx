@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Resend (email).
 
-import { ArticleShell, Callout, CodeBlock, InAppLink, Step } from "../../article-shell";
+import { ArticleShell, Callout, CodeBlock, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="Send transactional and marketing email from your own domain. SeldonFrame uses Resend under the hood — fast, deliverable, modern API."
       githubPath="app/docs/integrations/resend/page.tsx"
     >
+      <UpstreamNotice kinds={["keys"]} />
       <h2>Setup</h2>
 
       <Step n={1} title="Get a Resend API key">

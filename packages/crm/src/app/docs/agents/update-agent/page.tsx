@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Updating an agent.
 
-import { ArticleShell, Callout, CodeBlock, InAppLink } from "../../article-shell";
+import { ArticleShell, Callout, CodeBlock, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="Edit personality, swap models, add a tool, raise prices. Every change re-runs the eval suite — your live agent never silently regresses."
       githubPath="app/docs/agents/update-agent/page.tsx"
     >
+      <UpstreamNotice kinds={["mcp"]} />
       <h2>Three ways to update</h2>
 
       <h3>1. Through Claude Code (fastest)</h3>

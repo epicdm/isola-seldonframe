@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Booking pages.
 
-import { ArticleShell, Callout, InAppLink, Step } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="Calendly-style scheduling, but native to your CRM. Bookings create real CRM records, fire 24h reminder workflows, and feed your AI agent."
       githubPath="app/docs/pages/booking/page.tsx"
     >
+      <UpstreamNotice kinds={["hosts"]} />
       <h2>What you get</h2>
       <p>
         Each booking page is a public URL where customers pick a time
@@ -37,7 +38,7 @@ export default function Page() {
       </Step>
       <Step n={4} title="Share the link">
         Each booking type has a public URL like{" "}
-        <code>acme-hvac.app.seldonframe.com/book/diagnostic</code>. Share
+        <code>acme-hvac.uplink.epic.dm/book/diagnostic</code>. Share
         it directly, embed it on a page, or hand it to your chatbot.
       </Step>
 

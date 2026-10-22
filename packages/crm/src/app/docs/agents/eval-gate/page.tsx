@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Eval gate (safety).
 
-import { ArticleShell, Callout, InAppLink, Step } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="Agents only flip to live after passing an automated eval suite. The default threshold is 87.5% (7 of 8 scenarios). It's the difference between a demo and production."
       githubPath="app/docs/agents/eval-gate/page.tsx"
     >
+      <UpstreamNotice kinds={["mcp"]} />
       <h2>Why we gate publish</h2>
       <p>
         A chatbot that hallucinates a price, makes up a policy, or says

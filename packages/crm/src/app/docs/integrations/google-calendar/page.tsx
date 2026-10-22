@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Google Calendar.
 
-import { ArticleShell, Callout, InAppLink, Step } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="Two-way sync with Google Calendar. Bookings appear there. Busy events block availability here. One OAuth click, no manual feed URLs."
       githubPath="app/docs/integrations/google-calendar/page.tsx"
     >
+      <UpstreamNotice kinds={["keys"]} />
       <h2>Setup</h2>
 
       <Step n={1} title="Connect">

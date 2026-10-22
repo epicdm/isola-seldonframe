@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Build a chatbot.
 
-import { ArticleShell, Callout, CodeBlock, InAppLink, Step } from "../../article-shell";
+import { ArticleShell, Callout, CodeBlock, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="A SeldonFrame chatbot is a Soul (who it is) plus a Brain (which LLM and key) plus tools (what it can do). Build one in a single Claude Code prompt."
       githubPath="app/docs/agents/build-chatbot/page.tsx"
     >
+      <UpstreamNotice kinds={["mcp"]} />
       <h2>The fastest path</h2>
       <p>
         Open Claude Code and say what the chatbot is for. Be specific

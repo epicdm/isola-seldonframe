@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: The 3-minute demo.
 
-import { ArticleShell, Callout, InAppLink, Step } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export const metadata = {
   title: "The 3-minute demo · Docs",
@@ -16,6 +16,7 @@ export default function Page() {
       lede="Watch SeldonFrame go from sign-up to a live, eval-gated chatbot taking a real booking. Three minutes, zero clicks past sign-up — the rest is Claude Code."
       githubPath="app/docs/getting-started/demo/page.tsx"
     >
+      <UpstreamNotice kinds={["signup", "mcp", "hosts"]} />
       <h2>The flow</h2>
       <p>
         Here's what the demo video shows. You can run it yourself in
@@ -54,7 +55,7 @@ export default function Page() {
       <Step n={4} title="Embed on a site (15s)">
         Claude Code outputs a one-line embed snippet. Paste it into your
         existing website, or use the auto-generated landing page at{" "}
-        <code>acme-hvac.app.seldonframe.com</code>.
+        <code>acme-hvac.uplink.epic.dm</code>.
       </Step>
 
       <Step n={5} title="Take a booking (45s)">

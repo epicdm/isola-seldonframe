@@ -15,6 +15,7 @@
 // promise → first workspace → client handoff without guessing.
 
 import Link from "next/link";
+import { UpstreamNotice } from "./article-shell";
 import {
   Sparkles,
   Bot,
@@ -46,6 +47,8 @@ export default function DocsHome() {
           publish, and hand it off without rebuilding the stack every time.
         </p>
       </header>
+
+      <UpstreamNotice kinds={["signup", "plans", "keys", "mcp", "domains"]} />
 
       {/* POPULAR */}
       <section className="space-y-4" id="popular">
@@ -103,7 +106,7 @@ export default function DocsHome() {
           <Step
             num={4}
             title="Customize from the dashboard"
-            body="Open the dashboard at app.seldonframe.com, apply the client's brand, review the evals, and publish the workspace. Hand the client their branded portal while you keep the agency view."
+            body="Open the dashboard at uplink.epic.dm, apply the client's brand, review the evals, and publish the workspace. Hand the client their branded portal while you keep the agency view."
             isLast
           />
         </div>
@@ -239,10 +242,10 @@ export default function DocsHome() {
           </p>
           <div className="flex flex-wrap justify-center gap-3 pt-2">
             <Link
-              href="/#hero-form"
+              href="/login"
               className="inline-flex h-10 items-center px-5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
             >
-              Start building
+              Sign in to Uplink
             </Link>
             <Link
               href="https://seldonframe.com"

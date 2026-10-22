@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: What is SeldonFrame.
 
-import { ArticleShell, Callout, InAppLink } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export const metadata = {
   title: "What is SeldonFrame · Docs",
@@ -16,6 +16,7 @@ export default function Page() {
       lede="The agent-native, open-source alternative to GoHighLevel for agencies: deploy a branded website, booking flow, CRM, intake, and agent for every client from one workspace."
       githubPath="app/docs/getting-started/what-is-seldonframe/page.tsx"
     >
+      <UpstreamNotice kinds={["signup", "plans", "hosts"]} />
       <h2>The short version</h2>
       <p>
         Agencies usually stitch together a CRM, website builder, scheduler,
@@ -38,7 +39,7 @@ export default function Page() {
           <strong>A CRM</strong> for your contacts, deals, and bookings.
         </li>
         <li>
-          <strong>A public website</strong> at <code>your-name.app.seldonframe.com</code>{" "}
+          <strong>A public website</strong> at <code>your-name.uplink.epic.dm</code>{" "}
           (or the client's custom domain) with landing pages, intake forms, and
           booking pages.
         </li>

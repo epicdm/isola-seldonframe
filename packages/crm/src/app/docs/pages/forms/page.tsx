@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Forms & lead capture.
 
-import { ArticleShell, Callout, InAppLink, Step } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="Build intake forms in 30 seconds. Submissions land in your CRM, fire automations, and notify your team. No third-party form builder needed."
       githubPath="app/docs/pages/forms/page.tsx"
     >
+      <UpstreamNotice kinds={["hosts"]} />
       <h2>The basics</h2>
       <p>
         A form in SeldonFrame is a list of fields plus a destination. The
@@ -37,11 +38,7 @@ export default function Page() {
         </ul>
       </Step>
       <Step n={4} title="Embed it">
-        Drop the form on any Seldon page (it's a block). Or copy the embed
-        snippet and paste on an external site:
-        <pre className="my-3 overflow-x-auto rounded-lg border bg-muted/30 px-3 py-2 text-xs">
-          {`<iframe src="https://app.seldonframe.com/embed/form/frm_abc123" width="100%" height="500"></iframe>`}
-        </pre>
+        Drop the form on any Seldon page (it's a block). Embedding a form on an external site by iframe is described upstream with an address that this Uplink build does not serve. Check with EPIC before relying on it.
       </Step>
 
       <Callout variant="tip" title="Spam protection built in">

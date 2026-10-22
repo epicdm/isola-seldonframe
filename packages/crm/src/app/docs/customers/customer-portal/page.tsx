@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Customer Portal.
 
-import { ArticleShell, Callout, InAppLink } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="A self-serve area where your customers manage their bookings, see invoices, message your agent, and update their info. One link, one login."
       githubPath="app/docs/customers/customer-portal/page.tsx"
     >
+      <UpstreamNotice kinds={["domains", "hosts"]} />
       <h2>What customers see</h2>
       <p>
         When a customer logs into your portal, they see:
@@ -31,9 +32,7 @@ export default function Page() {
       </p>
 
       <Callout variant="info" title="Brand-themed, on your domain">
-        The portal lives at <code>portal.yourbiz.com</code> (or
-        <code>your-name.app.seldonframe.com/portal</code>). Same brand
-        colors, logo, and theme as your public site.
+        Upstream places the portal on your own domain (for example <code>portal.yourbiz.com</code>) or at <code>/portal</code> on your workspace site. The <code>/portal</code> path is not served on Uplink workspace sites: ask EPIC for your portal address. Same brand colors, logo, and theme as your public site.
       </Callout>
 
       <h2>What you control</h2>

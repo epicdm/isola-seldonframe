@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Twilio (SMS).
 
-import { ArticleShell, Callout, ComingSoon, InAppLink } from "../../article-shell";
+import { ArticleShell, Callout, ComingSoon, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="Send SMS from your business number for booking reminders, follow-ups, and one-off messages. Voice and AI-powered SMS conversations are next."
       githubPath="app/docs/integrations/twilio/page.tsx"
     >
+      <UpstreamNotice kinds={["keys"]} />
       <h2>Setup</h2>
       <p>
         <InAppLink href="/settings/integrations">Settings → Integrations</InAppLink>{" "}

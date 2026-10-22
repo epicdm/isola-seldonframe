@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Voice + SMS (coming soon).
 
-import { ArticleShell, ComingSoon, InAppLink } from "../../article-shell";
+import { ArticleShell, ComingSoon, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="The same agent you build today will soon answer the phone and reply to texts. Same Soul, same eval gate, three new transports."
       githubPath="app/docs/agents/voice-sms/page.tsx"
     >
+      <UpstreamNotice kinds={["keys"]} />
       <ComingSoon>
         Voice and SMS transports are on the post-launch roadmap. The
         infrastructure (Twilio integration for SMS, Vapi/Retell for voice)

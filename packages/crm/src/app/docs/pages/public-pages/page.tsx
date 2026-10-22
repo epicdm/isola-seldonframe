@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Public pages.
 
-import { ArticleShell, Callout, InAppLink, Step } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -8,13 +8,14 @@ export default function Page() {
       category="Pages & website"
       categoryHref="/docs"
       title="Public pages"
-      lede="Every workspace gets a public site at your-name.app.seldonframe.com. Add landing pages, services pages, blog posts — all themed from your brand."
+      lede="Every workspace gets a public site at your-name.uplink.epic.dm. Add landing pages, services pages, blog posts — all themed from your brand."
       githubPath="app/docs/pages/public-pages/page.tsx"
     >
+      <UpstreamNotice kinds={["signup", "hosts"]} />
       <h2>Your subdomain</h2>
       <p>
         When you create a workspace called "Acme HVAC," you immediately
-        get <code>acme-hvac.app.seldonframe.com</code>. It's live the
+        get <code>acme-hvac.uplink.epic.dm</code>. It's live the
         moment you sign up — with a starter homepage that pulls your
         business name, brand color, and logo.
       </p>
@@ -34,7 +35,7 @@ export default function Page() {
       </Step>
       <Step n={4} title="Set the slug and publish">
         <code>/services/furnace-repair</code> → live at{" "}
-        <code>acme-hvac.app.seldonframe.com/services/furnace-repair</code>.
+        <code>acme-hvac.uplink.epic.dm/services/furnace-repair</code>.
       </Step>
 
       <h2>Through Claude Code</h2>

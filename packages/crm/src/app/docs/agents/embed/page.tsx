@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Embedding on your site.
 
-import { ArticleShell, Callout, CodeBlock, InAppLink } from "../../article-shell";
+import { ArticleShell, Callout, CodeBlock, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="One script tag. The chatbot bubble appears on any site you control. Brand-themed, mobile-friendly, latency-tolerant."
       githubPath="app/docs/agents/embed/page.tsx"
     >
+      <UpstreamNotice kinds={["hosts"]} />
       <h2>The snippet</h2>
       <p>
         Open <InAppLink href="/agents">Agents</InAppLink> → pick a live agent
@@ -18,11 +19,7 @@ export default function Page() {
         <code>&lt;/body&gt;</code> tag on any page where you want the bot:
       </p>
 
-      <CodeBlock language="html">{`<script async
-  src="https://app.seldonframe.com/embed.js"
-  data-agent="agt_abc123"
-  data-position="bottom-right">
-</script>`}</CodeBlock>
+      <CodeBlock language="html">{`<script src="https://uplink.epic.dm/api/v1/public/agent/WORKSPACE--AGENT/embed.js" async></script>`}</CodeBlock>
 
       <p>
         That's it. The bubble appears in the bottom-right corner. Click
@@ -32,26 +29,13 @@ export default function Page() {
 
       <h2>Customization</h2>
       <p>
-        The embed accepts data attributes for common tweaks:
+        The <code>data-position</code>, <code>data-greeting-delay</code> and <code>data-context</code> options described upstream are not read by the embed script in this build, so they are not documented here.
       </p>
-      <ul>
-        <li><code>data-position</code> — <code>bottom-right</code> (default), <code>bottom-left</code>, <code>inline</code> (mounts wherever the script is placed instead of floating).</li>
-        <li><code>data-greeting-delay</code> — milliseconds before the bot proactively greets a visitor. <code>0</code> = on load. <code>-1</code> = never auto-greet.</li>
-        <li><code>data-context</code> — a JSON object the agent gets at conversation start. Useful for passing the current page URL, the visitor's known email if they're logged in, or campaign UTM params.</li>
-      </ul>
-
-      <CodeBlock language="html">{`<script async
-  src="https://app.seldonframe.com/embed.js"
-  data-agent="agt_abc123"
-  data-position="bottom-right"
-  data-greeting-delay="8000"
-  data-context='{"page":"/services/furnace-repair","utm":"google-ads"}'>
-</script>`}</CodeBlock>
 
       <h2>SeldonFrame-hosted pages</h2>
       <Callout variant="tip" title="No snippet needed">
         If your public site is a SeldonFrame-hosted page (at{" "}
-        <code>your-workspace.app.seldonframe.com</code> or your custom
+        <code>your-workspace.uplink.epic.dm</code> or your custom
         domain), the chatbot is wired automatically. You just toggle it
         on/off in <a href="/landing">Pages → Settings</a>.
       </Callout>
@@ -59,13 +43,13 @@ export default function Page() {
       <h2>Custom domains and CSP</h2>
       <p>
         If your site has a strict Content-Security-Policy, you'll need to
-        allow <code>app.seldonframe.com</code> as a script source and
+        allow <code>uplink.epic.dm</code> as a script source and
         connect source. Minimal example:
       </p>
       <CodeBlock language="text">{`Content-Security-Policy:
-  script-src 'self' https://app.seldonframe.com;
-  connect-src 'self' https://app.seldonframe.com wss://app.seldonframe.com;
-  frame-src 'self' https://app.seldonframe.com;`}</CodeBlock>
+  script-src 'self' https://uplink.epic.dm;
+  connect-src 'self' https://uplink.epic.dm wss://uplink.epic.dm;
+  frame-src 'self' https://uplink.epic.dm;`}</CodeBlock>
 
       <h2>What conversations are recorded</h2>
       <p>

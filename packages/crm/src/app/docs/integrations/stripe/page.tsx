@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Stripe (payments).
 
-import { ArticleShell, Callout, InAppLink } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="Connect Stripe to invoice customers, accept payments through your booking pages, and trigger automations on paid / failed events."
       githubPath="app/docs/integrations/stripe/page.tsx"
     >
+      <UpstreamNotice kinds={["keys"]} />
       <h2>Setup</h2>
       <p>
         <InAppLink href="/settings/integrations">Settings → Integrations</InAppLink>{" "}

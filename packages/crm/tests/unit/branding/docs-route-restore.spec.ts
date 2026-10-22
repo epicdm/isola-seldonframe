@@ -96,7 +96,7 @@ describe("bundled /docs on a branded host", () => {
     assert.equal(/\$(29|49|99|199|299)\b/.test(home), false);
     assert.equal(home.includes("/docs/billing"), false);
   });
-  it("in-article links to hidden pages are exactly the known, fail-closed (404) set - a new one fails this test", () => {
+  it("no reachable page links to a hidden page (the known dead links were removed) - a new one fails this test", () => {
     const found: string[] = [];
     for (const file of walk(join(appDir, "docs")).concat(walk(join(appDir, "(marketing)", "docs")))) {
       const route = routeOf(file);
@@ -106,9 +106,6 @@ describe("bundled /docs on a branded host", () => {
         if (shouldHideVendorMarketingPath(m[1], "Uplink")) found.push(`${route} -> ${m[1]}`);
       }
     }
-    assert.deepEqual(found.sort(), [
-      "/docs/your-business/team -> /docs/billing/tiers",
-      "/docs/your-business/team -> /docs/billing/tiers",
-    ].sort()); // team links to Plan tiers twice (line 38 and the Next list)
+    assert.deepEqual(found, []); // the two team-page links to the hidden Plan tiers page were removed
   });
 });

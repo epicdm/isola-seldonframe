@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Workspaces.
 
-import { ArticleShell, InAppLink } from "../../article-shell";
+import { ArticleShell, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="A workspace is one isolated business: its own contacts, agents, pages, brand, and domain. You can have as many as you need under one account."
       githubPath="app/docs/your-business/workspaces/page.tsx"
     >
+      <UpstreamNotice kinds={["plans"]} />
       <h2>Why workspaces</h2>
       <p>
         SeldonFrame is multi-tenant by design. One person can run several

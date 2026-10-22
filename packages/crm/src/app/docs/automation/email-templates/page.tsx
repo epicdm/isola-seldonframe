@@ -27,7 +27,7 @@ export default function Page() {
 
       <h2>Editing</h2>
       <p>
-        <InAppLink href="/emails/templates">Email → Templates</InAppLink>{" "}
+        <InAppLink href="/emails">Email → Templates</InAppLink>{" "}
         → pick a template. WYSIWYG editor with your brand applied.
         Variables wrap in curlies: <code>{`{{contact.first_name}}`}</code>,{" "}
         <code>{`{{booking.starts_at}}`}</code>, <code>{`{{deal.value}}`}</code>.

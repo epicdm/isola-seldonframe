@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Team members.
 
-import { ArticleShell, Callout, InAppLink } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="Invite teammates by email. Pick a role: owner, admin, editor, or viewer. Roles map to what they can do across the workspace."
       githubPath="app/docs/your-business/team/page.tsx"
     >
+      <UpstreamNotice kinds={["plans"]} />
       <h2>Inviting</h2>
       <p>
         <InAppLink href="/settings/team">Settings → Team</InAppLink> →
@@ -34,8 +35,7 @@ export default function Page() {
       <h2>SSO and provisioning</h2>
       <p>
         Email + password and Google sign-in are the supported methods
-        today. SAML SSO is on the roadmap for the Agency tier — see{" "}
-        <a href="/docs/billing/tiers">Plan tiers</a>.
+        today. SAML SSO is on upstream's roadmap.
       </p>
 
       <h2>Removing a member</h2>
@@ -49,7 +49,6 @@ export default function Page() {
       <h2>Next</h2>
       <ul>
         <li><InAppLink href="/docs/your-business/workspaces">Workspaces</InAppLink></li>
-        <li><InAppLink href="/docs/billing/tiers">Plan tiers</InAppLink></li>
       </ul>
     </ArticleShell>
   );
