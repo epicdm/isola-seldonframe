@@ -125,6 +125,8 @@ const brandedMarketingPrefixes = [
   // upstream vendor's own plan prices and fees, which are not this operator's
   // prices. /docs/mcp is the vendor builder-MCP onboarding path.
   "/docs/billing",
+  // States vendor plan pricing ("included on every plan", "no usage wallet") that is not this operator's.
+  "/docs/integrations/llm",
   "/docs/mcp",
   // Served from the (marketing) route group with the vendor marketing shell.
   "/docs/mcp-servers",

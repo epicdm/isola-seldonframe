@@ -191,7 +191,6 @@ export default function DocsHome() {
           icon={<Zap className="size-5" />}
           title="Integrations"
           items={[
-            { title: "Anthropic / OpenAI", description: "Managed AI on hosted (no key); bring your own key when you self-host", href: "/docs/integrations/llm" },
             { title: "Stripe", description: "Accept payments for bookings, services, subscriptions", href: "/docs#stripe" },
             { title: "Twilio", description: "Send SMS reminders, confirmations, follow-ups", href: "/docs#twilio" },
             { title: "Google Calendar", description: "Two-way sync for bookings", href: "/docs#google" },

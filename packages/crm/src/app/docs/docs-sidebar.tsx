@@ -97,7 +97,6 @@ const CATEGORIES: DocCategory[] = [
     id: "integrations",
     label: "Integrations",
     items: [
-      { label: "Anthropic / OpenAI", href: "/docs/integrations/llm" },
       { label: "Stripe (payments)", href: "/docs/integrations/stripe" },
       { label: "Twilio (SMS)", href: "/docs/integrations/twilio" },
       { label: "Resend (email)", href: "/docs/integrations/resend" },

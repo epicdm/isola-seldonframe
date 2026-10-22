@@ -30,7 +30,7 @@ function routeOf(file: string): string {
 const docsRoutes = walk(appDir).map(routeOf).filter((r) => r === "/docs" || r.startsWith("/docs/")).sort();
 
 // Decided in the same change as the restoration; every other docs page must be reachable.
-const stillHidden = new Set(["/docs/billing/pricing", "/docs/billing/tiers", "/docs/billing/invoices", "/docs/mcp-servers", "/docs/quickstart"]);
+const stillHidden = new Set(["/docs/billing/pricing", "/docs/billing/tiers", "/docs/billing/invoices", "/docs/integrations/llm", "/docs/mcp-servers", "/docs/quickstart"]);
 
 describe("bundled /docs on a branded host", () => {
   it("positive control: the docs pages exist on disk (an empty list would make every assertion below vacuous)", () => {
@@ -38,6 +38,8 @@ describe("bundled /docs on a branded host", () => {
     assert.ok(docsRoutes.includes("/docs"));
     assert.ok(docsRoutes.includes("/docs/getting-started/first-workspace"));
     assert.ok(docsRoutes.includes("/docs/billing/pricing"));
+    assert.ok(docsRoutes.includes("/docs/quickstart") && docsRoutes.includes("/docs/mcp-servers"), "(marketing) group pages must be present, or their hidden-ness is untested");
+    assert.ok(docsRoutes.includes("/docs/integrations/llm"));
   });
 
   it("serves /docs and every docs article except the vendor-pricing and vendor-marketing ones", () => {
@@ -84,5 +86,22 @@ describe("bundled /docs on a branded host", () => {
     const home = readFileSync(join(appDir, "docs", "page.tsx"), "utf8");
     assert.equal(/\$(29|49|99|199|299)/.test(home), false);
     assert.equal(home.includes("/docs/billing"), false);
+  });
+  it("in-article links to hidden pages are exactly the known, fail-closed (404) set - a new one fails this test", () => {
+    const found: string[] = [];
+    for (const file of walk(join(appDir, "docs")).concat(walk(join(appDir, "(marketing)", "docs")))) {
+      const route = routeOf(file);
+      if (shouldHideVendorMarketingPath(route, "Uplink")) continue; // a hidden page's own links are never served
+      const src = readFileSync(file, "utf8");
+      for (const m of src.matchAll(/href=\{?"(\/docs[^"#]*)/g)) {
+        if (shouldHideVendorMarketingPath(m[1], "Uplink")) found.push(`${route} -> ${m[1]}`);
+      }
+    }
+    assert.deepEqual(found.sort(), [
+      "/docs/getting-started/connect-claude-code -> /docs/integrations/llm",
+      "/docs/your-business/team -> /docs/billing/tiers",
+      "/docs/your-business/team -> /docs/billing/tiers",
+      "/docs/your-business/workspaces -> /docs/integrations/llm",
+    ].sort()); // team links to Plan tiers twice (line 38 and the Next list)
   });
 });
