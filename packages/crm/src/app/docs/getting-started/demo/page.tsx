@@ -36,7 +36,7 @@ export default function Page() {
         Open Claude Code and say:{" "}
         <em>"Build me an Acme HVAC website chatbot. It should answer FAQs
         about furnace and AC repair, give pricing for diagnostic visits ($89),
-        and book appointments."</em> AI is included — no key to set up.
+        and book appointments."</em>
         <br /><br />
         Claude Code calls{" "}
         <code>build_website_chatbot</code> — one tool that creates the

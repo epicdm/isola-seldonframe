@@ -93,7 +93,7 @@ describe("bundled /docs on a branded host", () => {
 
   it("the docs home states no upstream plan price (the billing section is gone from the home page)", () => {
     const home = readFileSync(join(appDir, "docs", "page.tsx"), "utf8");
-    assert.equal(/\$(29|49|99|199|299)/.test(home), false);
+    assert.equal(/\$(29|49|99|199|299)\b/.test(home), false);
     assert.equal(home.includes("/docs/billing"), false);
   });
   it("in-article links to hidden pages are exactly the known, fail-closed (404) set - a new one fails this test", () => {
@@ -107,7 +107,6 @@ describe("bundled /docs on a branded host", () => {
       }
     }
     assert.deepEqual(found.sort(), [
-      "/docs/getting-started/connect-claude-code -> /docs/integrations/llm",
       "/docs/your-business/team -> /docs/billing/tiers",
       "/docs/your-business/team -> /docs/billing/tiers",
     ].sort()); // team links to Plan tiers twice (line 38 and the Next list)

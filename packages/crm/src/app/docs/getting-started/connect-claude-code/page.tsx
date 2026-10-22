@@ -73,13 +73,6 @@ claude mcp add seldonframe --command "npx @seldonframe/mcp"`}</CodeBlock>
         <li><strong>Observability</strong> — read agent conversations, run telemetry queries, inspect eval failures.</li>
       </ul>
 
-      <Callout variant="info" title="AI is included">
-        On hosted SeldonFrame, your agent's brain runs on managed AI —
-        there's no LLM key to paste and no token bill to watch. (If you{" "}
-        <a href="/docs/integrations/llm">self-host</a> instead, that's the
-        one path where you bring your own Anthropic or OpenAI key.)
-      </Callout>
-
       <h2>Next</h2>
       <ul>
         <li><InAppLink href="/docs/agents/build-chatbot">Build a chatbot</InAppLink></li>
