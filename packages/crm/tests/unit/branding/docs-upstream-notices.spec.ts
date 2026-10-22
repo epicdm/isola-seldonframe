@@ -83,6 +83,22 @@ describe("upstream-instruction notices on reachable docs pages", () => {
     for (const f of reachable) assert.equal(read(f).includes("not applicable to EPIC"), false, f);
   });
 
+  it("EVERY docs article and the docs home carry the general upstream line (one shared constant, check-with-EPIC wording, no availability claim)", () => {
+    const m = shell.match(/export const UPSTREAM_GENERAL = `([^`]*)`/);
+    assert.ok(m, "UPSTREAM_GENERAL constant");
+    assert.ok(/check with EPIC/.test(m![1]) && /upstream/i.test(m![1]));
+    assert.equal(CLAIM.test(m![1]), false);
+    const body = shell.slice(shell.indexOf("export function ArticleShell("));
+    assert.ok(/<UpstreamGeneral \/>\s*\{children\}/.test(body.slice(0, body.indexOf("export function InAppLink"))), "ArticleShell renders it before the content");
+    const home = readFileSync(join(docsDir, "page.tsx"), "utf8");
+    assert.ok(home.includes("<UpstreamGeneral />"));
+    // every reachable article page goes through ArticleShell (so the line cannot be skipped)
+    for (const f of reachable) {
+      if (routeOf(f) === "/docs") continue;
+      assert.ok(read(f).includes("<ArticleShell"), `${routeOf(f)} uses ArticleShell`);
+    }
+  });
+
   it("each listed page renders the notice with exactly its kinds (and imports it)", () => {
     for (const [rel, kinds] of Object.entries(NOTICE_PAGES)) {
       const src = readFileSync(join(docsDir, rel), "utf8");
@@ -124,7 +140,7 @@ describe("upstream-instruction notices on reachable docs pages", () => {
     const embedText = embed.replace(/<code>data-[a-z-]+<\/code>/g, "");
     assert.equal(/wired automatically|known\s+email if you passed/.test(embedText), false, "embed: unverified automatic wiring / data-context claims");
     const domains = readFileSync(join(docsDir, "your-business", "custom-domains", "page.tsx"), "utf8");
-    assert.equal(/vercel-dns|76\.76\.21\.21|SSL is automatic|takes 5 minutes/.test(domains), false, "custom-domains: upstream/Vercel DNS values and unverified SSL promises");
+    assert.equal(/vercel-dns|76\.76\.21\.21|SSL is automatic|takes 5 minutes|Usually under 5 minutes|What works at your custom domain|stays\s+live/.test(domains), false, "custom-domains: upstream/Vercel DNS values and unverified promises");
     const mcp = readFileSync(join(docsDir, "getting-started", "connect-claude-code", "page.tsx"), "utf8");
     assert.ok(mcp.includes("--url https://uplink.epic.dm/api/mcp/v1"));
     assert.ok(statSync(join(appDir, "api", "mcp", "v1", "route.ts")).isFile());
@@ -149,8 +165,7 @@ describe("upstream-instruction notices on reachable docs pages", () => {
     const ids = new Set([...home.matchAll(/id="([a-z0-9-]+)"/g)].map((m) => m[1]));
     const deadAnchors = new Set<string>();
     for (const f of reachable) for (const m of read(f).matchAll(/href[=:] ?\{?"\/docs#([a-z0-9-]+)"/g)) if (!ids.has(m[1])) deadAnchors.add(m[1]);
-    // Known follow-up: upstream placeholder anchors on the docs home (the page loads; the anchor just does not scroll). A NEW one fails.
-    assert.deepEqual([...deadAnchors].sort(), ["agents", "api", "automations", "booking-pages", "case-studies", "claude-code", "contacts", "email", "google", "reminders", "soul", "stripe", "suppression", "templates", "twilio", "webhooks", "workspaces"]);
+    assert.deepEqual([...deadAnchors].sort(), [], "every /docs#anchor target exists on the docs home");
     assert.ok(ids.has("popular") && ids.has("learn"), "control: the home's real ids are read");
     // control: the checker would flag the three links this change removed
     for (const gone of ['href="/emails/templates"', 'href="/#hero-form"', 'href="/docs/billing/tiers"']) {

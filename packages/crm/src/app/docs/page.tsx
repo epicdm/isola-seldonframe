@@ -15,7 +15,7 @@
 // promise → first workspace → client handoff without guessing.
 
 import Link from "next/link";
-import { UpstreamNotice } from "./article-shell";
+import { UpstreamGeneral, UpstreamNotice } from "./article-shell";
 import {
   Sparkles,
   Bot,
@@ -47,6 +47,8 @@ export default function DocsHome() {
           publish, and hand it off without rebuilding the stack every time.
         </p>
       </header>
+
+      <UpstreamGeneral />
 
       <UpstreamNotice kinds={["signup", "plans", "keys", "mcp", "domains"]} />
 
@@ -117,40 +119,34 @@ export default function DocsHome() {
         <h2 className="text-base font-semibold text-foreground">Core concepts</h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <SmallCard
-            icon={<Sparkles className="size-4" />}
-            title="Soul"
-            description="The auto-derived business identity (industry, voice, services, pricing) that shapes every public surface."
-            href="/docs#soul"
-          />
-          <SmallCard
             icon={<Bot className="size-4" />}
             title="Agents"
             description="AI assistants that talk to your customers — chatbots, voice receptionists (soon), SMS bots (soon)."
-            href="/docs#agents"
+            href="/docs/agents/build-chatbot"
           />
           <SmallCard
             icon={<Boxes className="size-4" />}
             title="Templates"
             description="Pre-built page sections (hero / services / FAQ / pricing) and workflow archetypes."
-            href="/docs#templates"
+            href="/docs/pages/templates"
           />
           <SmallCard
             icon={<Building2 className="size-4" />}
             title="Workspaces"
             description="One workspace = one business. Each gets its own subdomain, CRM, agents, and settings."
-            href="/docs#workspaces"
+            href="/docs/your-business/workspaces"
           />
           <SmallCard
             icon={<Users className="size-4" />}
             title="Customers"
             description="Your CRM — every booking, form submission, and chat creates a customer record."
-            href="/docs#contacts"
+            href="/docs/customers/contacts"
           />
           <SmallCard
             icon={<Calendar className="size-4" />}
             title="Bookings"
             description="Public booking page + calendar, with reschedule + cancel workflows."
-            href="/docs#booking-pages"
+            href="/docs/pages/booking"
           />
         </div>
       </section>
@@ -183,10 +179,9 @@ export default function DocsHome() {
           icon={<Mail className="size-5" />}
           title="Email & Automation"
           items={[
-            { title: "Send email", description: "One-off messages or saved templates; via Resend", href: "/docs#email" },
-            { title: "Automation rules", description: "Trigger-based workflows for follow-ups, reminders, alerts", href: "/docs#automations" },
-            { title: "Post-booking reminders", description: "24h-before durable reminder via Vercel Workflows", href: "/docs#reminders" },
-            { title: "Suppression list", description: "Email/phone opt-outs for compliance", href: "/docs#suppression" },
+            { title: "Send email", description: "One-off messages or saved templates; via Resend", href: "/docs/automation/email" },
+            { title: "Automation rules", description: "Trigger-based workflows for follow-ups, reminders, alerts", href: "/docs/automation/rules" },
+            { title: "Post-booking reminders", description: "24h-before durable reminder via Vercel Workflows", href: "/docs/automation/reminders" },
           ]}
         />
 
@@ -194,9 +189,9 @@ export default function DocsHome() {
           icon={<Zap className="size-5" />}
           title="Integrations"
           items={[
-            { title: "Stripe", description: "Accept payments for bookings, services, subscriptions", href: "/docs#stripe" },
-            { title: "Twilio", description: "Send SMS reminders, confirmations, follow-ups", href: "/docs#twilio" },
-            { title: "Google Calendar", description: "Two-way sync for bookings", href: "/docs#google" },
+            { title: "Stripe", description: "Accept payments for bookings, services, subscriptions", href: "/docs/integrations/stripe" },
+            { title: "Twilio", description: "Send SMS reminders, confirmations, follow-ups", href: "/docs/integrations/twilio" },
+            { title: "Google Calendar", description: "Two-way sync for bookings", href: "/docs/integrations/google-calendar" },
           ]}
         />
 
@@ -204,9 +199,7 @@ export default function DocsHome() {
           icon={<Code2 className="size-5" />}
           title="Developers"
           items={[
-            { title: "Claude Code MCP", description: "140+ tools exposed via Model Context Protocol", href: "/docs#claude-code" },
-            { title: "API keys", description: "Programmatic access for custom integrations", href: "/docs#api" },
-            { title: "Webhooks", description: "Push events to external services on booking/form submission/etc.", href: "/docs#webhooks" },
+            { title: "Claude Code MCP", description: "140+ tools exposed via Model Context Protocol", href: "/docs/getting-started/connect-claude-code" },
             { title: "GitHub", description: "Source code, examples, contributing guide", href: "https://github.com/seldonframe/seldonframe" },
           ]}
         />
@@ -227,7 +220,7 @@ export default function DocsHome() {
             icon={<BookOpen className="size-4" />}
             title="Customer stories"
             description="Real businesses running on SeldonFrame: HVAC, dental, coaching, agency."
-            href="/docs#case-studies"
+            href="/docs/learn"
           />
         </div>
       </section>

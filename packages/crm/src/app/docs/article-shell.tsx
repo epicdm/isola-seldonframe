@@ -58,7 +58,8 @@ export function ArticleShell({
         ) : null}
       </header>
 
-      <div className="docs-prose">{children}</div>
+      <div className="docs-prose"><UpstreamGeneral />
+      {children}</div>
 
       <footer className="mt-16 border-t pt-8 flex items-center justify-between gap-4 text-sm">
         <Link
@@ -159,6 +160,13 @@ export const UPSTREAM_NOTICES = {
 } as const;
 
 export type UpstreamNoticeKind = keyof typeof UPSTREAM_NOTICES;
+
+// Shown on EVERY docs page (ArticleShell and the docs home): the pages describe upstream's product, not EPIC's service.
+export const UPSTREAM_GENERAL = `These docs describe upstream SeldonFrame's product. The features, steps and timings described may not be available or set up on EPIC's Uplink: check with EPIC before relying on them.`;
+
+export function UpstreamGeneral() {
+  return <p className="my-4 rounded-md border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">{UPSTREAM_GENERAL}</p>;
+}
 
 export function UpstreamNotice({ kinds }: { kinds: UpstreamNoticeKind[] }) {
   return (

@@ -14,10 +14,8 @@ export default function Page() {
       <UpstreamNotice kinds={["domains", "hosts"]} />
       <h2>Setup</h2>
 
-      <Step n={1} title="Add the domain in SeldonFrame">
-        <InAppLink href="/settings/domains">Settings → Domains</InAppLink>{" "}
-        → "Add domain." Type <code>www.yourbiz.com</code>. SeldonFrame
-        gives you the DNS records to add.
+      <Step n={1} title="Ask EPIC to add the domain">
+        Upstream does this in <InAppLink href="/settings/domains">Settings → Domains</InAppLink> with "Add domain." On Uplink, ask EPIC first: whether you can do it yourself is not verified.
       </Step>
 
       <Step n={2} title="Add the DNS records at your registrar">
@@ -25,8 +23,7 @@ export default function Page() {
       </Step>
 
       <Step n={3} title="Wait for DNS to propagate">
-        Usually under 5 minutes, sometimes up to an hour. The Domains
-        page shows a green check when verification succeeds.
+        DNS changes take time to propagate. EPIC tells you when the domain is verified.
       </Step>
 
       <Step n={4} title="HTTPS">
@@ -40,23 +37,6 @@ export default function Page() {
         A records vs CNAMEs at root. Both will work, but www-primary is
         less likely to have edge cases.
       </Callout>
-
-      <h2>What works at your custom domain</h2>
-      <ul>
-        <li>All your public pages (landing pages, services, blog).</li>
-        <li>Your booking pages.</li>
-        <li>Your forms (when embedded as iframes from external sites,
-            the iframe URL becomes your custom domain).</li>
-        <li>The chatbot embed snippet — works the same as on the
-            subdomain.</li>
-      </ul>
-
-      <h2>Subdomain still works</h2>
-      <p>
-        Your <code>your-name.uplink.epic.dm</code> subdomain stays
-        live as a backup, even after you set up a custom domain. Useful
-        for testing.
-      </p>
 
       <h2>Next</h2>
       <ul>
