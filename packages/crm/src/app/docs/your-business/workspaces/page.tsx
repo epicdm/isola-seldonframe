@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Workspaces.
 
-import { ArticleShell, Callout, InAppLink } from "../../article-shell";
+import { ArticleShell, InAppLink } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -34,13 +34,6 @@ export default function Page() {
         pick a name, a slug (which becomes your subdomain), and a starter
         template. 60 seconds to a fully wired workspace.
       </p>
-
-      <Callout variant="tip" title="AI is included on every workspace">
-        On hosted SeldonFrame, managed AI comes with each workspace —
-        there's no per-workspace LLM key to set up or bill to track.
-        (Bringing your own Anthropic / OpenAI key is only for the{" "}
-        <a href="/docs/integrations/llm">self-host</a> path.)
-      </Callout>
 
       <h2>Permissions</h2>
       <p>

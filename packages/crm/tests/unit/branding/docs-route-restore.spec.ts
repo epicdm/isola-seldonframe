@@ -49,6 +49,15 @@ describe("bundled /docs on a branded host", () => {
     }
   });
 
+  it("hides exactly the billing root, exact /docs/mcp and their trailing-slash forms; never with an empty or default platform name", () => {
+    for (const p of ["/docs/billing", "/docs/billing/", "/docs/mcp", "/docs/mcp/", "/docs/integrations/llm/"]) {
+      assert.equal(shouldHideVendorMarketingPath(p, "Uplink"), true, p);
+      assert.equal(shouldHideVendorMarketingPath(p, ""), false, `${p} (empty name)`);
+      assert.equal(shouldHideVendorMarketingPath(p, "SeldonFrame"), false, `${p} (default name)`);
+    }
+    assert.equal(shouldHideVendorMarketingPath("/docs/billing-x", "Uplink"), false); // whole path segments only
+  });
+
   it("serves the trailing-slash form too (Next 308s /docs/ -> /docs; the gate strips the slash itself)", () => {
     assert.equal(shouldHideVendorMarketingPath("/docs/", "Uplink"), false);
     assert.equal(shouldHideVendorMarketingPath("/docs/billing/pricing/", "Uplink"), true);
@@ -101,7 +110,6 @@ describe("bundled /docs on a branded host", () => {
       "/docs/getting-started/connect-claude-code -> /docs/integrations/llm",
       "/docs/your-business/team -> /docs/billing/tiers",
       "/docs/your-business/team -> /docs/billing/tiers",
-      "/docs/your-business/workspaces -> /docs/integrations/llm",
     ].sort()); // team links to Plan tiers twice (line 38 and the Next list)
   });
 });
