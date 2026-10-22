@@ -89,21 +89,24 @@ describe("SLICE 1-a — deals stage move (1 site, lib/deals/stage-move.ts)", () 
   });
 });
 
-describe("SLICE 1-a — emails/actions.ts (5 sites)", () => {
-  test("line 139 email.suppressed — params.orgId", () => {
-    assertOrgIdExpr("src/lib/emails/actions.ts", 139, "params.orgId");
+// EPIC 2026-10-21 (staff access): the two send-path sites moved with sendEmailForOrg into lib/emails/emails-internal.ts (a server-internal
+// module, no longer a "use server" export); the three tracking sites stay in actions.ts. Same sites, same orgId expressions; only
+// the file/line anchors moved.
+describe("SLICE 1-a — emails/actions.ts + emails-internal.ts (5 sites)", () => {
+  test("line 142 email.suppressed (emails-internal.ts) — params.orgId", () => {
+    assertOrgIdExpr("src/lib/emails/emails-internal.ts", 142, "params.orgId");
   });
-  test("line 211 email.sent — params.orgId", () => {
-    assertOrgIdExpr("src/lib/emails/actions.ts", 211, "params.orgId");
+  test("line 214 email.sent (emails-internal.ts) — params.orgId", () => {
+    assertOrgIdExpr("src/lib/emails/emails-internal.ts", 214, "params.orgId");
   });
-  test("line 711 email.opened (markEmailOpened) — orgId", () => {
-    assertOrgIdExpr("src/lib/emails/actions.ts", 711, "orgId");
+  test("line 374 email.opened (markEmailOpened) — orgId", () => {
+    assertOrgIdExpr("src/lib/emails/actions.ts", 374, "orgId");
   });
-  test("line 732 email.opened (pixel) — row.orgId", () => {
-    assertOrgIdExpr("src/lib/emails/actions.ts", 732, "row.orgId");
+  test("line 395 email.opened (pixel) — row.orgId", () => {
+    assertOrgIdExpr("src/lib/emails/actions.ts", 395, "row.orgId");
   });
-  test("line 761 email.clicked — orgId", () => {
-    assertOrgIdExpr("src/lib/emails/actions.ts", 761, "orgId");
+  test("line 424 email.clicked — orgId", () => {
+    assertOrgIdExpr("src/lib/emails/actions.ts", 424, "orgId");
   });
 });
 
@@ -134,11 +137,13 @@ describe("SLICE 1-a — landing/actions.ts (5 sites)", () => {
   });
 });
 
-describe("SLICE 1-a — payments/actions.ts (2 sites)", () => {
-  test("line 206 booking.created (checkout return) — orgId", () => {
-    assertOrgIdExpr("src/lib/payments/actions.ts", 206, "orgId");
+// EPIC 2026-10-21 (staff access): the checkout-completed handler moved verbatim to lib/payments/payments-internal.ts (server-internal,
+// no longer a "use server" export). Same two sites; only the file/line anchors moved.
+describe("SLICE 1-a — payments/payments-internal.ts (2 sites)", () => {
+  test("line 150 booking.created (checkout return) — orgId", () => {
+    assertOrgIdExpr("src/lib/payments/payments-internal.ts", 150, "orgId");
   });
-  test("line 229 payment.completed — orgId", () => {
-    assertOrgIdExpr("src/lib/payments/actions.ts", 229, "orgId");
+  test("line 173 payment.completed — orgId", () => {
+    assertOrgIdExpr("src/lib/payments/payments-internal.ts", 173, "orgId");
   });
 });
