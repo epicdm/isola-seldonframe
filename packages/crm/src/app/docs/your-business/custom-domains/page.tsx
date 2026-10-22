@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Custom domains.
 
-import { ArticleShell, Callout, CodeBlock, InAppLink, Step, UpstreamNotice } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, Step, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -19,11 +19,11 @@ export default function Page() {
       </Step>
 
       <Step n={2} title="Add the DNS records at your registrar">
-        The records depend on where the workspace is hosted. Do not copy records from other sources: EPIC gives you the exact values for your domain.
+        The records depend on where the workspace is hosted. Do not copy records from other sources: check with EPIC for the exact values for your domain.
       </Step>
 
       <Step n={3} title="Wait for DNS to propagate">
-        DNS changes take time to propagate. EPIC tells you when the domain is verified.
+        DNS changes take time to propagate.
       </Step>
 
       <Step n={4} title="HTTPS">

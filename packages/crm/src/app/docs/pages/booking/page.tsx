@@ -8,7 +8,7 @@ export default function Page() {
       category="Pages & website"
       categoryHref="/docs"
       title="Booking pages"
-      lede="Calendly-style scheduling, but native to your CRM. Bookings create real CRM records, fire 24h reminder workflows, and feed your AI agent."
+      lede="Calendly-style scheduling, but native to your CRM. Bookings create CRM records and feed your AI agent (upstream description)."
       githubPath="app/docs/pages/booking/page.tsx"
     >
       <UpstreamNotice kinds={["keys", "hosts"]} />
@@ -56,7 +56,7 @@ export default function Page() {
         <li>Confirmation emails go out to both parties.</li>
         <li>
           A <strong>24-hour reminder workflow</strong> is scheduled via
-          Vercel Workflows. SMS (if Twilio is connected) or email (if
+          durable workflows. SMS (if Twilio is connected) or email (if
           Resend is connected) — see{" "}
           <a href="/docs/automation/reminders">Post-booking reminders</a>.
         </li>

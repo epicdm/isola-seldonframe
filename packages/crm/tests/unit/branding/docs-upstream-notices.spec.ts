@@ -130,6 +130,8 @@ describe("upstream-instruction notices on reachable docs pages", () => {
     for (const f of reachable) {
       const s = read(f);
       assert.equal(s.includes("app.seldonframe.com"), false, `${f}: upstream host`);
+      assert.equal(/vercel/i.test(s), false, `${f}: upstream hosting product named as how Uplink works`);
+      assert.equal(/EPIC (gives|tells|will)\b/.test(s), false, `${f}: promise about EPIC arrangements`);
       assert.equal(/\.(com|dm)\/embed\.js/.test(s), false, `${f}: root /embed.js (404 on Uplink)`);
       assert.equal(/data-(position|greeting-delay|agent|context)\b/.test(s.replace(/<code>data-[a-z-]+<\/code>/g, "")), false, `${f}: data-* options the embed route does not read`);
     }

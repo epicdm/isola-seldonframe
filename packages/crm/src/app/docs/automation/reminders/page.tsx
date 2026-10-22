@@ -8,7 +8,7 @@ export default function Page() {
       category="Email & Automation"
       categoryHref="/docs"
       title="Post-booking reminders"
-      lede="A 24-hour reminder fires automatically before every booking — SMS if you have Twilio, email if you don't. Powered by durable Vercel Workflows."
+      lede="How upstream SeldonFrame's post-booking reminder is described to work. Whether reminders are active on EPIC's Uplink: check with EPIC."
       githubPath="app/docs/automation/reminders/page.tsx"
     >
       <UpstreamNotice kinds={["keys"]} />
@@ -28,7 +28,7 @@ export default function Page() {
       </p>
 
       <Callout variant="info" title="Durable, not cron-fragile">
-        The reminder is a Vercel Workflow with <code>sleep("24h")</code>{" "}
+        The reminder is a durable workflow with <code>sleep("24h")</code>{" "}
         scheduled exactly to the booking. If you redeploy SeldonFrame,
         the workflow keeps its place. If a booking is rescheduled, the
         old workflow is cancelled and a new one is scheduled to the new

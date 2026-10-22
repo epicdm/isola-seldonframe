@@ -57,7 +57,7 @@ export default function Page() {
       <h2>Durable workflows under the hood</h2>
       <p>
         Long-running rules (anything with a wait step longer than a few
-        seconds) run on Vercel Workflows — they survive deploys, retries
+        seconds) run as durable workflows — they survive deploys, retries
         on failure, and are observable in your dashboard. The 24h
         post-booking reminder is the canonical example; see{" "}
         <InAppLink href="/docs/automation/reminders">Post-booking reminders</InAppLink>.

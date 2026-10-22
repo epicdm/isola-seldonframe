@@ -181,7 +181,7 @@ export default function DocsHome() {
           items={[
             { title: "Send email", description: "One-off messages or saved templates; via Resend", href: "/docs/automation/email" },
             { title: "Automation rules", description: "Trigger-based workflows for follow-ups, reminders, alerts", href: "/docs/automation/rules" },
-            { title: "Post-booking reminders", description: "24h-before durable reminder via Vercel Workflows", href: "/docs/automation/reminders" },
+            { title: "Post-booking reminders", description: "Reminder before a booking (upstream description)", href: "/docs/automation/reminders" },
           ]}
         />
 
