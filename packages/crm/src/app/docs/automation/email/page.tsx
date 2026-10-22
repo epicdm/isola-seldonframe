@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Send email.
 
-import { ArticleShell, Callout, InAppLink } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="One-off and broadcast email from your domain. Powered by Resend, branded with your wordmark, deliverable to inboxes."
       githubPath="app/docs/automation/email/page.tsx"
     >
+      <UpstreamNotice kinds={["keys"]} />
       <h2>Setup</h2>
       <p>
         Connect Resend in <InAppLink href="/settings/integrations">Settings → Integrations</InAppLink>.

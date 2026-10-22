@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Post-booking reminders.
 
-import { ArticleShell, Callout, InAppLink } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede="A 24-hour reminder fires automatically before every booking — SMS if you have Twilio, email if you don't. Powered by durable Vercel Workflows."
       githubPath="app/docs/automation/reminders/page.tsx"
     >
+      <UpstreamNotice kinds={["keys"]} />
       <h2>What runs by default</h2>
       <p>
         When a booking is created, SeldonFrame schedules a durable

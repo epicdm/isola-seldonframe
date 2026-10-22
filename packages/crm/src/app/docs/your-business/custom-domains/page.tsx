@@ -8,7 +8,7 @@ export default function Page() {
       category="Your business"
       categoryHref="/docs"
       title="Custom domains"
-      lede="Replace your-name.uplink.epic.dm with www.yourbiz.com. SSL is automatic, takes 5 minutes."
+      lede="How custom domains work upstream. On EPIC's Uplink, ask EPIC to set up a custom domain for your workspace."
       githubPath="app/docs/your-business/custom-domains/page.tsx"
     >
       <UpstreamNotice kinds={["domains", "hosts"]} />
@@ -21,12 +21,7 @@ export default function Page() {
       </Step>
 
       <Step n={2} title="Add the DNS records at your registrar">
-        Two records — a CNAME for www and an A record for the apex (root)
-        domain pointing at our edge IP. Example:
-        <CodeBlock>{`www    CNAME    cname.vercel-dns.com.
-@      A        76.76.21.21`}</CodeBlock>
-        Exact records depend on your hosting setup — the page in step 1
-        shows the exact values for your domain.
+        The records depend on where the workspace is hosted. Do not copy records from other sources: EPIC gives you the exact values for your domain.
       </Step>
 
       <Step n={3} title="Wait for DNS to propagate">
@@ -34,10 +29,8 @@ export default function Page() {
         page shows a green check when verification succeeds.
       </Step>
 
-      <Step n={4} title="SSL is automatic">
-        Once DNS verifies, an SSL certificate is provisioned through
-        Let's Encrypt automatically. Your site is HTTPS-only — there's
-        no toggle for HTTP.
+      <Step n={4} title="HTTPS">
+        Certificates and HTTPS behaviour for custom domains on Uplink: check with EPIC.
       </Step>
 
       <Callout variant="info" title="Apex vs www">

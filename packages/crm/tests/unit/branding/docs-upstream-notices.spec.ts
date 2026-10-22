@@ -48,9 +48,12 @@ const NOTICE_PAGES: Record<string, string[]> = {
   "integrations/resend/page.tsx": ["keys"],
   "integrations/google-calendar/page.tsx": ["keys"],
   "pages/forms/page.tsx": ["hosts"],
-  "pages/booking/page.tsx": ["hosts"],
+  "pages/booking/page.tsx": ["keys", "hosts"],
+  "automation/reminders/page.tsx": ["keys"],
+  "automation/email/page.tsx": ["keys"],
+  "automation/rules/page.tsx": ["keys"],
   "pages/public-pages/page.tsx": ["signup", "hosts"],
-  "customers/customer-portal/page.tsx": ["domains", "hosts"],
+  "customers/customer-portal/page.tsx": ["domains", "hosts", "keys"],
   "your-business/custom-domains/page.tsx": ["domains", "hosts"],
   "your-business/team/page.tsx": ["plans"],
   "your-business/workspaces/page.tsx": ["plans"],
@@ -112,12 +115,16 @@ describe("upstream-instruction notices on reachable docs pages", () => {
       const s = read(f);
       assert.equal(s.includes("app.seldonframe.com"), false, `${f}: upstream host`);
       assert.equal(/\.(com|dm)\/embed\.js/.test(s), false, `${f}: root /embed.js (404 on Uplink)`);
-      assert.equal(/data-(position|greeting-delay|agent)=/.test(s), false, `${f}: data-* options the embed route does not read`);
+      assert.equal(/data-(position|greeting-delay|agent|context)\b/.test(s.replace(/<code>data-[a-z-]+<\/code>/g, "")), false, `${f}: data-* options the embed route does not read`);
     }
     const embed = readFileSync(join(docsDir, "agents", "embed", "page.tsx"), "utf8");
     assert.ok(embed.includes("https://uplink.epic.dm/api/v1/public/agent/WORKSPACE--AGENT/embed.js"));
     // the route that serves it exists in this tree (what the host/path was verified against)
     assert.ok(statSync(join(appDir, "api", "v1", "public", "agent", "[slug]", "embed.js", "route.ts")).isFile());
+    const embedText = embed.replace(/<code>data-[a-z-]+<\/code>/g, "");
+    assert.equal(/wired automatically|known\s+email if you passed/.test(embedText), false, "embed: unverified automatic wiring / data-context claims");
+    const domains = readFileSync(join(docsDir, "your-business", "custom-domains", "page.tsx"), "utf8");
+    assert.equal(/vercel-dns|76\.76\.21\.21|SSL is automatic|takes 5 minutes/.test(domains), false, "custom-domains: upstream/Vercel DNS values and unverified SSL promises");
     const mcp = readFileSync(join(docsDir, "getting-started", "connect-claude-code", "page.tsx"), "utf8");
     assert.ok(mcp.includes("--url https://uplink.epic.dm/api/mcp/v1"));
     assert.ok(statSync(join(appDir, "api", "mcp", "v1", "route.ts")).isFile());
@@ -138,6 +145,13 @@ describe("upstream-instruction notices on reachable docs pages", () => {
       }
     }
     assert.deepEqual(bad, []);
+    const home = readFileSync(join(docsDir, "page.tsx"), "utf8");
+    const ids = new Set([...home.matchAll(/id="([a-z0-9-]+)"/g)].map((m) => m[1]));
+    const deadAnchors = new Set<string>();
+    for (const f of reachable) for (const m of read(f).matchAll(/href[=:] ?\{?"\/docs#([a-z0-9-]+)"/g)) if (!ids.has(m[1])) deadAnchors.add(m[1]);
+    // Known follow-up: upstream placeholder anchors on the docs home (the page loads; the anchor just does not scroll). A NEW one fails.
+    assert.deepEqual([...deadAnchors].sort(), ["agents", "api", "automations", "booking-pages", "case-studies", "claude-code", "contacts", "email", "google", "reminders", "soul", "stripe", "suppression", "templates", "twilio", "webhooks", "workspaces"]);
+    assert.ok(ids.has("popular") && ids.has("learn"), "control: the home's real ids are read");
     // control: the checker would flag the three links this change removed
     for (const gone of ['href="/emails/templates"', 'href="/#hero-form"', 'href="/docs/billing/tiers"']) {
       assert.ok(!reachable.some((f) => read(f).includes(gone)), gone);

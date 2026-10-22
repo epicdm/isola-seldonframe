@@ -11,7 +11,7 @@ export default function Page() {
       lede="Calendly-style scheduling, but native to your CRM. Bookings create real CRM records, fire 24h reminder workflows, and feed your AI agent."
       githubPath="app/docs/pages/booking/page.tsx"
     >
-      <UpstreamNotice kinds={["hosts"]} />
+      <UpstreamNotice kinds={["keys", "hosts"]} />
       <h2>What you get</h2>
       <p>
         Each booking page is a public URL where customers pick a time

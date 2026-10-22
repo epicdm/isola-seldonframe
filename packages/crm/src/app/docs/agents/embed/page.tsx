@@ -33,12 +33,9 @@ export default function Page() {
       </p>
 
       <h2>SeldonFrame-hosted pages</h2>
-      <Callout variant="tip" title="No snippet needed">
-        If your public site is a SeldonFrame-hosted page (at{" "}
-        <code>your-workspace.uplink.epic.dm</code> or your custom
-        domain), the chatbot is wired automatically. You just toggle it
-        on/off in <a href="/landing">Pages → Settings</a>.
-      </Callout>
+      <p>
+        Whether the chatbot is added to workspace-hosted pages automatically, and where it is switched on or off, is not verified for Uplink: check with EPIC.
+      </p>
 
       <h2>Custom domains and CSP</h2>
       <p>
@@ -55,8 +52,7 @@ export default function Page() {
       <p>
         Every message round-trip is logged to{" "}
         <InAppLink href="/agents">Agents → Conversations</InAppLink>. The
-        agent's identity, the visitor's anonymous session ID (or known
-        email if you passed one in <code>data-context</code>), the message
+        agent's identity, the visitor's anonymous session ID, the message
         text, the tool calls, the eval-time validators that fired —
         everything is queryable.
       </p>

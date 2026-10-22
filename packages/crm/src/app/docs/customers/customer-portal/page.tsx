@@ -11,7 +11,7 @@ export default function Page() {
       lede="A self-serve area where your customers manage their bookings, see invoices, message your agent, and update their info. One link, one login."
       githubPath="app/docs/customers/customer-portal/page.tsx"
     >
-      <UpstreamNotice kinds={["domains", "hosts"]} />
+      <UpstreamNotice kinds={["domains", "hosts", "keys"]} />
       <h2>What customers see</h2>
       <p>
         When a customer logs into your portal, they see:

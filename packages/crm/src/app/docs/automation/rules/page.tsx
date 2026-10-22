@@ -1,6 +1,6 @@
 // v1.30.2 — Docs article: Automation rules.
 
-import { ArticleShell, Callout, InAppLink } from "../../article-shell";
+import { ArticleShell, Callout, InAppLink, UpstreamNotice } from "../../article-shell";
 
 export default function Page() {
   return (
@@ -11,6 +11,7 @@ export default function Page() {
       lede='Trigger something when something happens. "When a deal moves to Won, email the customer this template and send a Slack ping to my team."'
       githubPath="app/docs/automation/rules/page.tsx"
     >
+      <UpstreamNotice kinds={["keys"]} />
       <h2>Anatomy of a rule</h2>
       <p>Every rule has three parts:</p>
       <ul>
