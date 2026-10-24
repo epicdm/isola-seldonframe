@@ -48,7 +48,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { dbClockMs } from "@/db/clock";
-import { orgMembers, organizations, partnerAgencies, users, workspaceAdminActions } from "@/db/schema";
+import { agencySupportSessions, orgMembers, organizations, partnerAgencies, users, workspaceAdminActions } from "@/db/schema";
 import { auth } from "@/auth";
 import { selectPortalEmailTransport } from "@/lib/portal/email-transport";
 import { assertWritable } from "@/lib/demo/server";
@@ -589,7 +589,7 @@ async function decideOperatorMagicLinkConsume(
 // ─── session reads ─────────────────────────────────────────────────────────
 
 export async function getOperatorSessionForOrg(orgSlug: string): Promise<
-  | { orgId: string; orgSlug: string; email: string; supportOriginUserId: string | null; role: WorkspaceRole }
+  | { orgId: string; orgSlug: string; email: string; supportOriginUserId: string | null; supportSessionId: string | null; role: WorkspaceRole }
   | null
 > {
   const org = await getOrgBySlug(orgSlug);
@@ -602,6 +602,18 @@ export async function getOperatorSessionForOrg(orgSlug: string): Promise<
     return null;
   }
   if (isOperatorTokenRevoked(verified, org.operatorSessionsValidAfter)) return null;
+  if (verified.supportOriginUserId) {
+    if (!verified.supportSessionId) return null;
+    const [activeAudit] = await db.select({ id: agencySupportSessions.id })
+      .from(agencySupportSessions)
+      .where(and(
+        eq(agencySupportSessions.id, verified.supportSessionId),
+        eq(agencySupportSessions.workspaceId, org.id),
+        eq(agencySupportSessions.originUserId, verified.supportOriginUserId),
+        isNull(agencySupportSessions.endedAt),
+      )).limit(1);
+    if (!activeAudit) return null;
+  }
   // Codex r1: a platform admin's tenant access is only ever the audited support session; any other session for it is refused.
   if (!verified.supportOriginUserId && isEmailInAllowlist(verified.email, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) return null;
   // EPIC 2026-10-21: re-read the person's standing here on every request (removal ends the session at once).
@@ -617,6 +629,7 @@ export async function getOperatorSessionForOrg(orgSlug: string): Promise<
     orgSlug: org.slug,
     email: verified.email,
     supportOriginUserId: verified.supportOriginUserId ?? null,
+    supportSessionId: verified.supportSessionId ?? null,
     role,
   };
 }

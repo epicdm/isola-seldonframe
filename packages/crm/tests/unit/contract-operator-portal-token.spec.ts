@@ -20,6 +20,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  isSupportSessionContext,
   signOperatorToken,
   verifyOperatorToken,
   type OperatorTokenPayload,
@@ -169,7 +170,7 @@ test("magic and session tokens are distinguishable by kind discriminator", () =>
   );
 });
 
-test("supportOriginUserId carries through session tokens (v1.21 hook)", () => {
+test("support session origin and audit id carry through signed session tokens", () => {
   // Agency support sessions: when an SF agency operator (Acme AI)
   // signs in to support their HVAC client, the token carries
   // supportOriginUserId so the operator portal can render the
@@ -180,6 +181,7 @@ test("supportOriginUserId carries through session tokens (v1.21 hook)", () => {
     exp: inFutureMs(7 * 24 * 60),
     kind: "session",
     supportOriginUserId: "33333333-3333-3333-3333-333333333333",
+    supportSessionId: "44444444-4444-4444-4444-444444444444",
   });
   const verified = verifyOperatorToken(token);
   assert.ok(verified);
@@ -187,6 +189,7 @@ test("supportOriginUserId carries through session tokens (v1.21 hook)", () => {
     verified.supportOriginUserId,
     "33333333-3333-3333-3333-333333333333",
   );
+  assert.equal(verified.supportSessionId, "44444444-4444-4444-4444-444444444444");
 });
 
 test("normal sessions have null/undefined supportOriginUserId", () => {
@@ -201,4 +204,11 @@ test("normal sessions have null/undefined supportOriginUserId", () => {
   // Either null or undefined is fine — the layout's
   // `Boolean(session.supportOriginUserId)` check works for both.
   assert.equal(verified.supportOriginUserId ?? null, null);
+});
+
+test("support-session context is human-only and detected from the signed origin", () => {
+  assert.equal(isSupportSessionContext({ supportOriginUserId: "operator-1" }), true);
+  assert.equal(isSupportSessionContext({ supportOriginUserId: null }), false);
+  assert.equal(isSupportSessionContext({}), false);
+  assert.equal(isSupportSessionContext(null), false);
 });

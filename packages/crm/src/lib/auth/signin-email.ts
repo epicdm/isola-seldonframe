@@ -80,6 +80,7 @@ export async function sendPlatformSignInEmail(
   }
 
   const apiKey = env.AUTH_RESEND_KEY?.trim() || env.RESEND_API_KEY?.trim() || params.provider.apiKey?.trim();
+  // contract:throw-ok: the NextAuth verification-email callback surfaces configuration failure as its error page; it must not claim the link was sent.
   if (!apiKey) throw new Error("Sign-in email transport is not configured");
 
   const response = await fetcher("https://api.resend.com/emails", {
@@ -99,6 +100,7 @@ export async function sendPlatformSignInEmail(
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "<no-body>");
+    // contract:throw-ok: the NextAuth verification-email callback surfaces provider failure as its error page; it must not claim the link was sent.
     throw new Error(`Failed to send sign-in email (${response.status}): ${detail.slice(0, 200)}`);
   }
 }

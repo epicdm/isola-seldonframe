@@ -16,9 +16,9 @@
 // these sessions (mirroring the admin-token treatment).
 
 import { cookies } from "next/headers";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { organizations } from "@/db/schema";
+import { agencySupportSessions, organizations } from "@/db/schema";
 import { isEmailInAllowlist, parseAdminAllowlist } from "@/lib/operator-portal/authorization";
 import {
   OPERATOR_SESSION_COOKIE,
@@ -51,6 +51,7 @@ export type OperatorPortalContext = {
     role: WorkspaceRole;
     /** v1.20+ — set when this is an agency support session. */
     supportOriginUserId: string | null;
+    supportSessionId: string | null;
     // ── NextAuth-shape fields (operator session has no plan/billing) ─
     planId: string | null;
     subscriptionStatus: "trialing" | "active" | "past_due" | "canceled" | "unpaid";
@@ -92,6 +93,18 @@ export async function resolveOperatorPortalContext(): Promise<OperatorPortalCont
   if (!orgRow) return null;
   // EPIC 2026-10-20: the workspace's operator-session cut-off is read fresh on every request (an ownership transfer sets it).
   if (isOperatorTokenRevoked(verified, orgRow.operatorSessionsValidAfter)) return null;
+  if (verified.supportOriginUserId) {
+    if (!verified.supportSessionId) return null;
+    const [activeAudit] = await db.select({ id: agencySupportSessions.id })
+      .from(agencySupportSessions)
+      .where(and(
+        eq(agencySupportSessions.id, verified.supportSessionId),
+        eq(agencySupportSessions.workspaceId, orgRow.id),
+        eq(agencySupportSessions.originUserId, verified.supportOriginUserId),
+        isNull(agencySupportSessions.endedAt),
+      )).limit(1);
+    if (!activeAudit) return null;
+  }
   // Codex r1: a platform admin's tenant access is only ever the audited support session; any other session for it is refused.
   if (!verified.supportOriginUserId && isEmailInAllowlist(verified.email, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) return null;
   // EPIC 2026-10-21: the person's standing in THIS workspace is re-read on every request — a removed member's session is
@@ -116,6 +129,7 @@ export async function resolveOperatorPortalContext(): Promise<OperatorPortalCont
       orgId: verified.orgId,
       role,
       supportOriginUserId: verified.supportOriginUserId ?? null,
+      supportSessionId: verified.supportSessionId ?? null,
       // Defaults for the NextAuth-shape fields. Plan/billing aren't
       // resolvable from the operator session alone; downstream code
       // already handles null planId gracefully (free-tier UX).

@@ -316,6 +316,7 @@ export const SERVER_ACTION_POLICY: Record<string, StaffAccessCategory> = {
   "lib/operator-portal/search-actions.ts#operatorSearchAction": "staff",
   "lib/operator-portal/support-session.ts#consumeAgencySupportSession": "public",
   "lib/operator-portal/support-session.ts#createAgencySupportSession": "platform",
+  "lib/operator-portal/support-session.ts#exitOperatorSupportSessionAction": "platform",
   "lib/operator-portal/today-actions.ts#createOperatorContactAction": "staff",
   "lib/operator-portal/today-actions.ts#requestReviewAction": "staff",
   "lib/payments/actions.ts#getContactRevenue": "staff",

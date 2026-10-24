@@ -158,8 +158,6 @@ export const organizations = pgTable("organizations", {
   // never counts against the builder's limit / triggers a charge). NULL =
   // active (existing behavior). Set via cancelDeploymentAction.
   archivedAt: timestamp("archived_at", { withTimezone: true }),
-  /** Revokes older operator sessions after an ownership handoff. */
-  operatorSessionsValidAfter: timestamp("operator_sessions_valid_after", { withTimezone: true }),
   // 2026-08-06 funnel observability — excludes founder/internal workspaces
   // from growth metrics. Default false so all existing (and every new,
   // non-founder) workspace is unaffected; backfilled to true for

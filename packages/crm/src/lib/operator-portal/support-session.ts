@@ -20,13 +20,14 @@
 //     returns the redirect target. Used by the support-magic route.
 //
 // Audit: every session start writes an agency_support_sessions row.
-// supportOriginUserId on the session token surfaces the yellow
-// banner in /portal/<slug>/(operator)/layout.tsx (already wired).
+// The token binds to that row; each dashboard request checks that it remains
+// active, and the dashboard banner can explicitly end it.
 
 "use server";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { dbClockMs } from "@/db/clock";
 import {
@@ -153,15 +154,6 @@ async function mintSupportSession(input: {
     const supportEmail = agencyId
       ? `support+${agencyId.slice(0, 8)}@seldonframe-agency.local`
       : `support+platform-${callerUserId.slice(0, 8)}@seldonframe-agency.local`;
-    const sessionToken = signOperatorToken({
-      orgId: workspace.id,
-      email: supportEmail,
-      exp: expiresAtMs,
-      kind: "session",
-      supportOriginUserId: callerUserId,
-      iat: issuedAtMs,
-    });
-
     // Audit row. The audit row is the precondition for the session: no row, no link.
     const [auditRow] = await tx
       .insert(agencySupportSessions)
@@ -172,10 +164,19 @@ async function mintSupportSession(input: {
         notes: input.actorEmail ? `platform_support actor_email=${input.actorEmail}` : null,
       })
       .returning({ id: agencySupportSessions.id });
+    const sessionToken = auditRow?.id ? signOperatorToken({
+      orgId: workspace.id,
+      email: supportEmail,
+      exp: expiresAtMs,
+      kind: "session",
+      supportOriginUserId: callerUserId,
+      supportSessionId: auditRow.id,
+      iat: issuedAtMs,
+    }) : null;
     return { expiresAtMs, sessionToken, auditRow };
   });
   const { expiresAtMs, sessionToken, auditRow } = minted;
-  if (!auditRow?.id) {
+  if (!auditRow?.id || !sessionToken) {
     return { ok: false, reason: "audit_write_failed" };
   }
 
@@ -228,7 +229,8 @@ export async function consumeAgencySupportSession(input: {
   if (
     !verified ||
     verified.kind !== "session" ||
-    !verified.supportOriginUserId
+    !verified.supportOriginUserId ||
+    !verified.supportSessionId
   ) {
     return { ok: false, reason: "invalid_or_expired_token" };
   }
@@ -245,6 +247,17 @@ export async function consumeAgencySupportSession(input: {
   if (isOperatorTokenRevoked(verified, workspace.operatorSessionsValidAfter)) {
     return { ok: false, reason: "invalid_or_expired_token" };
   }
+  const [activeAudit] = await db
+    .select({ id: agencySupportSessions.id })
+    .from(agencySupportSessions)
+    .where(and(
+      eq(agencySupportSessions.id, verified.supportSessionId),
+      eq(agencySupportSessions.workspaceId, workspace.id),
+      eq(agencySupportSessions.originUserId, verified.supportOriginUserId),
+      isNull(agencySupportSessions.endedAt),
+    ))
+    .limit(1);
+  if (!activeAudit) return { ok: false, reason: "support_session_inactive" };
 
   // Set the operator session cookie. Same shape as a normal magic-
   // link consume — the supportOriginUserId carried in the token
@@ -268,4 +281,39 @@ export async function consumeAgencySupportSession(input: {
     ok: true,
     redirectTo: `/dashboard`,
   };
+}
+
+/** End exactly the audited support session represented by this cookie. */
+export async function exitOperatorSupportSessionAction(): Promise<void> {
+  "use server";
+  assertWritable();
+  const cookieStore = await cookies();
+  const token = cookieStore.get(OPERATOR_SESSION_COOKIE)?.value;
+  const verified = verifyOperatorToken(token);
+  if (
+    !verified ||
+    verified.kind !== "session" ||
+    !verified.supportSessionId ||
+    !verified.supportOriginUserId
+  ) {
+    redirect("/super-admin/workspaces");
+  }
+  const [ended] = await db
+    .update(agencySupportSessions)
+    .set({ endedAt: sql`now()` })
+    .where(and(
+      eq(agencySupportSessions.id, verified.supportSessionId),
+      eq(agencySupportSessions.workspaceId, verified.orgId),
+      eq(agencySupportSessions.originUserId, verified.supportOriginUserId),
+      isNull(agencySupportSessions.endedAt),
+    ))
+    .returning({ id: agencySupportSessions.id, agencyId: agencySupportSessions.agencyId });
+  cookieStore.set(OPERATOR_SESSION_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  });
+  redirect(ended?.agencyId ? "/dashboard" : "/super-admin/workspaces");
 }
