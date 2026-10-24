@@ -239,3 +239,4 @@ export * from "./workspace-admin-actions";
 // signed-event inbox and per-subject facts / deal projection. Additive.
 export * from "./external-identities";
 export * from "./integration-events";
+export * from "./workspace-service-associations";

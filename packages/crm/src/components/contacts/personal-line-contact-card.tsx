@@ -15,7 +15,7 @@ export function PersonalLineContactCard({ line }: { line: PersonalLineRecord }) 
       </div>
       <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
         <div><dt className="text-xs text-muted-foreground">Onboarding stage</dt><dd className="mt-1 font-medium">{line.stage}</dd></div>
-        <div><dt className="text-xs text-muted-foreground">Account</dt><dd className="mt-1 font-medium">{line.accountAssigned ? "Assigned" : "Pending assignment"}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">Service association</dt><dd className="mt-1 font-medium">{line.serviceAssociationStatus === "verified" ? "Verified from signed service event" : line.serviceAssociationStatus === "unverified" ? "Needs operator review" : "Pending account assignment"}</dd></div>
         <div><dt className="text-xs text-muted-foreground">Personal Line number</dt><dd className="mt-1 font-medium">{line.facts.did_masked ?? "Not yet recorded"}</dd></div>
         <div><dt className="text-xs text-muted-foreground">Registration event</dt><dd className="mt-1 font-medium">{line.facts.registered_at ? `Recorded ${line.facts.registered_at}` : "No registration event recorded"}</dd></div>
         <div><dt className="text-xs text-muted-foreground">First answered call</dt><dd className="mt-1 font-medium">{line.facts.first_call_at ?? "No first-call event recorded"}</dd></div>

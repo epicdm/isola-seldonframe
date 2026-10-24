@@ -34,14 +34,21 @@ describe("tenant Personal Line BFF evidence reader", () => {
   test("does not call upstream when the established credential configuration is absent", async () => {
     let called = false;
     const reader = createPersonalLineBffReader({ baseUrl: "https://bff.example", readFile: () => "x".repeat(40), fetchImpl: async () => { called = true; return response({}); } });
-    assert.deepEqual(await reader(workspaceId, accountId), { status: "unavailable" });
+    assert.deepEqual(await reader(workspaceId, "epic", accountId), { status: "unavailable" });
     assert.equal(called, false);
   });
 
   test("does not use the shared BFF credential for a different tenant workspace", async () => {
     let called = false;
     const reader = readerWith(async () => { called = true; return response(detail); });
-    assert.deepEqual(await reader("22222222-2222-4222-8222-222222222222", accountId), { status: "unavailable" });
+    assert.deepEqual(await reader("22222222-2222-4222-8222-222222222222", "epic", accountId), { status: "unavailable" });
+    assert.equal(called, false);
+  });
+
+  test("does not use the shared credential when the association tenant differs", async () => {
+    let called = false;
+    const reader = readerWith(async () => { called = true; return response(detail); });
+    assert.deepEqual(await reader(workspaceId, "other", accountId), { status: "unavailable" });
     assert.equal(called, false);
   });
 
@@ -54,7 +61,7 @@ describe("tenant Personal Line BFF evidence reader", () => {
         ? response(detail)
         : response({ services: [{ did: "+17675550123", sipRegistered: true, magnusUserAssigned: true, createdAt: "2026-10-01T00:00:00.000Z", liteAccountId: "must-not-leak" }] });
     };
-    const evidence = await readerWith(fetchImpl)(workspaceId, accountId);
+    const evidence = await readerWith(fetchImpl)(workspaceId, "epic", accountId);
     assert.equal(evidence.status, "verified");
     assert.equal(calls.length, 2);
     assert.equal(calls[0].url, `https://bff.example/api/internal/personal-line/${accountId}/service-detail`);
@@ -68,7 +75,7 @@ describe("tenant Personal Line BFF evidence reader", () => {
   test("fails closed when the DID is absent or duplicated in customer-services results", async () => {
     for (const services of [[], [{ did: "+17675550123" }, { did: "+1 767 555 0123" }]]) {
       let call = 0;
-      const result = await readerWith(async () => ++call === 1 ? response(detail) : response({ services }))(workspaceId, accountId);
+      const result = await readerWith(async () => ++call === 1 ? response(detail) : response({ services }))(workspaceId, "epic", accountId);
       assert.deepEqual(result, { status: "association_mismatch" });
     }
   });

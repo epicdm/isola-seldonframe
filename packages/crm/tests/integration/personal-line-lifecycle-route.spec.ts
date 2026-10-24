@@ -46,7 +46,8 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     }), { params: Promise.resolve({ orgId }) });
   const body = (type: string, subject: string, over: Record<string, unknown> = {}) => {
     const base = JSON.parse(produced[type]);
-    return JSON.stringify({ ...base, event_id: randomUUID(), subject_id: subject, ...over });
+    const plAccountId = "pl_account_id" in over ? over.pl_account_id : base.pl_account_id === null ? null : `acct_${subject}`;
+    return JSON.stringify({ ...base, event_id: randomUUID(), subject_id: subject, pl_account_id: plAccountId, ...over });
   };
   const count = async (q: ReturnType<typeof sql>) => Number(((await db.execute(q)) as any).rows?.[0]?.n ?? (await db.execute(q) as any)[0]?.n);
   const dealsOf = async (orgId: string) => db.select().from(S.deals).where(eq(S.deals.orgId, orgId));
@@ -130,6 +131,14 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     ]);
     const [deal] = await plDealOf(EPIC, subject);
     assert.equal((deal.customFields as any).plAccountId, JSON.parse(produced["pl.line_created"]).pl_account_id);
+    const associations = await db.select().from(S.workspaceServiceAssociations).where(and(
+      eq(S.workspaceServiceAssociations.orgId, EPIC), eq(S.workspaceServiceAssociations.provider, "personal_line"),
+      eq(S.workspaceServiceAssociations.externalSubjectId, subject),
+    ));
+    assert.equal(associations.length, 1);
+    assert.equal(associations[0].tenantKey, "epic");
+    assert.equal(associations[0].externalAccountId, JSON.parse(produced["pl.line_created"]).pl_account_id);
+    assert.equal(associations[0].sourceEventId, JSON.parse(produced["pl.line_created"]).event_id);
     // the contact is NEW (source personal_line), linked by identity; the self-entered one with the same phone is not adopted
     const ident: any = await db.execute(sql`select contact_id from external_identities where org_id = ${EPIC}::uuid and external_id = ${subject}`);
     const contactId = (ident.rows ?? ident)[0].contact_id;
@@ -149,6 +158,7 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
   test("REPLAY: every body delivered again -> 200 duplicate, nothing new (no contact, deal, activity or stage event)", async () => {
     configure();
     const snap = async () => [await count(sql`select count(*)::int n from contacts where org_id = ${EPIC}::uuid`), (await dealsOf(EPIC)).length,
+      await count(sql`select count(*)::int n from workspace_service_associations where org_id = ${EPIC}::uuid`),
       await count(sql`select count(*)::int n from activities where org_id = ${EPIC}::uuid`), (await stageEvents(EPIC)).length];
     const s0 = await snap();
     for (const type of Object.keys(produced)) {
@@ -157,6 +167,22 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
       assert.equal((await r.json()).status, "duplicate");
     }
     assert.deepEqual(await snap(), s0);
+  });
+
+  test("one signed upstream account cannot be associated to two subscriber subjects", async () => {
+    configure();
+    const accountId = "acct_shared-service-account";
+    assert.equal((await post(EPIC, body("pl.line_created", "subj_assoc_owner", { pl_account_id: accountId }))).status, 200);
+    const conflict = await post(EPIC, body("pl.line_created", "subj_assoc_other", { pl_account_id: accountId }));
+    assert.equal(conflict.status, 409);
+    assert.equal((await conflict.json()).error, "service_association_conflict");
+    const associations = await db.select().from(S.workspaceServiceAssociations).where(and(
+      eq(S.workspaceServiceAssociations.provider, "personal_line"), eq(S.workspaceServiceAssociations.tenantKey, "epic"),
+      eq(S.workspaceServiceAssociations.externalAccountId, accountId),
+    ));
+    assert.equal(associations.length, 1);
+    assert.equal(associations[0].externalSubjectId, "subj_assoc_owner");
+    assert.equal((await plDealOf(EPIC, "subj_assoc_other")).length, 0);
   });
 
   test("OUT OF ORDER: first call arrives first -> deal created AT First call; the older events never move it back", async () => {

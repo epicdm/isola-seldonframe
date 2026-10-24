@@ -5,6 +5,7 @@ import { createPersonalLineDetailHandler, createPersonalLinesListHandler } from 
 const ownedLine = {
   referenceId: "contact-a",
   accountAssigned: true,
+  serviceAssociationStatus: "verified" as const,
   customerId: "contact-a",
   customerName: "Customer A",
   stage: "Line created",

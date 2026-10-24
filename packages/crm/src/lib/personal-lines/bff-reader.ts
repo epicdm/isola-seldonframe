@@ -119,9 +119,9 @@ export function createPersonalLineBffReader(options: BffReaderOptions = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const readFile = options.readFile ?? ((path: string) => readFileSync(path, "utf8"));
 
-  return async function read(orgId: string, accountId: string): Promise<PersonalLineServiceEvidence> {
+  return async function read(orgId: string, requestedTenantKey: string, accountId: string): Promise<PersonalLineServiceEvidence> {
     const tenantOrgs = options.tenantOrgs ?? parseTenantOrgs(process.env.PL_LIFECYCLE_TENANT_ORGS);
-    const authorizedOrg = tenantKey ? tenantOrgs?.get(tenantKey) : null;
+    const authorizedOrg = tenantKey && requestedTenantKey === tenantKey ? tenantOrgs?.get(tenantKey) : null;
     // bff-v2's customer-360 integration is EPIC/Odoo-bound. Never use its
     // shared credential for another workspace merely because a signed event
     // supplied an account ID there. The tenant key -> workspace binding is

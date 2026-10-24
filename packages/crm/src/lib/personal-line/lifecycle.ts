@@ -158,6 +158,8 @@ export interface LifecycleStore extends LinkStore {
   finishEvent(orgId: string, eventId: string, applied: boolean, outcome: string): Promise<void>;
   /** Upsert the subject's facts row (merge facts, last_version = greatest). Creates the row the projection claims on. */
   mergeFacts(orgId: string, subjectId: string, rank: number, facts: Record<string, unknown>): Promise<void>;
+  /** Bind a provider account to this workspace only when the signed event and identity agree. */
+  associateServiceAccount(input: { orgId: string; tenantKey: string; subjectId: string; accountId: string; eventId: string; contactId: string }): Promise<boolean>;
   defaultPipeline(orgId: string): Promise<{ id: string; stages: PipelineStage[] } | null>;
   readProjection(orgId: string, subjectId: string): Promise<{ dealId: string | null; createdAt: Date | null }>;
   /** CAS: set projected_deal_id iff it is NULL. */
@@ -246,6 +248,15 @@ export async function processLifecycleEvent(orgId: string, e: PlLifecycleEvent, 
   if (!link.ok) {
     await store.finishEvent(orgId, e.eventId, false, `link_${link.reason}`);
     return { status: "failed", reason: link.reason };
+  }
+  if (e.plAccountId) {
+    const associated = await store.associateServiceAccount({
+      orgId, tenantKey: e.tenant, subjectId: e.subjectId, accountId: e.plAccountId, eventId: e.eventId, contactId: link.contactId,
+    });
+    if (!associated) {
+      await store.finishEvent(orgId, e.eventId, false, "service_association_conflict");
+      return { status: "failed", reason: "service_association_conflict" };
+    }
   }
   await store.mergeFacts(orgId, e.subjectId, rank, { ...e.facts, ...(e.plAccountId ? { pl_account_id: e.plAccountId } : {}) });
   let deal: string;
@@ -346,8 +357,8 @@ export async function handlePersonalLineLifecycle(request: Request, orgId: strin
 export async function drizzleLifecycleStore(): Promise<LifecycleStore> {
   const { drizzleLinkStore } = await import("./link");
   const { db } = await import("@/db");
-  const { activities, deals, organizations, pipelines, integrationEventInbox: inbox, integrationSubjectFacts: facts, users } = await import("@/db/schema");
-  const { and, eq, isNull, lt, sql } = await import("drizzle-orm");
+  const { activities, deals, organizations, pipelines, integrationEventInbox: inbox, integrationSubjectFacts: facts, users, externalIdentities, workspaceServiceAssociations } = await import("@/db/schema");
+  const { and, eq, isNull, lt, or, sql } = await import("drizzle-orm");
   const base = await drizzleLinkStore();
   const P = PL_PROVIDER;
   return {
@@ -379,6 +390,31 @@ export async function drizzleLifecycleStore(): Promise<LifecycleStore> {
           target: [facts.orgId, facts.provider, facts.externalId],
           set: { facts: sql`${facts.facts} || ${JSON.stringify(f)}::jsonb`, lastVersion: sql`greatest(${facts.lastVersion}, ${rank})`, updatedAt: new Date() },
         });
+    },
+    async associateServiceAccount(input) {
+      const identity = await db.select({ id: externalIdentities.id }).from(externalIdentities)
+        .where(and(
+          eq(externalIdentities.orgId, input.orgId), eq(externalIdentities.provider, P),
+          eq(externalIdentities.externalId, input.subjectId), eq(externalIdentities.contactId, input.contactId),
+        )).limit(1);
+      if (!identity.length) return false;
+      const inserted = await db.insert(workspaceServiceAssociations).values({
+        orgId: input.orgId, provider: P, tenantKey: input.tenantKey, externalSubjectId: input.subjectId,
+        externalAccountId: input.accountId, sourceEventId: input.eventId,
+      }).onConflictDoNothing().returning({ id: workspaceServiceAssociations.id });
+      if (inserted.length === 1) return true;
+      const conflicts = await db.select({
+        orgId: workspaceServiceAssociations.orgId,
+        tenantKey: workspaceServiceAssociations.tenantKey,
+        subjectId: workspaceServiceAssociations.externalSubjectId,
+        accountId: workspaceServiceAssociations.externalAccountId,
+      }).from(workspaceServiceAssociations).where(or(
+        and(eq(workspaceServiceAssociations.provider, P), eq(workspaceServiceAssociations.tenantKey, input.tenantKey), eq(workspaceServiceAssociations.externalAccountId, input.accountId)),
+        and(eq(workspaceServiceAssociations.orgId, input.orgId), eq(workspaceServiceAssociations.provider, P), eq(workspaceServiceAssociations.externalSubjectId, input.subjectId)),
+      )).limit(2);
+      return conflicts.length === 1 && conflicts[0].orgId === input.orgId
+        && conflicts[0].tenantKey === input.tenantKey && conflicts[0].subjectId === input.subjectId
+        && conflicts[0].accountId === input.accountId;
     },
     async defaultPipeline(orgId) {
       const [p] = await db.select({ id: pipelines.id, stages: pipelines.stages }).from(pipelines)

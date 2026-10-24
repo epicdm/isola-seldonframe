@@ -18,7 +18,7 @@ export default async function PersonalLinesPage({
       <header>
         <p className="text-sm text-muted-foreground">Workspace services</p>
         <h1 className="text-2xl font-semibold">Personal Lines</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Accounts associated with this workspace through verified Personal Line lifecycle events.</p>
+        <p className="mt-2 text-sm text-muted-foreground">Accounts are scoped to this workspace through signed lifecycle events and an explicit service-account association.</p>
       </header>
 
       <form action="/personal-lines" method="get" className="flex max-w-xl gap-2">
@@ -38,7 +38,7 @@ export default async function PersonalLinesPage({
             <tbody>{lines.map((line) => (
               <tr key={line.referenceId} className="border-t">
                 <td className="p-3"><Link className="underline-offset-4 hover:underline" href={`/contacts/${encodeURIComponent(line.customerId)}`}>{line.customerName}</Link></td>
-                <td className="p-3"><Link className="font-medium underline-offset-4 hover:underline" href={`/contacts/${encodeURIComponent(line.customerId)}`}>{line.accountAssigned ? "Assigned · open customer" : "Pending · open customer"}</Link></td>
+                <td className="p-3"><Link className="font-medium underline-offset-4 hover:underline" href={`/contacts/${encodeURIComponent(line.customerId)}`}>{line.serviceAssociationStatus === "verified" ? "Verified · open customer" : line.serviceAssociationStatus === "unverified" ? "Needs association · open customer" : "Pending · open customer"}</Link></td>
                 <td className="p-3">{line.facts.did_masked ?? "Not yet recorded"}</td>
                 <td className="p-3">{line.stage}</td>
                 <td className="p-3">{new Date(line.updatedAt).toLocaleString()}</td>
@@ -47,7 +47,7 @@ export default async function PersonalLinesPage({
           </table>
         </div>
       )}
-      <p className="text-xs text-muted-foreground">Open a customer record for live registration, voice-resource, wallet-credit and plan evidence. Wallet credits are not a payment settlement report; missing service associations are shown as unavailable.</p>
+      <p className="text-xs text-muted-foreground">Open a customer record for live registration, voice-resource, wallet-credit and plan evidence. Wallet credits are not a payment settlement report; unverified associations do not trigger live service reads.</p>
     </main>
   );
 }

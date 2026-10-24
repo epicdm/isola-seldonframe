@@ -20,6 +20,8 @@ function row(orgId: string, subject: string, account: string | null, did: string
     updatedAt: new Date("2026-10-24T10:00:00.000Z"),
     customerId: `contact-${subject.replace("subject-", "")}`,
     customerName: `Customer ${subject.replace("subject-", "")}`,
+    serviceAccountId: account,
+    serviceTenantKey: account ? (orgId.endsWith("2") ? "other" : "epic") : null,
   };
 }
 
@@ -81,8 +83,8 @@ describe("tenant Personal Line read model", () => {
     const calls: string[] = [];
     const detailReader = createTenantPersonalLineReader(
       async (orgId, contactId) => rows.filter((item) => item.orgId === orgId && (!contactId || item.customerId === contactId)),
-      async (orgId, accountId) => {
-        calls.push(`${orgId}:${accountId}`);
+      async (orgId, tenantKey, accountId) => {
+        calls.push(`${orgId}:${tenantKey}:${accountId}`);
         return { status: "association_mismatch" };
       },
     );
@@ -92,7 +94,20 @@ describe("tenant Personal Line read model", () => {
     assert.equal(await detailReader.get(b, "contact-a"), null);
     assert.deepEqual(calls, []);
     const line = await detailReader.get(a, "contact-a");
-    assert.deepEqual(calls, [`${a}:account-a`]);
+    assert.deepEqual(calls, [`${a}:epic:account-a`]);
     assert.deepEqual(line?.serviceEvidence, { status: "association_mismatch" });
+  });
+
+  test("does not read service data from an account id unless the signed association exists", async () => {
+    const calls: string[] = [];
+    const unverified = { ...row(a, "subject-unverified", "account-unverified", "+1 767 *** 3003"), serviceAccountId: null, serviceTenantKey: null };
+    const reader = createTenantPersonalLineReader(async () => [unverified], async (...args) => {
+      calls.push(args.join(":"));
+      return { status: "unavailable" };
+    });
+    const line = await reader.get(a, "contact-unverified");
+    assert.equal(line?.serviceAssociationStatus, "unverified");
+    assert.equal(line?.accountAssigned, false);
+    assert.deepEqual(calls, []);
   });
 });

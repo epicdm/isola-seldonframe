@@ -11,6 +11,7 @@ export type PersonalLineRecord = {
   /** Opaque workspace-local contact reference; upstream service IDs stay server-side. */
   referenceId: string;
   accountAssigned: boolean;
+  serviceAssociationStatus: "verified" | "pending" | "unverified";
   customerId: string;
   customerName: string;
   stage: string;
@@ -31,6 +32,9 @@ export type SubjectFactsRow = {
   updatedAt: Date;
   customerId: string;
   customerName: string;
+  /** Internal only: present after the signed event created the service-account association. */
+  serviceAccountId: string | null;
+  serviceTenantKey: string | null;
 };
 export type TenantFactsReader = (orgId: string, contactId?: string) => Promise<SubjectFactsRow[]>;
 
@@ -44,7 +48,8 @@ function projectRecord(row: SubjectFactsRow, serviceEvidence: PersonalLineServic
   const stageIndex = Math.max(0, Math.min(STAGES.length - 1, Number(row.lastVersion) - 1));
   return {
     referenceId: row.customerId,
-    accountAssigned: typeof raw.pl_account_id === "string" && raw.pl_account_id.length > 0,
+    accountAssigned: Boolean(row.serviceAccountId),
+    serviceAssociationStatus: row.serviceAccountId ? "verified" : typeof raw.pl_account_id === "string" && raw.pl_account_id ? "unverified" : "pending",
     customerId: row.customerId,
     customerName: row.customerName,
     stage: STAGES[stageIndex],
@@ -57,7 +62,7 @@ function projectRecord(row: SubjectFactsRow, serviceEvidence: PersonalLineServic
 /** All reads require the caller's server-resolved org id and query by that tenant first. */
 export function createTenantPersonalLineReader(
   readRows: TenantFactsReader,
-  readService: (orgId: string, accountId: string) => Promise<PersonalLineServiceEvidence> = readPersonalLineServiceEvidence,
+  readService: (orgId: string, tenantKey: string, accountId: string) => Promise<PersonalLineServiceEvidence> = readPersonalLineServiceEvidence,
 ) {
   return {
     async list(orgId: string, search = ""): Promise<PersonalLineRecord[]> {
@@ -74,15 +79,17 @@ export function createTenantPersonalLineReader(
   async get(orgId: string, contactId: string): Promise<PersonalLineRecord | null> {
       const [row] = await readRows(orgId, contactId);
       if (!row) return null;
-      const accountId = typeof row.facts?.pl_account_id === "string" ? row.facts.pl_account_id : null;
-      const serviceEvidence = accountId ? await readService(orgId, accountId).catch(() => ({ status: "unavailable" as const })) : { status: "not_linked" as const };
+      const accountId = row.serviceAccountId;
+      const serviceEvidence = accountId && row.serviceTenantKey
+        ? await readService(orgId, row.serviceTenantKey, accountId).catch(() => ({ status: "unavailable" as const }))
+        : { status: "not_linked" as const };
       return projectRecord(row, serviceEvidence);
     },
   };
 }
 
 const tenantReader = createTenantPersonalLineReader(async (orgId, contactId) => {
-  const [{ db }, { contacts, externalIdentities, integrationSubjectFacts }] = await Promise.all([
+  const [{ db }, { contacts, externalIdentities, integrationSubjectFacts, workspaceServiceAssociations }] = await Promise.all([
     import("@/db"),
     import("@/db/schema"),
   ]);
@@ -98,6 +105,8 @@ const tenantReader = createTenantPersonalLineReader(async (orgId, contactId) => 
       updatedAt: integrationSubjectFacts.updatedAt,
       customerId: contacts.id,
       customerName: sql<string>`concat_ws(' ', ${contacts.firstName}, ${contacts.lastName})`,
+      serviceAccountId: workspaceServiceAssociations.externalAccountId,
+      serviceTenantKey: workspaceServiceAssociations.tenantKey,
     })
     .from(integrationSubjectFacts)
     .innerJoin(externalIdentities, and(
@@ -108,6 +117,12 @@ const tenantReader = createTenantPersonalLineReader(async (orgId, contactId) => 
     .innerJoin(contacts, and(
       eq(contacts.orgId, integrationSubjectFacts.orgId),
       eq(contacts.id, externalIdentities.contactId),
+    ))
+    .leftJoin(workspaceServiceAssociations, and(
+      eq(workspaceServiceAssociations.orgId, integrationSubjectFacts.orgId),
+      eq(workspaceServiceAssociations.provider, integrationSubjectFacts.provider),
+      eq(workspaceServiceAssociations.externalSubjectId, integrationSubjectFacts.externalId),
+      sql`${workspaceServiceAssociations.externalAccountId} = ${integrationSubjectFacts.facts}->>'pl_account_id'`,
     ))
     .where(and(
       eq(integrationSubjectFacts.orgId, orgId),
