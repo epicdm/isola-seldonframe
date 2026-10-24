@@ -189,8 +189,8 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     configure();
     const epicSubject = `subj_read_epic_${randomUUID().slice(0, 8)}`;
     const foreignSubject = `subj_read_foreign_${randomUUID().slice(0, 8)}`;
-    assert.equal((await post(EPIC, body("pl.line_created", epicSubject))).status, 200);
-    assert.equal((await post(FOREIGN, body("pl.line_created", foreignSubject, { tenant: "foreign" }))).status, 200);
+    assert.equal((await post(EPIC, body("pl.line_created", epicSubject, { facts: { did_masked: "+1 767 *** 1001" } }))).status, 200);
+    assert.equal((await post(FOREIGN, body("pl.line_created", foreignSubject, { tenant: "foreign", facts: { did_masked: "+1 767 *** 2002" } }))).status, 200);
 
     const contactFor = async (orgId: string, subject: string) => {
       const result: any = await db.execute(sql`select contact_id from external_identities where org_id = ${orgId}::uuid and provider = 'personal_line' and external_id = ${subject}`);
@@ -206,6 +206,8 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     const epicLines = await listTenantPersonalLines(EPIC);
     assert.ok(epicLines.some((line) => line.customerId === epicContactId && line.serviceAssociationStatus === "verified"));
     assert.ok(!epicLines.some((line) => line.customerId === foreignContactId));
+    assert.deepEqual((await listTenantPersonalLines(EPIC, "1001")).map((line) => line.customerId), [epicContactId]);
+    assert.deepEqual(await listTenantPersonalLines(EPIC, "2002"), []);
     assert.equal(await getTenantPersonalLine(EPIC, foreignContactId), null);
 
     const listHandler = createPersonalLinesListHandler(async () => EPIC, listTenantPersonalLines);
@@ -214,6 +216,9 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     const listed = await listResponse.json() as { lines: Array<{ customerId: string }> };
     assert.ok(listed.lines.some((line) => line.customerId === epicContactId));
     assert.ok(!listed.lines.some((line) => line.customerId === foreignContactId));
+    const searchResponse = await listHandler(new Request(`http://uplink.test/api/personal-lines?orgId=${FOREIGN}&search=2002`));
+    assert.equal(searchResponse.status, 200);
+    assert.deepEqual((await searchResponse.json() as { lines: Array<{ customerId: string }> }).lines, []);
 
     const detailHandler = createPersonalLineDetailHandler(async () => EPIC, getTenantPersonalLine);
     const detailResponse = await detailHandler(new Request(`http://uplink.test/api/personal-lines/${foreignContactId}?orgId=${FOREIGN}`), foreignContactId);
