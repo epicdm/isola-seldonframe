@@ -104,6 +104,10 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Bootstrap the Personal Line composite FK target in scratch Postgres
+        working-directory: packages/crm
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/fixtures/personal-line-db-reference-bootstrap.sql
+
       - name: Create isolated schema from the current Drizzle model
         # This job owns a disposable empty Postgres service; --force only accepts
         # schema prompts in that scratch database, never in a shared environment.
