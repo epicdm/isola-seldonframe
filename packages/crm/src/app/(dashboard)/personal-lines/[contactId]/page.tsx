@@ -2,6 +2,10 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getOrgId } from "@/lib/auth/helpers";
 import { getTenantPersonalLine } from "@/lib/personal-lines/tenant-data";
+import { ChatwootLinkCard } from "@/components/contacts/chatwoot-link-card";
+import { getChatwootLinkState, type LinkState } from "@/lib/chatwoot-link/service";
+import { canConfirmChatwootLink, resolveChatwootActor } from "@/lib/chatwoot-link/session";
+import { makeChatwootLinkDeps } from "@/lib/chatwoot-link/wiring";
 
 export default async function PersonalLineDetailPage({
   params,
@@ -13,6 +17,11 @@ export default async function PersonalLineDetailPage({
   const { contactId } = await params;
   const line = await getTenantPersonalLine(orgId, contactId);
   if (!line) notFound();
+  const chatwootLink: LinkState = await getChatwootLinkState(orgId, line.customerId, makeChatwootLinkDeps(orgId)).catch(
+    () => ({ state: "unavailable" }) as LinkState,
+  );
+  const chatwootCanConfirm =
+    chatwootLink.state === "unlinked" && canConfirmChatwootLink(await resolveChatwootActor().catch(() => null));
 
   return (
     <main className="mx-auto w-full max-w-3xl space-y-6 p-6">
@@ -30,6 +39,14 @@ export default async function PersonalLineDetailPage({
         <div><p className="text-xs text-muted-foreground">SIP registration</p><p className="mt-1 font-medium">{line.facts.registered_at ? `Registered ${line.facts.registered_at}` : "No registration event recorded"}</p></div>
         <div><p className="text-xs text-muted-foreground">First call</p><p className="mt-1 font-medium">{line.facts.first_call_at ?? "No first-call event recorded"}</p></div>
       </section>
+      {chatwootLink.state !== "unavailable" ? (
+        <ChatwootLinkCard
+          key={`${line.customerId}:${chatwootLink.state}:${chatwootLink.state === "linked" ? `${chatwootLink.url}:${chatwootLink.confirmedAt}` : ""}`}
+          contactId={line.customerId}
+          initial={chatwootLink}
+          canConfirm={chatwootCanConfirm}
+        />
+      ) : null}
       <p className="text-sm text-muted-foreground">Payment and plan status require a trusted billing association. This page does not infer them from signup or call events. No management action is enabled until its supported service procedure is connected.</p>
     </main>
   );
