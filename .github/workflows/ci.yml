@@ -1,6 +1,6 @@
 name: CI
 
-# Runs on every PR and every push to main. Fails closed on unit-test
+# Runs on every PR to main or the production-baseline recovery branch, and every push to main. Fails closed on unit-test
 # failures so specs can't silently rot. Added 2026-04-21 as part of
 # Scope 3 Step 2b.1 PR 1 — before this, the repo had only a deploy
 # workflow (deploy-demo.yml) that ran on push-to-main without a test
@@ -8,7 +8,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # The recovery branch is the exact deployed-source baseline used for
+    # production fixes that must not inherit unrelated commits from main.
+    branches: [main, recovery/uplink-prod-aeccb-20261024]
   push:
     branches: [main]
 
