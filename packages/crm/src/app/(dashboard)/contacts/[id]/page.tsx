@@ -21,6 +21,8 @@ import { ChatwootLinkCard } from "@/components/contacts/chatwoot-link-card";
 import { getChatwootLinkState, type LinkState } from "@/lib/chatwoot-link/service";
 import { canConfirmChatwootLink, resolveChatwootActor } from "@/lib/chatwoot-link/session";
 import { makeChatwootLinkDeps } from "@/lib/chatwoot-link/wiring";
+import { getTenantPersonalLine } from "@/lib/personal-lines/tenant-data";
+import { PersonalLineContactCard } from "@/components/contacts/personal-line-contact-card";
 
 /**
  * /contacts/[id] — full Twenty-style record detail page.
@@ -167,6 +169,7 @@ export default async function ContactRecordPage({
   );
   const chatwootCanConfirm =
     chatwootLink.state === "unlinked" && canConfirmChatwootLink(await resolveChatwootActor().catch(() => null));
+  const personalLine = await getTenantPersonalLine(orgId, contact.id);
 
   // Resolve the client's workspace slug from customFields.workspaceId.
   // This is a lightweight second-pass query — runs after notFound() so
@@ -290,6 +293,8 @@ export default async function ContactRecordPage({
           Back to {labels.contact.plural}
         </Link>
       </div>
+
+      {personalLine ? <PersonalLineContactCard line={personalLine} /> : null}
 
       {chatwootLink.state !== "unavailable" ? (
         <ChatwootLinkCard

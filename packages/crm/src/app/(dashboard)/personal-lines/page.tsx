@@ -38,7 +38,7 @@ export default async function PersonalLinesPage({
             <tbody>{lines.map((line) => (
               <tr key={line.referenceId} className="border-t">
                 <td className="p-3"><Link className="underline-offset-4 hover:underline" href={`/contacts/${encodeURIComponent(line.customerId)}`}>{line.customerName}</Link></td>
-                <td className="p-3"><Link className="font-medium underline-offset-4 hover:underline" href={`/personal-lines/${encodeURIComponent(line.referenceId)}`}>{line.accountAssigned ? "Assigned" : "Pending account"}</Link></td>
+                <td className="p-3"><Link className="font-medium underline-offset-4 hover:underline" href={`/contacts/${encodeURIComponent(line.customerId)}`}>{line.accountAssigned ? "Assigned · open customer" : "Pending · open customer"}</Link></td>
                 <td className="p-3">{line.facts.did_masked ?? "Not yet recorded"}</td>
                 <td className="p-3">{line.stage}</td>
                 <td className="p-3">{new Date(line.updatedAt).toLocaleString()}</td>
