@@ -34,11 +34,11 @@ export default async function PersonalLinesPage({
       ) : (
         <div className="overflow-x-auto rounded-lg border">
           <table className="w-full text-left text-sm">
-            <thead className="bg-muted/40 text-muted-foreground"><tr><th className="p-3">Customer</th><th className="p-3">Account</th><th className="p-3">Number</th><th className="p-3">Onboarding stage</th><th className="p-3">Updated</th></tr></thead>
+            <thead className="bg-muted/40 text-muted-foreground"><tr><th className="p-3">Customer</th><th className="p-3">Signed account link</th><th className="p-3">Number</th><th className="p-3">Onboarding stage</th><th className="p-3">Updated</th></tr></thead>
             <tbody>{lines.map((line) => (
               <tr key={line.referenceId} className="border-t">
                 <td className="p-3"><Link className="underline-offset-4 hover:underline" href={`/contacts/${encodeURIComponent(line.customerId)}`}>{line.customerName}</Link></td>
-                <td className="p-3"><Link className="font-medium underline-offset-4 hover:underline" href={`/contacts/${encodeURIComponent(line.customerId)}`}>{line.serviceAssociationStatus === "verified" ? "Verified · open customer" : line.serviceAssociationStatus === "unverified" ? "Needs association · open customer" : "Pending · open customer"}</Link></td>
+                <td className="p-3"><Link className="font-medium underline-offset-4 hover:underline" href={`/contacts/${encodeURIComponent(line.customerId)}`}>{line.serviceAssociationStatus === "verified" ? "Linked · open customer" : line.serviceAssociationStatus === "unverified" ? "Needs review · open customer" : "Pending · open customer"}</Link></td>
                 <td className="p-3">{line.facts.did_masked ?? "Not yet recorded"}</td>
                 <td className="p-3">{line.stage}</td>
                 <td className="p-3">{new Date(line.updatedAt).toLocaleString()}</td>

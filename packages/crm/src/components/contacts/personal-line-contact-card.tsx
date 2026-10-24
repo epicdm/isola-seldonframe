@@ -15,7 +15,7 @@ export function PersonalLineContactCard({ line }: { line: PersonalLineRecord }) 
       </div>
       <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
         <div><dt className="text-xs text-muted-foreground">Onboarding stage</dt><dd className="mt-1 font-medium">{line.stage}</dd></div>
-        <div><dt className="text-xs text-muted-foreground">Service association</dt><dd className="mt-1 font-medium">{line.serviceAssociationStatus === "verified" ? "Verified from signed service event" : line.serviceAssociationStatus === "unverified" ? "Needs operator review" : "Pending account assignment"}</dd></div>
+        <div><dt className="text-xs text-muted-foreground">Signed account link</dt><dd className="mt-1 font-medium">{line.serviceAssociationStatus === "verified" ? "Linked by signed lifecycle event" : line.serviceAssociationStatus === "unverified" ? "Account ID needs review" : "Pending line assignment"}</dd></div>
         <div><dt className="text-xs text-muted-foreground">Personal Line number</dt><dd className="mt-1 font-medium">{line.facts.did_masked ?? "Not yet recorded"}</dd></div>
         <div><dt className="text-xs text-muted-foreground">Registration event</dt><dd className="mt-1 font-medium">{line.facts.registered_at ? `Recorded ${line.facts.registered_at}` : "No registration event recorded"}</dd></div>
         <div><dt className="text-xs text-muted-foreground">First answered call</dt><dd className="mt-1 font-medium">{line.facts.first_call_at ?? "No first-call event recorded"}</dd></div>
@@ -26,10 +26,10 @@ export function PersonalLineContactCard({ line }: { line: PersonalLineRecord }) 
           <div><dt className="text-xs text-muted-foreground">Wallet balance</dt><dd className="mt-1 font-medium">{evidence.wallet.balanceEc === null ? "Unknown" : `${evidence.wallet.currency ?? "EC$"} ${evidence.wallet.balanceEc.toFixed(2)}`}</dd></div>
           <div><dt className="text-xs text-muted-foreground">Plan</dt><dd className="mt-1 font-medium">{evidence.plan.state === "none" ? "No plan subscription" : evidence.plan.status === "query_failed" ? "Unavailable" : evidence.plan.name ? `${evidence.plan.name} (${evidence.plan.state ?? evidence.plan.status})` : "Unknown"}</dd></div>
           <div><dt className="text-xs text-muted-foreground">Wallet credit evidence</dt><dd className="mt-1 font-medium">{evidence.wallet.creditsStatus === "ok" ? evidence.wallet.credits.length ? evidence.wallet.credits.map((credit) => `${credit.amountEc === null ? "Amount unknown" : `${evidence.wallet.currency ?? "EC$"} ${credit.amountEc.toFixed(2)}`}${credit.currencyPaid ? ` paid in ${credit.currencyPaid}` : ""} · ${credit.state}`).join("; ") : "No confirmed credit events returned" : `Unavailable (${evidence.wallet.creditsStatus})`}</dd></div>
-        </> : <div><dt className="text-xs text-muted-foreground">Live service data</dt><dd className="mt-1 font-medium">{evidence.status === "not_linked" ? "Service association not available" : evidence.status === "association_mismatch" ? "Service association needs review" : "Temporarily unavailable"}</dd></div>}
+        </> : <div><dt className="text-xs text-muted-foreground">Live voice service data</dt><dd className="mt-1 font-medium">{evidence.status === "not_linked" ? "Voice service association not available" : evidence.status === "association_mismatch" ? "Voice service association needs review" : "Temporarily unavailable"}</dd></div>}
         <div><dt className="text-xs text-muted-foreground">Updated</dt><dd className="mt-1 font-medium">{new Date(line.updatedAt).toLocaleString()}</dd></div>
       </dl>
-      <p className="mt-4 text-xs text-muted-foreground">Live status is read from the configured Personal Line service and checked against its recorded service number. Recorded credits are wallet events and are not a payment settlement report.</p>
+      <p className="mt-4 text-xs text-muted-foreground">The signed lifecycle event links this workspace contact to a Personal Line account. Live voice data is read separately from the configured service and checked against its recorded number. Recorded credits are wallet events and are not a payment settlement report.</p>
     </section>
   );
 }
