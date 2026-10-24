@@ -206,7 +206,17 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     preSession7d = signAt("session", INFO_EMAIL, now - 60_000);
     preUnusedMagic = signAt("magic", INFO_EMAIL, now - 30_000);
     preLegacySession = S.signOperatorToken({ orgId: EPIC, email: INFO_EMAIL, kind: "session", exp: now - 10_000 + S.OPERATOR_SESSION_TTL_MS });
-    preSupport = signAt("session", "support+platform-x@seldonframe-agency.local", now - 5_000, { supportOriginUserId: SUPER, exp: now - 5_000 + S.OPERATOR_SUPPORT_SESSION_TTL_MS });
+    const supportSessions = (await import("@/db/schema")).agencySupportSessions;
+    const [supportAudit] = await db.insert(supportSessions).values({
+      workspaceId: EPIC,
+      originUserId: SUPER,
+      notes: "synthetic pre-transfer support token fixture",
+    }).returning({ id: supportSessions.id });
+    preSupport = signAt("session", "support+platform-x@seldonframe-agency.local", now - 5_000, {
+      supportOriginUserId: SUPER,
+      supportSessionId: supportAudit.id,
+      exp: now - 5_000 + S.OPERATOR_SUPPORT_SESSION_TTL_MS,
+    });
     for (const t of [preSession7d, preLegacySession, preSupport]) assert.equal(await portalOrgFor(t), EPIC, "valid before the transfer (positive control)");
     assert.equal(await sessionForOrg(preSession7d), EPIC);
   });

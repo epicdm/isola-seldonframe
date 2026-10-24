@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import test from "node:test";
+import test, { mock } from "node:test";
+
+// Next's marker is provided by the framework bundler in production. This
+// scratch-Postgres test imports the server module directly under Node.
+mock.module("server-only", { namedExports: {} });
 
 const enabled = process.env.PL_VERTICAL_PACK_DB_TEST === "scratch" && !!process.env.NEON_LOCAL_HOST;
 
