@@ -93,6 +93,8 @@ export function Sidebar(props: {
   draftApprovalsOn?: boolean;
   /** Phone & WhatsApp exposure, resolved server-side by the dashboard layout. See nav-config.ts's BuildNavInput.phoneWhatsappOn. */
   phoneWhatsappOn?: boolean;
+  /** Personal Line tenant mapping, resolved server-side by the dashboard layout. */
+  personalLinesOn?: boolean;
 }) {
   const {
     hiddenBlocks = [],
@@ -114,6 +116,7 @@ export function Sidebar(props: {
     smsLive = false,
     draftApprovalsOn = false,
     phoneWhatsappOn = false,
+    personalLinesOn = false,
   } = props;
   const labels = useLabels();
   const pathname = usePathname();
@@ -152,6 +155,7 @@ export function Sidebar(props: {
     smsLive,
     draftApprovalsOn,
     phoneWhatsappOn,
+    personalLinesOn,
   });
 
   const [mobileOpen, setMobileOpen] = useState(false);

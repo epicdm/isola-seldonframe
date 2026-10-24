@@ -228,3 +228,7 @@ export * from "./share-cards";
 // 2026-07-11 — H2 hotfix (migration 0071): eval_run_jobs, an ephemeral poll
 // target for the out-of-request "Run evals" flow (after()). Additive.
 export * from "./eval-run-jobs";
+export * from "./integration-events";
+export * from "./external-identities";
+export * from "./public-turn-spend";
+export * from "./workspace-admin-actions";

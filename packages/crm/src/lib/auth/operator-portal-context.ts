@@ -16,11 +16,13 @@
 // these sessions (mirroring the admin-token treatment).
 
 import { cookies } from "next/headers";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { organizations } from "@/db/schema";
+import { agencySupportSessions, organizations } from "@/db/schema";
+import { isEmailInAllowlist, parseAdminAllowlist } from "@/lib/operator-portal/authorization";
 import {
   OPERATOR_SESSION_COOKIE,
+  isOperatorTokenRevoked,
   verifyOperatorToken,
 } from "@/lib/operator-portal/session";
 
@@ -47,6 +49,7 @@ export type OperatorPortalContext = {
     role: "admin" | "operator";
     /** v1.20+ — set when this is an agency support session. */
     supportOriginUserId: string | null;
+    supportSessionId: string | null;
     // ── NextAuth-shape fields (operator session has no plan/billing) ─
     planId: string | null;
     subscriptionStatus: "trialing" | "active" | "past_due" | "canceled" | "unpaid";
@@ -76,11 +79,25 @@ export async function resolveOperatorPortalContext(): Promise<OperatorPortalCont
   // Verify the org still exists. This guards against a deleted
   // workspace + stale cookie.
   const [orgRow] = await db
-    .select({ id: organizations.id, slug: organizations.slug, name: organizations.name })
+    .select({ id: organizations.id, slug: organizations.slug, name: organizations.name, operatorSessionsValidAfter: organizations.operatorSessionsValidAfter })
     .from(organizations)
     .where(eq(organizations.id, verified.orgId))
     .limit(1);
   if (!orgRow) return null;
+  if (isOperatorTokenRevoked(verified, orgRow.operatorSessionsValidAfter)) return null;
+  if (!verified.supportOriginUserId && isEmailInAllowlist(verified.email, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) return null;
+  if (verified.supportSessionId) {
+    const [activeSession] = await db.select({ id: agencySupportSessions.id })
+      .from(agencySupportSessions)
+      .where(and(
+        eq(agencySupportSessions.id, verified.supportSessionId),
+        eq(agencySupportSessions.workspaceId, orgRow.id),
+        eq(agencySupportSessions.originUserId, verified.supportOriginUserId ?? ""),
+        isNull(agencySupportSessions.agencyId),
+        isNull(agencySupportSessions.endedAt),
+      )).limit(1);
+    if (!activeSession) return null;
+  }
 
   return {
     user: {
@@ -92,6 +109,7 @@ export async function resolveOperatorPortalContext(): Promise<OperatorPortalCont
       orgId: verified.orgId,
       role: "admin",
       supportOriginUserId: verified.supportOriginUserId ?? null,
+      supportSessionId: verified.supportSessionId ?? null,
       // Defaults for the NextAuth-shape fields. Plan/billing aren't
       // resolvable from the operator session alone; downstream code
       // already handles null planId gracefully (free-tier UX).

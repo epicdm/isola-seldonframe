@@ -17,6 +17,12 @@ import {
   type ContactDetail,
 } from "@/components/contacts/contact-record-detail";
 import type { DocumentRow } from "@/components/contacts/contact-documents-tab";
+import { ChatwootLinkCard } from "@/components/contacts/chatwoot-link-card";
+import { getChatwootLinkState, type LinkState } from "@/lib/chatwoot-link/service";
+import { canConfirmChatwootLink, resolveChatwootActor } from "@/lib/chatwoot-link/session";
+import { makeChatwootLinkDeps } from "@/lib/chatwoot-link/wiring";
+import { getTenantPersonalLine } from "@/lib/personal-lines/tenant-data";
+import { PersonalLineContactCard } from "@/components/contacts/personal-line-contact-card";
 
 /**
  * /contacts/[id] — full Twenty-style record detail page.
@@ -155,6 +161,16 @@ export default async function ContactRecordPage({
 
   if (!contact) notFound();
 
+  // Personal Line support uses the existing, workspace-bound Chatwoot
+  // contact association. A missing or failed configuration hides the card;
+  // it never falls back to a global inbox or guesses from a phone match.
+  const chatwootLink: LinkState = await getChatwootLinkState(orgId, contact.id, makeChatwootLinkDeps(orgId)).catch(
+    () => ({ state: "unavailable" }) as LinkState,
+  );
+  const chatwootCanConfirm =
+    chatwootLink.state === "unlinked" && canConfirmChatwootLink(await resolveChatwootActor().catch(() => null));
+  const personalLine = await getTenantPersonalLine(orgId, contact.id);
+
   // Resolve the client's workspace slug from customFields.workspaceId.
   // This is a lightweight second-pass query — runs after notFound() so
   // we only hit the DB when a contact actually exists.
@@ -277,6 +293,17 @@ export default async function ContactRecordPage({
           Back to {labels.contact.plural}
         </Link>
       </div>
+
+      {personalLine ? <PersonalLineContactCard line={personalLine} /> : null}
+
+      {chatwootLink.state !== "unavailable" ? (
+        <ChatwootLinkCard
+          key={`${contact.id}:${chatwootLink.state}:${chatwootLink.state === "linked" ? `${chatwootLink.url}:${chatwootLink.confirmedAt}` : ""}`}
+          contactId={contact.id}
+          initial={chatwootLink}
+          canConfirm={chatwootCanConfirm}
+        />
+      ) : null}
 
       <ContactRecordDetail
         contact={detail}

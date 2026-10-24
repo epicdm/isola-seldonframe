@@ -56,6 +56,18 @@ export type EmitOptions = {
    * that 2c's optional shape allowed.
    */
   orgId: string;
+  /**
+   * EPIC 2026-10-21: the event's workflow_event_log row was ALREADY written by the caller, in the same SQL statement as
+   * the state change it records (lib/deals/stage-move.ts, lib/personal-line/lifecycle.ts), so the change and its
+   * audit row commit together. When set, step 2 (append) is skipped and this id is used; nothing else changes.
+   */
+  preLoggedEventId?: string;
+  /**
+   * EPIC 2026-10-21 (Codex r4): rethrow (after logging) a failure of the wait-resume or subscription-enqueue step instead
+   * of swallowing it, so a caller with its own retry (the signed Personal Line ingress: inbox + reclaim) can redeliver
+   * from the saved log row. Default false: every existing caller keeps today's best-effort behaviour.
+   */
+  throwOnDispatchFailure?: boolean;
 };
 
 export async function emitSeldonEvent<T extends EventType>(
@@ -81,8 +93,8 @@ export async function emitSeldonEvent<T extends EventType>(
   await bus.emit(type, data);
 
   // 2. Durable persistence to workflow_event_log.
-  let eventLogId: string | null = null;
-  try {
+  let eventLogId: string | null = options.preLoggedEventId ?? null;
+  if (!options.preLoggedEventId) try {
     const storage = new DrizzleRuntimeStorage(db);
     eventLogId = await storage.appendEventLog({
       orgId: options.orgId,
@@ -102,6 +114,7 @@ export async function emitSeldonEvent<T extends EventType>(
     // resolving on this event). Log the failure and move on.
   }
 
+  let dispatchFailure: unknown = null;
   // 3. Synchronous wake-up scan (G-2 default).
   try {
     const storage = new DrizzleRuntimeStorage(db);
@@ -124,6 +137,7 @@ export async function emitSeldonEvent<T extends EventType>(
       orgId: options.orgId,
       error: err instanceof Error ? err.message : String(err),
     });
+    dispatchFailure ??= err;
   }
 
   // 4. SLICE 1 PR 2 C2: subscription enqueue scan. Matches active
@@ -147,7 +161,9 @@ export async function emitSeldonEvent<T extends EventType>(
       orgId: options.orgId,
       error: err instanceof Error ? err.message : String(err),
     });
+    dispatchFailure ??= err;
   }
+  if (options.throwOnDispatchFailure && dispatchFailure) throw dispatchFailure;
 
   const elapsed = Date.now() - startedAt;
   // Instrumentation (G-2): if emit-caller latency grows, this is the

@@ -121,6 +121,21 @@ describe("buildNavGroups — agency, solo operator (workspaceCount <= 1)", () =>
     assert.equal(findItem(groups, "/forms")?.indent, true, "/forms should be a sub-item");
   });
 
+  test("Personal Lines appears under Services only for an allowlisted workspace", () => {
+    const off = buildNavGroups(baseInput());
+    assert.equal(hasHref(off, "/personal-lines"), false);
+    const on = buildNavGroups(baseInput({ personalLinesOn: true }));
+    assert.equal(countHref(on, "/personal-lines"), 1);
+    assert.equal(findItem(on, "/personal-lines")?.label, "Personal Lines");
+    assert.ok(on.find((g) => g.title === "SERVICES")?.items.some((i) => i.href === "/personal-lines"));
+  });
+
+  test("allowlisted Personal Lines is available after switching into a tenant workspace", () => {
+    const groups = buildNavGroups(baseInput({ sessionType: "inside-client-workspace", personalLinesOn: true }));
+    assert.equal(countHref(groups, "/personal-lines"), 1);
+    assert.ok(groups.find((g) => g.title === "SERVICES")?.items.some((i) => i.href === "/personal-lines"));
+  });
+
   test("renders Messaging as a sub-item under Inbox and Proposals under Money", () => {
     const groups = buildNavGroups(baseInput({ workspaceCount: 1 }));
     assert.equal(findItem(groups, "/emails")?.indent, true, "/emails (Messaging) should be a sub-item");
@@ -287,8 +302,8 @@ describe("buildNavGroups — operator-portal session", () => {
 
 describe("buildNavGroups — inside-client-workspace session", () => {
   test("renders the full client workspace surface set", () => {
-    const groups = buildNavGroups(baseInput({ sessionType: "inside-client-workspace" }));
-    for (const href of ["/dashboard", "/contacts", "/deals", "/bookings", "/conversations", "/emails", "/forms", "/automations", "/integrations", "/settings"]) {
+    const groups = buildNavGroups(baseInput({ sessionType: "inside-client-workspace", personalLinesOn: true }));
+    for (const href of ["/dashboard", "/contacts", "/deals", "/bookings", "/conversations", "/emails", "/forms", "/personal-lines", "/automations", "/integrations", "/settings"]) {
       assert.equal(hasHref(groups, href), true, `${href} should be reachable inside a client workspace`);
     }
   });
