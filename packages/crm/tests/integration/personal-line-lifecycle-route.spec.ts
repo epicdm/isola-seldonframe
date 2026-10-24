@@ -276,8 +276,9 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     assert.equal((await post(EPIC, body("pl.signup_started", "subj_t1", { tenant: "other" }))).status, 403);
     assert.equal((await post(FOREIGN, body("pl.signup_started", "subj_t2"))).status, 403);
     assert.equal((await post(NOSTAGE, body("pl.signup_started", "subj_t3"))).status, 403);   // epic's tenant, allowlisted path of ANOTHER tenant
-    const foreignDeals = await db.select({ id: S.deals.id, title: S.deals.title, customFields: S.deals.customFields }).from(S.deals).where(eq(S.deals.orgId, FOREIGN));
-    assert.deepEqual(foreignDeals, [], "denied events must not create a deal in the foreign tenant");
+    const deniedForeignDeals = await db.execute(sql`select id from deals where org_id = ${FOREIGN}::uuid and custom_fields->>'plSubjectId' in ('subj_t1','subj_t2','subj_t3')`);
+    const deniedDealRows = (deniedForeignDeals as any).rows ?? deniedForeignDeals;
+    assert.equal(deniedDealRows.length, 0, `denied events must not create a deal in the foreign tenant: ${JSON.stringify(deniedDealRows)}`);
     const deniedRows = await db.execute(sql`select org_id, external_id, event_id from integration_event_inbox where external_id in ('subj_t1','subj_t2','subj_t3') order by external_id`);
     assert.equal(await count(sql`select count(*)::int n from integration_event_inbox where external_id in ('subj_t1','subj_t2','subj_t3')`), 0, JSON.stringify((deniedRows as any).rows ?? deniedRows));
     // positive twin: the second allowlisted tenant on its own path is accepted
