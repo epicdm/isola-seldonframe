@@ -84,7 +84,7 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
   const configure = () => {
     process.env.PL_LIFECYCLE_KEY_FILE = keyFile;
     process.env.PL_LIFECYCLE_KID = "v1";
-    process.env.PL_LIFECYCLE_TENANT_ORGS = `epic=${EPIC},nostage=${NOSTAGE}`;
+    process.env.PL_LIFECYCLE_TENANT_ORGS = `epic=${EPIC},foreign=${FOREIGN},nostage=${NOSTAGE}`;
   };
 
   test("NOT CONFIGURED (deployed dark): 503 and nothing written; positive twin: the same signed body is accepted once configured", async () => {
@@ -183,6 +183,41 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     assert.equal(associations.length, 1);
     assert.equal(associations[0].externalSubjectId, "subj_assoc_owner");
     assert.equal((await plDealOf(EPIC, "subj_assoc_other")).length, 0);
+  });
+
+  test("tenant read model and HTTP handlers never expose a foreign workspace contact", async () => {
+    configure();
+    const epicSubject = `subj_read_epic_${randomUUID().slice(0, 8)}`;
+    const foreignSubject = `subj_read_foreign_${randomUUID().slice(0, 8)}`;
+    assert.equal((await post(EPIC, body("pl.line_created", epicSubject))).status, 200);
+    assert.equal((await post(FOREIGN, body("pl.line_created", foreignSubject, { tenant: "foreign" }))).status, 200);
+
+    const contactFor = async (orgId: string, subject: string) => {
+      const result: any = await db.execute(sql`select contact_id from external_identities where org_id = ${orgId}::uuid and provider = 'personal_line' and external_id = ${subject}`);
+      return (result.rows ?? result)[0]?.contact_id as string | undefined;
+    };
+    const epicContactId = await contactFor(EPIC, epicSubject);
+    const foreignContactId = await contactFor(FOREIGN, foreignSubject);
+    assert.ok(epicContactId);
+    assert.ok(foreignContactId);
+
+    const { listTenantPersonalLines, getTenantPersonalLine } = await import("@/lib/personal-lines/tenant-data");
+    const { createPersonalLinesListHandler, createPersonalLineDetailHandler } = await import("@/lib/personal-lines/http");
+    const epicLines = await listTenantPersonalLines(EPIC);
+    assert.ok(epicLines.some((line) => line.customerId === epicContactId && line.serviceAssociationStatus === "verified"));
+    assert.ok(!epicLines.some((line) => line.customerId === foreignContactId));
+    assert.equal(await getTenantPersonalLine(EPIC, foreignContactId), null);
+
+    const listHandler = createPersonalLinesListHandler(async () => EPIC, listTenantPersonalLines);
+    const listResponse = await listHandler(new Request(`http://uplink.test/api/personal-lines?orgId=${FOREIGN}`));
+    assert.equal(listResponse.status, 200);
+    const listed = await listResponse.json() as { lines: Array<{ customerId: string }> };
+    assert.ok(listed.lines.some((line) => line.customerId === epicContactId));
+    assert.ok(!listed.lines.some((line) => line.customerId === foreignContactId));
+
+    const detailHandler = createPersonalLineDetailHandler(async () => EPIC, getTenantPersonalLine);
+    const detailResponse = await detailHandler(new Request(`http://uplink.test/api/personal-lines/${foreignContactId}?orgId=${FOREIGN}`), foreignContactId);
+    assert.equal(detailResponse.status, 404);
   });
 
   test("OUT OF ORDER: first call arrives first -> deal created AT First call; the older events never move it back", async () => {
