@@ -19,6 +19,7 @@ export async function GET(
   const { orgSlug } = await context.params;
   const origin = await tenantRedirectOrigin(request, orgSlug);
   const token = request.nextUrl.searchParams.get("token")?.trim() || "";
+  const nextPath = request.nextUrl.searchParams.get("next");
 
   if (!token) {
     return NextResponse.redirect(
@@ -29,7 +30,7 @@ export async function GET(
     );
   }
 
-  const result = await consumeAgencySupportSession({ orgSlug, token });
+  const result = await consumeAgencySupportSession({ orgSlug, token, nextPath });
   if (!result.ok) {
     return NextResponse.redirect(
       new URL(

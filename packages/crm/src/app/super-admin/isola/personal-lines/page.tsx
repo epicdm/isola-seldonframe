@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { PersonalLineContactLink } from "@/components/super-admin/personal-line-contact-link";
 
 type Account = {
   did: string | null;
@@ -17,7 +18,7 @@ type Account = {
   evidence: { paidPayments?: number; completedWalletMovements?: number; unresolvedClaims?: number } | null;
   identity: string;
   isFixture: boolean;
-  lifecycle: { stage: string; updatedAt: string; contactUrl: string } | null;
+  lifecycle: { stage: string; updatedAt: string; workspaceId: string; contactId: string } | null;
 };
 type ResetStep = { step: string; status: string; detail: string };
 type Preview = { phone: string; previewReceipt: string; steps: ResetStep[] };
@@ -148,7 +149,7 @@ export default function PersonalLinesPage() {
           <tbody>
             {accounts.map((account, index) => <tr key={`${account.did}-${account.ownerPhone}-${index}`} className="border-b last:border-0">
               <td className="px-4 py-3"><div className="font-mono">{account.did ?? "—"}</div><div className="mt-1 text-xs text-muted-foreground">{account.ownerPhone ?? "Owner not recorded"}{account.isFixture ? " · fixture" : ""}</div><div className="mt-1 text-xs text-muted-foreground">Identity: {account.identity}</div></td>
-              <td className="px-4 py-3"><StageBadge account={account} />{account.lifecycle && <a className="mt-2 block text-xs underline" href={account.lifecycle.contactUrl}>Open CRM record</a>}</td>
+              <td className="px-4 py-3"><StageBadge account={account} />{account.lifecycle && <PersonalLineContactLink workspaceId={account.lifecycle.workspaceId} contactId={account.lifecycle.contactId} />}</td>
               <td className="px-4 py-3"><div>{account.registration?.state ?? "unknown"}</div><div className="mt-1 text-xs text-muted-foreground">Activation link: {account.registration?.activationLink?.state ?? "not recorded"}</div>{account.registration?.reason && <div className="mt-1 max-w-64 text-xs text-muted-foreground">{account.registration.reason}</div>}</td>
               <td className="px-4 py-3"><div>Settled payment records: {account.evidence?.paidPayments ?? "unavailable"}</div><div className="mt-1 text-xs text-muted-foreground">Completed wallet movements: {account.evidence?.completedWalletMovements ?? "unavailable"}</div>{(account.evidence?.unresolvedClaims ?? 0) > 0 && <div className="mt-1 text-xs text-amber-700">Unresolved claims: {account.evidence?.unresolvedClaims}</div>}</td>
               <td className="px-4 py-3">{account.lifecycle ? <><div>{account.lifecycle.stage}</div><div className="mt-1 text-xs text-muted-foreground">{new Date(account.lifecycle.updatedAt).toLocaleString()}</div></> : <span className="text-xs text-muted-foreground">No matching signed lifecycle event</span>}</td>

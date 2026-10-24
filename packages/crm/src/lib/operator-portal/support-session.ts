@@ -31,6 +31,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { dbClockMs } from "@/db/clock";
 import {
+  contacts,
   agencySupportSessions,
   organizations,
   partnerAgencies,
@@ -64,6 +65,8 @@ export type CreateSupportSessionResult =
 
 export async function createAgencySupportSession(input: {
   workspaceId: string;
+  /** Optional tenant-owned CRM contact to open immediately after support entry. */
+  contactId?: string;
 }): Promise<CreateSupportSessionResult> {
   assertWritable();
 
@@ -98,7 +101,7 @@ export async function createAgencySupportSession(input: {
     if (!callerEmail || !isEmailInAllowlist(callerEmail, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) {
       return { ok: false, reason: "workspace_not_under_an_agency" };
     }
-    return mintSupportSession({ workspace, agencyId: null, callerUserId, actorEmail: callerEmail });
+    return mintSupportSession({ workspace, agencyId: null, callerUserId, actorEmail: callerEmail, contactId: input.contactId });
   }
 
   const [agency] = await db
@@ -126,7 +129,7 @@ export async function createAgencySupportSession(input: {
     return { ok: false, reason: "not_agency_owner" };
   }
 
-  return mintSupportSession({ workspace, agencyId: agency.id, callerUserId, actorEmail: null });
+  return mintSupportSession({ workspace, agencyId: agency.id, callerUserId, actorEmail: null, contactId: input.contactId });
 }
 
 async function mintSupportSession(input: {
@@ -135,8 +138,16 @@ async function mintSupportSession(input: {
   callerUserId: string;
   /** Set for the platform-admin branch (agencyId null): the actor's email is recorded on the audit row. */
   actorEmail: string | null;
+  contactId?: string;
 }): Promise<CreateSupportSessionResult> {
   const { workspace, agencyId, callerUserId } = input;
+  if (input.contactId) {
+    const [contact] = await db.select({ id: contacts.id }).from(contacts).where(and(
+      eq(contacts.id, input.contactId),
+      eq(contacts.orgId, workspace.id),
+    )).limit(1);
+    if (!contact) return { ok: false, reason: "contact_not_in_workspace" };
+  }
   // EPIC 2026-10-20 (Codex r3): minted under a share lock on the workspace row with iat from the DATABASE clock - the clock and lock an
   // ownership transfer uses for its cut-off - and recorded in the same transaction, so a support token is either cut off by a later
   // transfer or issued after it; never stamped by a fast application clock past a cut-off it should fall under.
@@ -205,6 +216,7 @@ async function mintSupportSession(input: {
     getAppOrigin(),
   );
   url.searchParams.set("token", sessionToken);
+  if (input.contactId) url.searchParams.set("next", `/contacts/${input.contactId}`);
 
   return {
     ok: true,
@@ -217,6 +229,7 @@ async function mintSupportSession(input: {
 export async function consumeAgencySupportSession(input: {
   orgSlug: string;
   token: string;
+  nextPath?: string | null;
 }): Promise<
   | { ok: true; redirectTo: string }
   | { ok: false; reason: string }
@@ -259,6 +272,18 @@ export async function consumeAgencySupportSession(input: {
     .limit(1);
   if (!activeAudit) return { ok: false, reason: "support_session_inactive" };
 
+  let redirectTo = "/dashboard";
+  if (input.nextPath) {
+    const match = /^\/contacts\/([A-Za-z0-9_-]+)$/.exec(input.nextPath);
+    if (!match) return { ok: false, reason: "invalid_support_redirect" };
+    const [contact] = await db.select({ id: contacts.id }).from(contacts).where(and(
+      eq(contacts.id, match[1]),
+      eq(contacts.orgId, workspace.id),
+    )).limit(1);
+    if (!contact) return { ok: false, reason: "contact_not_in_workspace" };
+    redirectTo = `/contacts/${contact.id}`;
+  }
+
   // Set the operator session cookie. Same shape as a normal magic-
   // link consume — the supportOriginUserId carried in the token
   // surfaces the yellow banner in the operator portal layout.
@@ -279,7 +304,7 @@ export async function consumeAgencySupportSession(input: {
   // surfaced on the synthetic session for banner rendering.
   return {
     ok: true,
-    redirectTo: `/dashboard`,
+    redirectTo,
   };
 }
 

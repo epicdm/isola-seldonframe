@@ -455,6 +455,30 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     assert.equal(await portalOrgFor(consumed.c!), EPIC);
     const ctxUser = await withOperatorCookie(consumed.c!, () => resolveOperatorPortalContext());
     assert.equal(ctxUser?.user.supportOriginUserId, SUPER);
+
+    const tenantContact = await one<{ id: string }>(sql`select id from contacts where org_id = ${EPIC}::uuid and email = 'cust@fixture.test'`);
+    const foreignContact = await one<{ id: string }>(sql`select id from contacts where org_id = ${INFO_HOME}::uuid`);
+    assert.ok(tenantContact && foreignContact);
+    const contactSession = await SS.createAgencySupportSession({ workspaceId: EPIC, contactId: tenantContact.id });
+    assert.equal(contactSession.ok, true, JSON.stringify(contactSession));
+    if (contactSession.ok) {
+      const nextPath = new URL(contactSession.url).searchParams.get("next");
+      assert.equal(nextPath, `/contacts/${tenantContact.id}`);
+      const opened = await withOperatorCookie(null, () => SS.consumeAgencySupportSession({
+        orgSlug: EPIC_SLUG,
+        token: new URL(contactSession.url).searchParams.get("token")!,
+        nextPath,
+      }));
+      assert.deepEqual(opened, { ok: true, redirectTo: `/contacts/${tenantContact.id}` });
+      const refusedForeignContact = await SS.createAgencySupportSession({ workspaceId: EPIC, contactId: foreignContact.id });
+      assert.equal(refusedForeignContact.ok ? "ok" : refusedForeignContact.reason, "contact_not_in_workspace");
+      const refusedForeignRedirect = await withOperatorCookie(null, () => SS.consumeAgencySupportSession({
+        orgSlug: EPIC_SLUG,
+        token: new URL(contactSession.url).searchParams.get("token")!,
+        nextPath: `/contacts/${foreignContact.id}`,
+      }));
+      assert.equal(refusedForeignRedirect.ok ? "ok" : refusedForeignRedirect.reason, "contact_not_in_workspace");
+    }
   });
 
   test("one clock (Codex r3): a support session's iat follows the DATABASE clock even when the app clock runs 20 s ahead", async () => {

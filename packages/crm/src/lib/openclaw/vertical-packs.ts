@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { getAIClient } from "@/lib/ai/client";
 import { writeEvent } from "@/lib/brain";
+import { textArrayExpression } from "./vertical-pack-sql";
 
 /**
  * A VerticalPack is a SeldonFrame "skill pack" — a complete, vertical-specific
@@ -547,7 +548,7 @@ export async function installVerticalPack(orgId: string, pack: VerticalPack): Pr
       FROM (
         SELECT block_name, MIN(position) AS first_position
         FROM unnest(
-          COALESCE(${organizations.enabledBlocks}, ARRAY[]::text[]) || ${requestedBlocks}::text[]
+          COALESCE(${organizations.enabledBlocks}, ARRAY[]::text[]) || ${textArrayExpression(requestedBlocks)}
         ) WITH ORDINALITY AS blocks(block_name, position)
         GROUP BY block_name
       ) AS unique_blocks

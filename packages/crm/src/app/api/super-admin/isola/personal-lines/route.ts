@@ -105,7 +105,7 @@ export async function GET(request: NextRequest) {
       }
       if (data.nextCursor === null) {
         const searchMatches = q.length >= 4 ? accounts.filter((row) => `${row.did}${row.ownerPhone}`.replace(/\D/g, "").includes(q)) : accounts;
-        const lifecycle = new Map<string, { stage: string; updatedAt: string; contactUrl: string }>();
+        const lifecycle = new Map<string, { stage: string; updatedAt: string; workspaceId: string; contactId: string }>();
         const accountIds = Array.from(accountIdsByRow.values());
         if (accountIds.length) {
           const rows = await db.select({
@@ -123,7 +123,8 @@ export async function GET(request: NextRequest) {
             lifecycle.set(row.accountId, {
               stage: row.stage,
               updatedAt: row.updatedAt.toISOString(),
-              contactUrl: `/switch-workspace?to=${encodeURIComponent(row.orgId)}&next=${encodeURIComponent(`/contacts/${row.contactId}`)}`,
+              workspaceId: row.orgId,
+              contactId: row.contactId,
             });
           }
         }
