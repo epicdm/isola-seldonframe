@@ -47,7 +47,7 @@ export default async function PersonalLinesPage({
           </table>
         </div>
       )}
-      <p className="text-xs text-muted-foreground">Plan and payment evidence is not yet available through this lifecycle association. No plan status is inferred from onboarding events.</p>
+      <p className="text-xs text-muted-foreground">Open a customer record for live registration, voice-resource, wallet-credit and plan evidence. Wallet credits are not a payment settlement report; missing service associations are shown as unavailable.</p>
     </main>
   );
 }

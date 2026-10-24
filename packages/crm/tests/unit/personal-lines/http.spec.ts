@@ -9,6 +9,7 @@ const ownedLine = {
   customerName: "Customer A",
   stage: "Line created",
   facts: { did_masked: "+1 767 *** 1001" },
+  serviceEvidence: { status: "unavailable" as const },
   updatedAt: "2026-10-24T10:00:00.000Z",
 };
 

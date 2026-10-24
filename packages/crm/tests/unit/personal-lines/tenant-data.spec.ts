@@ -76,4 +76,23 @@ describe("tenant Personal Line read model", () => {
     assert.equal((await pendingReader.get(a, "contact-pending"))?.stage, "Signup started");
     assert.equal((await pendingReader.list(a, "customer pending")).length, 1);
   });
+
+  test("fetches live service evidence only after a tenant-scoped detail row resolves", async () => {
+    const calls: string[] = [];
+    const detailReader = createTenantPersonalLineReader(
+      async (orgId, contactId) => rows.filter((item) => item.orgId === orgId && (!contactId || item.customerId === contactId)),
+      async (accountId) => {
+        calls.push(accountId);
+        return { status: "association_mismatch" };
+      },
+    );
+
+    await detailReader.list(a);
+    assert.deepEqual(calls, []);
+    assert.equal(await detailReader.get(b, "contact-a"), null);
+    assert.deepEqual(calls, []);
+    const line = await detailReader.get(a, "contact-a");
+    assert.deepEqual(calls, ["account-a"]);
+    assert.deepEqual(line?.serviceEvidence, { status: "association_mismatch" });
+  });
 });

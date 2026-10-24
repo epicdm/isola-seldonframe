@@ -1,4 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
+import { readPersonalLineServiceEvidence, type PersonalLineServiceEvidence } from "./bff-reader";
 
 const STAGES = ["Signup started", "Line created", "App activated", "First call"] as const;
 const PUBLIC_FACT_KEYS = new Set([
@@ -14,6 +15,8 @@ export type PersonalLineRecord = {
   customerName: string;
   stage: string;
   facts: Record<string, string>;
+  /** Verified live service evidence is fetched only for a tenant-scoped detail read. */
+  serviceEvidence: PersonalLineServiceEvidence;
   updatedAt: string;
 };
 
@@ -31,7 +34,7 @@ export type SubjectFactsRow = {
 };
 export type TenantFactsReader = (orgId: string, contactId?: string) => Promise<SubjectFactsRow[]>;
 
-function projectRecord(row: SubjectFactsRow): PersonalLineRecord {
+function projectRecord(row: SubjectFactsRow, serviceEvidence: PersonalLineServiceEvidence = { status: "unavailable" }): PersonalLineRecord {
   const raw = row.facts ?? {};
   const facts: Record<string, string> = {};
   for (const key of PUBLIC_FACT_KEYS) {
@@ -46,18 +49,22 @@ function projectRecord(row: SubjectFactsRow): PersonalLineRecord {
     customerName: row.customerName,
     stage: STAGES[stageIndex],
     facts,
+    serviceEvidence,
     updatedAt: row.updatedAt.toISOString(),
   };
 }
 
 /** All reads require the caller's server-resolved org id and query by that tenant first. */
-export function createTenantPersonalLineReader(readRows: TenantFactsReader) {
+export function createTenantPersonalLineReader(
+  readRows: TenantFactsReader,
+  readService: (accountId: string) => Promise<PersonalLineServiceEvidence> = readPersonalLineServiceEvidence,
+) {
   return {
     async list(orgId: string, search = ""): Promise<PersonalLineRecord[]> {
       const rows = await readRows(orgId);
       const needle = search.trim().toLowerCase();
       return rows
-        .map(projectRecord)
+        .map((row) => projectRecord(row))
         // A signed signup_started event is already a real, tenant-bound
         // onboarding record even though plsvc has not assigned an account ID
         // yet. Keep it visible so the workspace can observe the first stage.
@@ -67,7 +74,9 @@ export function createTenantPersonalLineReader(readRows: TenantFactsReader) {
   async get(orgId: string, contactId: string): Promise<PersonalLineRecord | null> {
       const [row] = await readRows(orgId, contactId);
       if (!row) return null;
-      return projectRecord(row);
+      const accountId = typeof row.facts?.pl_account_id === "string" ? row.facts.pl_account_id : null;
+      const serviceEvidence = accountId ? await readService(accountId).catch(() => ({ status: "unavailable" as const })) : { status: "not_linked" as const };
+      return projectRecord(row, serviceEvidence);
     },
   };
 }
