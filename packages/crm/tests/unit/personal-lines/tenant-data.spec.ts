@@ -56,6 +56,22 @@ describe("tenant Personal Line read model", () => {
     assert.equal(await reader.get(a, "contact-b"), null);
   });
 
+  test("rechecks tenant and provider scope even if a row reader returns foreign rows", async () => {
+    let serviceReads = 0;
+    const unsafeRowsReader = createTenantPersonalLineReader(
+      async () => [
+        ...rows,
+        { ...row(a, "subject-other-provider", "account-x", "+1 767 *** 3003"), provider: "other_provider" },
+      ],
+      async () => { serviceReads += 1; return { status: "unavailable" }; },
+    );
+
+    assert.deepEqual((await unsafeRowsReader.list(a)).map((line) => line.customerId), ["contact-a"]);
+    assert.equal(await unsafeRowsReader.get(a, "contact-b"), null);
+    assert.equal(await unsafeRowsReader.get(a, "contact-other-provider"), null);
+    assert.equal(serviceReads, 0);
+  });
+
   test("projects only approved lifecycle facts and never treats billing fields as evidence", async () => {
     const line = await reader.get(a, "contact-a");
     assert.equal(line?.stage, "App activated");

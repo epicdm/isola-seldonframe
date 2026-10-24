@@ -66,7 +66,12 @@ export function createTenantPersonalLineReader(
 ) {
   return {
     async list(orgId: string, search = ""): Promise<PersonalLineRecord[]> {
-      const rows = await readRows(orgId);
+      // Keep the tenant and provider boundary at the read-model seam as well
+      // as in the SQL query. This makes a future reader implementation fail
+      // closed if it accidentally returns a row outside the requested scope.
+      const rows = (await readRows(orgId)).filter(
+        (row) => row.orgId === orgId && row.provider === "personal_line",
+      );
       const needle = search.trim().toLowerCase();
       return rows
         .map((row) => projectRecord(row))
@@ -77,7 +82,12 @@ export function createTenantPersonalLineReader(
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     },
   async get(orgId: string, contactId: string): Promise<PersonalLineRecord | null> {
-      const [row] = await readRows(orgId, contactId);
+      const rows = await readRows(orgId, contactId);
+      const row = rows.find(
+        (candidate) => candidate.orgId === orgId
+          && candidate.provider === "personal_line"
+          && candidate.customerId === contactId,
+      );
       if (!row) return null;
       const accountId = row.serviceAccountId;
       const serviceEvidence = accountId && row.serviceTenantKey
