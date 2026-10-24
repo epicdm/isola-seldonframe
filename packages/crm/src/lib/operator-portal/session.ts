@@ -32,7 +32,31 @@ export type OperatorTokenPayload = {
   /** v1.21 hook: agency support session origin user id. NULL on
    *  normal operator-direct sessions. */
   supportOriginUserId?: string | null;
+  /** Exact agency_support_sessions row closed by an explicit support exit. */
+  supportSessionId?: string | null;
+  /** Issued-at milliseconds, used with a workspace cutoff after ownership transfer. */
+  iat?: number;
 };
+
+/** Support impersonation is for a human operator; browser support context is not agent authority.
+ * Older agency support tokens predate supportSessionId, so the audited origin operator alone
+ * is the authoritative signal that this is an impersonated browser context. */
+export function isSupportSessionContext(value: { supportOriginUserId?: string | null; supportSessionId?: string | null } | null | undefined): boolean {
+  return Boolean(value?.supportOriginUserId);
+}
+
+const MAGIC_LINK_TTL_MS = 15 * 60_000;
+const OWNER_SESSION_TTL_MS = 7 * 24 * 60 * 60_000;
+const SUPPORT_SESSION_TTL_MS = 2 * 60 * 60_000;
+
+export function isOperatorTokenRevoked(payload: OperatorTokenPayload, validAfter: Date | string | null | undefined, now = Date.now()): boolean {
+  const ttl = payload.kind === "magic" ? MAGIC_LINK_TTL_MS : payload.supportOriginUserId ? SUPPORT_SESSION_TTL_MS : OWNER_SESSION_TTL_MS;
+  const issuedAt = typeof payload.iat === "number" && Number.isFinite(payload.iat) ? payload.iat : payload.exp - ttl;
+  if (!Number.isFinite(issuedAt) || issuedAt > now + 60_000) return true;
+  if (validAfter === null || validAfter === undefined) return false;
+  const cutoff = validAfter instanceof Date ? validAfter.getTime() : new Date(validAfter).getTime();
+  return !Number.isFinite(cutoff) || issuedAt <= cutoff;
+}
 
 function getOperatorSecret(): string {
   return (

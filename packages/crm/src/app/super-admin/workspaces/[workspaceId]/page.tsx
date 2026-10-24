@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getWorkspaceDetail } from "@/lib/super-admin/workspaces";
+import { SupportWorkspaceButton } from "@/components/super-admin/support-workspace-button";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,7 @@ export default async function WorkspaceDetailPage({
             })}
           </DetailRow>
           <DetailRow label="Subdomain" mono>{ws.slug}.app.seldonframe.com</DetailRow>
+          <div className="border-t pt-3"><SupportWorkspaceButton workspaceId={ws.id} /></div>
         </div>
       </header>
 

@@ -17,6 +17,7 @@ import {
   DollarSign,
   Activity,
   ArrowLeft,
+  Phone,
 } from "lucide-react";
 
 const NAV: Array<{ href: string; label: string; icon: React.ComponentType<{ className?: string }>; exact?: boolean }> = [
@@ -26,6 +27,7 @@ const NAV: Array<{ href: string; label: string; icon: React.ComponentType<{ clas
   { href: "/super-admin/agents", label: "Agents", icon: Bot },
   { href: "/super-admin/revenue", label: "Revenue", icon: DollarSign },
   { href: "/super-admin/health", label: "Health", icon: Activity },
+  { href: "/super-admin/isola/personal-lines", label: "Personal Lines", icon: Phone },
 ];
 
 export function SuperAdminSidebar({

@@ -25,8 +25,9 @@
 
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { db } from "@/db";
 import {
   agencySupportSessions,
@@ -37,6 +38,7 @@ import { auth } from "@/auth";
 import { assertWritable } from "@/lib/demo/server";
 import { emitSeldonEvent } from "@/lib/events/bus";
 import { trackEvent } from "@/lib/analytics/track";
+import { isSuperAdminUser } from "@/lib/auth/super-admin";
 import {
   OPERATOR_SESSION_COOKIE,
   signOperatorToken,
@@ -86,9 +88,36 @@ export async function createAgencySupportSession(input: {
   if (!workspace) {
     return { ok: false, reason: "workspace_not_found" };
   }
-  if (!workspace.parentAgencyId) {
-    return { ok: false, reason: "workspace_not_under_an_agency" };
+  const callerEmail = session.user.email?.trim().toLowerCase();
+  if (callerEmail && await isSuperAdminUser(callerEmail)) {
+    const [auditRow] = await db.insert(agencySupportSessions).values({
+      agencyId: null,
+      workspaceId: workspace.id,
+      originUserId: callerUserId,
+      notes: `platform_support actor_email=${callerEmail}`,
+    }).returning({ id: agencySupportSessions.id });
+    if (!auditRow?.id) return { ok: false, reason: "audit_write_failed" };
+    const issuedAtMs = Date.now();
+    const expiresAtMs = issuedAtMs + SUPPORT_SESSION_TTL_HOURS * 60 * 60 * 1000;
+    const sessionToken = signOperatorToken({
+      orgId: workspace.id,
+      email: `support+platform-${callerUserId.slice(0, 8)}@seldonframe.local`,
+      exp: expiresAtMs,
+      iat: issuedAtMs,
+      kind: "session",
+      supportOriginUserId: callerUserId,
+      supportSessionId: auditRow.id,
+    });
+    await emitSeldonEvent("agency.support_session_started", {
+      agencyId: "(platform)", workspaceId: workspace.id, originUserId: callerUserId,
+      actorEmail: callerEmail, platformSupport: true, sessionId: auditRow.id,
+    }, { orgId: workspace.id });
+    const url = new URL(`/portal/${workspace.slug}/support-magic`, getAppOrigin());
+    url.searchParams.set("token", sessionToken);
+    return { ok: true, url: url.toString(), sessionId: auditRow.id, expiresAt: new Date(expiresAtMs).toISOString() };
   }
+
+  if (!workspace.parentAgencyId) return { ok: false, reason: "workspace_not_under_an_agency" };
 
   const [agency] = await db
     .select({
@@ -204,6 +233,18 @@ export async function consumeAgencySupportSession(input: {
   if (!workspace || workspace.id !== verified.orgId) {
     return { ok: false, reason: "workspace_slug_mismatch" };
   }
+  if (verified.supportSessionId) {
+    const [activeAudit] = await db.select({ id: agencySupportSessions.id })
+      .from(agencySupportSessions)
+      .where(and(
+        eq(agencySupportSessions.id, verified.supportSessionId),
+        eq(agencySupportSessions.workspaceId, workspace.id),
+        eq(agencySupportSessions.originUserId, verified.supportOriginUserId),
+        isNull(agencySupportSessions.agencyId),
+        isNull(agencySupportSessions.endedAt),
+      )).limit(1);
+    if (!activeAudit) return { ok: false, reason: "support_session_ended" };
+  }
 
   // Set the operator session cookie. Same shape as a normal magic-
   // link consume — the supportOriginUserId carried in the token
@@ -227,4 +268,28 @@ export async function consumeAgencySupportSession(input: {
     ok: true,
     redirectTo: `/dashboard`,
   };
+}
+
+/** End only this operator's active platform-support audit row, then restore their native SeldonFrame session. */
+export async function exitPlatformSupportSessionAction(): Promise<never> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(OPERATOR_SESSION_COOKIE)?.value;
+  const verified = verifyOperatorToken(token);
+  const session = await auth();
+  if (!verified?.supportOriginUserId || !verified.supportSessionId || session?.user?.id !== verified.supportOriginUserId) {
+    redirect("/login");
+  }
+  await db.update(agencySupportSessions)
+    .set({ endedAt: new Date() })
+    .where(and(
+      eq(agencySupportSessions.id, verified.supportSessionId),
+      eq(agencySupportSessions.workspaceId, verified.orgId),
+      eq(agencySupportSessions.originUserId, verified.supportOriginUserId),
+      isNull(agencySupportSessions.agencyId),
+      isNull(agencySupportSessions.endedAt),
+    ));
+  cookieStore.set(OPERATOR_SESSION_COOKIE, "", {
+    httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 0,
+  });
+  redirect("/super-admin/workspaces");
 }

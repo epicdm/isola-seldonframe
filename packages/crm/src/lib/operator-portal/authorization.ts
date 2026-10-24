@@ -47,6 +47,11 @@ export function parseAdminAllowlist(raw: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+export function isEmailInAllowlist(email: string | null | undefined, allowlist: readonly string[]): boolean {
+  const normalized = normalizeEmail(email);
+  return Boolean(normalized && allowlist.some((entry) => normalizeEmail(entry) === normalized));
+}
+
 export interface WorkspaceAuthSources {
   /** organizations.ownerId -> users.email (null if unowned / unresolved). */
   ownerEmail?: string | null;

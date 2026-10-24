@@ -14,7 +14,6 @@ export const agencySupportSessions = pgTable(
       .default(sql`gen_random_uuid()`)
       .primaryKey(),
     agencyId: uuid("agency_id")
-      .notNull()
       .references(() => partnerAgencies.id, { onDelete: "cascade" }),
     workspaceId: uuid("workspace_id")
       .notNull()
