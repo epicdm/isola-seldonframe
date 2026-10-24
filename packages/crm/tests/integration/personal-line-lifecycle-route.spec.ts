@@ -1,9 +1,9 @@
 // ROUTE-LEVEL test of POST /api/webhooks/personal-line/[orgId] — the exported route handler itself, production wiring:
 // real HMAC verification, real parser, real drizzle store on a SCRATCH Postgres (full schema), real link, real
 // moveDealToStage (the kanban path), real emitSeldonEvent -> workflow_event_log. No seam except the env/key file.
-// The four lifecycle bodies are the EXACT bytes plsvc's emitter produced in its own route-level run
-// (PL_LIFECYCLE_FIXTURE_IN = plsvc test/pl-lifecycle-emitter.test.ts output); they are re-signed here with the test key
-// (same signature scheme — the vector test in both repos proves it). Every refusal has its positive twin (Law 19).
+// The route tests can consume the emitter's captured bytes through PL_LIFECYCLE_FIXTURE_IN. CI uses the local
+// versioned protocol fixture so it still exercises the real route and database without depending on another repo's
+// transient test output. Both paths are re-signed with this fictional test key. Every refusal has its positive twin.
 //
 // Opt-in, same guard as the other DB specs: refuses unless NEON_LOCAL_HOST is set AND PL_LIFECYCLE_DB_TEST=scratch.
 import assert from "node:assert/strict";
@@ -11,6 +11,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import test, { before, describe } from "node:test";
 
 import { and, eq, sql } from "drizzle-orm";
@@ -58,7 +59,9 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
   };
 
   before(async () => {
-    produced = JSON.parse(readFileSync(String(process.env.PL_LIFECYCLE_FIXTURE_IN), "utf8"));
+    const fixturePath = process.env.PL_LIFECYCLE_FIXTURE_IN
+      ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../fixtures/personal-line-lifecycle-events.json");
+    produced = JSON.parse(readFileSync(fixturePath, "utf8"));
     assert.deepEqual(Object.keys(produced).sort(), ["pl.app_activated", "pl.first_call", "pl.line_created", "pl.signup_started"]);
     writeFileSync(keyFile, KEY + "\n");
     ({ db } = await import("@/db"));

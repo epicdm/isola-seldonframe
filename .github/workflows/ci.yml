@@ -63,6 +63,56 @@ jobs:
       - name: Generator regression net
         run: cd packages/crm && node --import tsx --test tests/regression/generator-prompts.spec.ts
 
+  personal-line-db-acceptance:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sf_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sf_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/sf_test
+      NEON_LOCAL_HOST: 127.0.0.1
+      DB_DRIVER: pg
+      PL_LIFECYCLE_DB_TEST: scratch
+      PL_VERTICAL_PACK_DB_TEST: scratch
+      TRANSFER_DB_TEST: scratch
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.18.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Create isolated schema from the current Drizzle model
+        # This job owns a disposable empty Postgres service; --force only accepts
+        # schema prompts in that scratch database, never in a shared environment.
+        run: pnpm --filter @seldonframe/crm exec drizzle-kit push --force
+
+      - name: Personal Line lifecycle, vertical-pack retry-safety, and audited support DB acceptance
+        working-directory: packages/crm
+        run: node --experimental-test-module-mocks --import tsx --test --test-concurrency=1 tests/integration/personal-line-lifecycle-route.spec.ts tests/integration/vertical-pack-installer.spec.ts tests/integration/workspace-ownership-transfer.spec.ts
+
   e2e-smoke:
     runs-on: ubuntu-latest
     if: vars.E2E_BASE_URL != ''
