@@ -421,6 +421,13 @@
       "when": 1792627200001,
       "tag": "0082_integration_event_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1792828800000,
+      "tag": "0083_workspace_service_associations",
+      "breakpoints": true
     }
   ]
 }

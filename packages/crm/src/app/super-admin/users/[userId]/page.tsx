@@ -73,6 +73,10 @@ export default async function UserDetailPage({
         </div>
       </header>
 
+      <p className="text-xs text-muted-foreground">
+        Effective app role follows dashboard authorization: workspace ownership, a native owner/admin/staff membership, or the legacy primary-workspace owner role. A legacy membership history row alone does not grant access.
+      </p>
+
       {/* Workspaces owned */}
       <section>
         <div className="flex items-baseline justify-between mb-3">
@@ -144,6 +148,8 @@ function WorkspaceTable({
     soulId: string | null;
     createdAt: string;
     lastActivityAt: string | null;
+    effectiveRole: string | null;
+    roleSource: "organizations.owner_id" | "organizations.parent_user_id" | "partner_agencies.owner_user_id" | "users.role" | "org_members.role" | null;
     membershipStatus?: string;
   }>;
   showMembershipStatus?: boolean;
@@ -156,6 +162,7 @@ function WorkspaceTable({
             <th className="px-4 py-2.5 text-[11px] uppercase tracking-[0.06em] font-mono text-muted-foreground font-semibold">Workspace</th>
             <th className="px-4 py-2.5 text-[11px] uppercase tracking-[0.06em] font-mono text-muted-foreground font-semibold">Soul</th>
             <th className="px-4 py-2.5 text-[11px] uppercase tracking-[0.06em] font-mono text-muted-foreground font-semibold">Last activity</th>
+            <th className="px-4 py-2.5 text-[11px] uppercase tracking-[0.06em] font-mono text-muted-foreground font-semibold">Effective app role</th>
             <th className="px-4 py-2.5 text-[11px] uppercase tracking-[0.06em] font-mono text-muted-foreground font-semibold">
               {showMembershipStatus ? "Status" : "Created"}
             </th>
@@ -178,6 +185,10 @@ function WorkspaceTable({
                 {w.lastActivityAt
                   ? formatRelative(w.lastActivityAt)
                   : <span className="text-muted-foreground/50">never</span>}
+              </td>
+              <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap" title={w.roleSource ?? "No effective SeldonFrame workspace role"}>
+                {w.effectiveRole ?? "No app role"}
+                {w.roleSource ? <span className="ml-1 text-[10px]">({w.roleSource})</span> : null}
               </td>
               <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
                 {showMembershipStatus

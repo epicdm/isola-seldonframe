@@ -89,6 +89,8 @@ export type BuildNavInput = {
   /** Phone & WhatsApp exposure (2026-10-17) — resolved server-side by the dashboard layout via isPhoneWhatsappEnabled()
    *  (PHONE_WHATSAPP_ENABLED_ORGS) and passed in, like draftApprovalsOn. absent/false → today's nav, unchanged. */
   phoneWhatsappOn?: boolean;
+  /** Personal Line lifecycle tenant mapping for the active workspace. */
+  personalLinesOn?: boolean;
   /** Hides upstream community/docs destinations on white-label installs. */
   platformName?: string;
   /** EPIC 2026-10-20 - true only when the operator holds an AUTHORISED agency relationship (lib/partner-agencies/authorized-agency.ts).
@@ -197,6 +199,7 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
     smsLive,
     draftApprovalsOn = false,
     phoneWhatsappOn = false,
+    personalLinesOn = false,
     platformName = "SeldonFrame",
     agencyMode = false,
   } = input;
@@ -229,6 +232,7 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
           { href: "/bookings", label: "Bookings", icon: "Calendar" },
         ]),
       },
+      ...(personalLinesOn ? [{ title: "SERVICES", items: filterHidden([{ href: "/personal-lines", label: "Personal Lines", icon: "Phone" }]) }] : []),
     ].filter((group) => group.items.length > 0);
   }
 
@@ -266,6 +270,7 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
           { href: "/forms", label: labels.intakeForm.plural, icon: "FileText", indent: true },
         ]),
       },
+      ...(personalLinesOn ? [{ title: "SERVICES", items: filterHidden([{ href: "/personal-lines", label: "Personal Lines", icon: "Phone" }]) }] : []),
       {
         title: "INBOX",
         items: filterHidden([
@@ -346,6 +351,9 @@ export function buildNavGroups(input: BuildNavInput): NavGroup[] {
           : []),
       ]),
     },
+    ...(personalLinesOn
+      ? [{ title: "SERVICES", items: filterHidden([{ href: "/personal-lines", label: "Personal Lines", icon: "Phone" }]) }]
+      : []),
     {
       title: "INBOX",
       items: filterHidden([

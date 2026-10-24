@@ -45,7 +45,7 @@ describe("buildPreviewStorefrontAgent", () => {
     assert.deepEqual(a.surfaces, ["chat", "email"]);
     assert.equal(a.category, "Reviews");
     // Empty builder falls back rather than rendering blank.
-    assert.equal(a.builder, "A SeldonFrame builder");
+    assert.equal(a.builder, "A platform builder");
     // Empty description → an honest default tagline, never empty.
     assert.match(a.tagline, /Reviews Bot/);
   });

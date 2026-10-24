@@ -20,16 +20,18 @@
 //     returns the redirect target. Used by the support-magic route.
 //
 // Audit: every session start writes an agency_support_sessions row.
-// supportOriginUserId on the session token surfaces the yellow
-// banner in /portal/<slug>/(operator)/layout.tsx (already wired).
+// The token binds to that row; each dashboard request checks that it remains
+// active, and the dashboard banner can explicitly end it.
 
 "use server";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { dbClockMs } from "@/db/clock";
 import {
+  contacts,
   agencySupportSessions,
   organizations,
   partnerAgencies,
@@ -63,6 +65,8 @@ export type CreateSupportSessionResult =
 
 export async function createAgencySupportSession(input: {
   workspaceId: string;
+  /** Optional tenant-owned CRM contact to open immediately after support entry. */
+  contactId?: string;
 }): Promise<CreateSupportSessionResult> {
   assertWritable();
 
@@ -97,7 +101,7 @@ export async function createAgencySupportSession(input: {
     if (!callerEmail || !isEmailInAllowlist(callerEmail, parseAdminAllowlist(process.env.SF_SUPERADMIN_EMAILS))) {
       return { ok: false, reason: "workspace_not_under_an_agency" };
     }
-    return mintSupportSession({ workspace, agencyId: null, callerUserId, actorEmail: callerEmail });
+    return mintSupportSession({ workspace, agencyId: null, callerUserId, actorEmail: callerEmail, contactId: input.contactId });
   }
 
   const [agency] = await db
@@ -125,7 +129,7 @@ export async function createAgencySupportSession(input: {
     return { ok: false, reason: "not_agency_owner" };
   }
 
-  return mintSupportSession({ workspace, agencyId: agency.id, callerUserId, actorEmail: null });
+  return mintSupportSession({ workspace, agencyId: agency.id, callerUserId, actorEmail: null, contactId: input.contactId });
 }
 
 async function mintSupportSession(input: {
@@ -134,8 +138,16 @@ async function mintSupportSession(input: {
   callerUserId: string;
   /** Set for the platform-admin branch (agencyId null): the actor's email is recorded on the audit row. */
   actorEmail: string | null;
+  contactId?: string;
 }): Promise<CreateSupportSessionResult> {
   const { workspace, agencyId, callerUserId } = input;
+  if (input.contactId) {
+    const [contact] = await db.select({ id: contacts.id }).from(contacts).where(and(
+      eq(contacts.id, input.contactId),
+      eq(contacts.orgId, workspace.id),
+    )).limit(1);
+    if (!contact) return { ok: false, reason: "contact_not_in_workspace" };
+  }
   // EPIC 2026-10-20 (Codex r3): minted under a share lock on the workspace row with iat from the DATABASE clock - the clock and lock an
   // ownership transfer uses for its cut-off - and recorded in the same transaction, so a support token is either cut off by a later
   // transfer or issued after it; never stamped by a fast application clock past a cut-off it should fall under.
@@ -153,15 +165,6 @@ async function mintSupportSession(input: {
     const supportEmail = agencyId
       ? `support+${agencyId.slice(0, 8)}@seldonframe-agency.local`
       : `support+platform-${callerUserId.slice(0, 8)}@seldonframe-agency.local`;
-    const sessionToken = signOperatorToken({
-      orgId: workspace.id,
-      email: supportEmail,
-      exp: expiresAtMs,
-      kind: "session",
-      supportOriginUserId: callerUserId,
-      iat: issuedAtMs,
-    });
-
     // Audit row. The audit row is the precondition for the session: no row, no link.
     const [auditRow] = await tx
       .insert(agencySupportSessions)
@@ -172,10 +175,19 @@ async function mintSupportSession(input: {
         notes: input.actorEmail ? `platform_support actor_email=${input.actorEmail}` : null,
       })
       .returning({ id: agencySupportSessions.id });
+    const sessionToken = auditRow?.id ? signOperatorToken({
+      orgId: workspace.id,
+      email: supportEmail,
+      exp: expiresAtMs,
+      kind: "session",
+      supportOriginUserId: callerUserId,
+      supportSessionId: auditRow.id,
+      iat: issuedAtMs,
+    }) : null;
     return { expiresAtMs, sessionToken, auditRow };
   });
   const { expiresAtMs, sessionToken, auditRow } = minted;
-  if (!auditRow?.id) {
+  if (!auditRow?.id || !sessionToken) {
     return { ok: false, reason: "audit_write_failed" };
   }
 
@@ -204,6 +216,7 @@ async function mintSupportSession(input: {
     getAppOrigin(),
   );
   url.searchParams.set("token", sessionToken);
+  if (input.contactId) url.searchParams.set("next", `/contacts/${input.contactId}`);
 
   return {
     ok: true,
@@ -216,6 +229,7 @@ async function mintSupportSession(input: {
 export async function consumeAgencySupportSession(input: {
   orgSlug: string;
   token: string;
+  nextPath?: string | null;
 }): Promise<
   | { ok: true; redirectTo: string }
   | { ok: false; reason: string }
@@ -228,7 +242,8 @@ export async function consumeAgencySupportSession(input: {
   if (
     !verified ||
     verified.kind !== "session" ||
-    !verified.supportOriginUserId
+    !verified.supportOriginUserId ||
+    !verified.supportSessionId
   ) {
     return { ok: false, reason: "invalid_or_expired_token" };
   }
@@ -244,6 +259,29 @@ export async function consumeAgencySupportSession(input: {
   }
   if (isOperatorTokenRevoked(verified, workspace.operatorSessionsValidAfter)) {
     return { ok: false, reason: "invalid_or_expired_token" };
+  }
+  const [activeAudit] = await db
+    .select({ id: agencySupportSessions.id })
+    .from(agencySupportSessions)
+    .where(and(
+      eq(agencySupportSessions.id, verified.supportSessionId),
+      eq(agencySupportSessions.workspaceId, workspace.id),
+      eq(agencySupportSessions.originUserId, verified.supportOriginUserId),
+      isNull(agencySupportSessions.endedAt),
+    ))
+    .limit(1);
+  if (!activeAudit) return { ok: false, reason: "support_session_inactive" };
+
+  let redirectTo = "/dashboard";
+  if (input.nextPath) {
+    const match = /^\/contacts\/([A-Za-z0-9_-]+)$/.exec(input.nextPath);
+    if (!match) return { ok: false, reason: "invalid_support_redirect" };
+    const [contact] = await db.select({ id: contacts.id }).from(contacts).where(and(
+      eq(contacts.id, match[1]),
+      eq(contacts.orgId, workspace.id),
+    )).limit(1);
+    if (!contact) return { ok: false, reason: "contact_not_in_workspace" };
+    redirectTo = `/contacts/${contact.id}`;
   }
 
   // Set the operator session cookie. Same shape as a normal magic-
@@ -266,6 +304,41 @@ export async function consumeAgencySupportSession(input: {
   // surfaced on the synthetic session for banner rendering.
   return {
     ok: true,
-    redirectTo: `/dashboard`,
+    redirectTo,
   };
+}
+
+/** End exactly the audited support session represented by this cookie. */
+export async function exitOperatorSupportSessionAction(): Promise<void> {
+  "use server";
+  assertWritable();
+  const cookieStore = await cookies();
+  const token = cookieStore.get(OPERATOR_SESSION_COOKIE)?.value;
+  const verified = verifyOperatorToken(token);
+  if (
+    !verified ||
+    verified.kind !== "session" ||
+    !verified.supportSessionId ||
+    !verified.supportOriginUserId
+  ) {
+    redirect("/super-admin/workspaces");
+  }
+  const [ended] = await db
+    .update(agencySupportSessions)
+    .set({ endedAt: sql`now()` })
+    .where(and(
+      eq(agencySupportSessions.id, verified.supportSessionId),
+      eq(agencySupportSessions.workspaceId, verified.orgId),
+      eq(agencySupportSessions.originUserId, verified.supportOriginUserId),
+      isNull(agencySupportSessions.endedAt),
+    ))
+    .returning({ id: agencySupportSessions.id, agencyId: agencySupportSessions.agencyId });
+  cookieStore.set(OPERATOR_SESSION_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  });
+  redirect(ended?.agencyId ? "/dashboard" : "/super-admin/workspaces");
 }

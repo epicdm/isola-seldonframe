@@ -206,7 +206,17 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     preSession7d = signAt("session", INFO_EMAIL, now - 60_000);
     preUnusedMagic = signAt("magic", INFO_EMAIL, now - 30_000);
     preLegacySession = S.signOperatorToken({ orgId: EPIC, email: INFO_EMAIL, kind: "session", exp: now - 10_000 + S.OPERATOR_SESSION_TTL_MS });
-    preSupport = signAt("session", "support+platform-x@seldonframe-agency.local", now - 5_000, { supportOriginUserId: SUPER, exp: now - 5_000 + S.OPERATOR_SUPPORT_SESSION_TTL_MS });
+    const supportSessions = (await import("@/db/schema")).agencySupportSessions;
+    const [supportAudit] = await db.insert(supportSessions).values({
+      workspaceId: EPIC,
+      originUserId: SUPER,
+      notes: "synthetic pre-transfer support token fixture",
+    }).returning({ id: supportSessions.id });
+    preSupport = signAt("session", "support+platform-x@seldonframe-agency.local", now - 5_000, {
+      supportOriginUserId: SUPER,
+      supportSessionId: supportAudit.id,
+      exp: now - 5_000 + S.OPERATOR_SUPPORT_SESSION_TTL_MS,
+    });
     for (const t of [preSession7d, preLegacySession, preSupport]) assert.equal(await portalOrgFor(t), EPIC, "valid before the transfer (positive control)");
     assert.equal(await sessionForOrg(preSession7d), EPIC);
   });
@@ -455,6 +465,30 @@ describe("EPIC tenant ownership transfer (scratch Postgres, production driver)",
     assert.equal(await portalOrgFor(consumed.c!), EPIC);
     const ctxUser = await withOperatorCookie(consumed.c!, () => resolveOperatorPortalContext());
     assert.equal(ctxUser?.user.supportOriginUserId, SUPER);
+
+    const tenantContact = await one<{ id: string }>(sql`select id from contacts where org_id = ${EPIC}::uuid and email = 'cust@fixture.test'`);
+    const foreignContact = await one<{ id: string }>(sql`select id from contacts where org_id = ${INFO_HOME}::uuid`);
+    assert.ok(tenantContact && foreignContact);
+    const contactSession = await SS.createAgencySupportSession({ workspaceId: EPIC, contactId: tenantContact.id });
+    assert.equal(contactSession.ok, true, JSON.stringify(contactSession));
+    if (contactSession.ok) {
+      const nextPath = new URL(contactSession.url).searchParams.get("next");
+      assert.equal(nextPath, `/contacts/${tenantContact.id}`);
+      const opened = await withOperatorCookie(null, () => SS.consumeAgencySupportSession({
+        orgSlug: EPIC_SLUG,
+        token: new URL(contactSession.url).searchParams.get("token")!,
+        nextPath,
+      }));
+      assert.deepEqual(opened, { ok: true, redirectTo: `/contacts/${tenantContact.id}` });
+      const refusedForeignContact = await SS.createAgencySupportSession({ workspaceId: EPIC, contactId: foreignContact.id });
+      assert.equal(refusedForeignContact.ok ? "ok" : refusedForeignContact.reason, "contact_not_in_workspace");
+      const refusedForeignRedirect = await withOperatorCookie(null, () => SS.consumeAgencySupportSession({
+        orgSlug: EPIC_SLUG,
+        token: new URL(contactSession.url).searchParams.get("token")!,
+        nextPath: `/contacts/${foreignContact.id}`,
+      }));
+      assert.equal(refusedForeignRedirect.ok ? "ok" : refusedForeignRedirect.reason, "contact_not_in_workspace");
+    }
   });
 
   test("one clock (Codex r3): a support session's iat follows the DATABASE clock even when the app clock runs 20 s ahead", async () => {

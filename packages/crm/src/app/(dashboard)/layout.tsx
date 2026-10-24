@@ -13,6 +13,7 @@ import { CommandPalette } from "@/components/layout/command-palette";
 import { DemoBanner } from "@/components/layout/demo-banner";
 import { TestModeBanner } from "@/components/layout/test-mode-banner";
 import { AgencyKeyBanner } from "@/components/dashboard/agency-key-banner";
+import { PlatformSupportContextBanner } from "@/components/dashboard/platform-support-context-banner";
 import { DashboardTopbar } from "@/components/layout/dashboard-topbar";
 import { HelpButton } from "@/components/layout/help-button";
 import { SeldonChat } from "@/components/seldon-chat";
@@ -21,6 +22,7 @@ import { CommandBar } from "@/components/command-bar";
 import { isWinLadderOn, isSimpleHomeOn } from "@/lib/web-build/policy";
 import { isDraftApprovalsOn } from "@/lib/agent-drafts/policy";
 import { isPhoneWhatsappEnabled } from "@/lib/phone-whatsapp/exposure";
+import { parseTenantOrgs } from "@/lib/personal-line/config";
 import { readEnabledModules } from "@/lib/workspace/surface";
 import { hasLiveSms } from "@/lib/telephony/config";
 import { buildWorkspaceUrls } from "@/lib/billing/anonymous-workspace";
@@ -174,6 +176,9 @@ export default async function DashboardLayout({
   // which is voice-only) so this agrees with /conversations and /settings/features.
   // No extra DB round trip — activeOrg.integrations is already selected above.
   const smsLive = hasLiveSms(activeOrg?.integrations);
+  const personalLinesOn = Boolean(
+    orgId && [...(parseTenantOrgs(process.env.PL_LIFECYCLE_TENANT_ORGS)?.values() ?? [])].includes(orgId.toLowerCase()),
+  );
 
   // Agency key inheritance advisory banner (2026-07-08 pricing ladder,
   // Task 5, flag SF_AGENCY_KEY_INHERIT): shown when the ACTIVE org is a
@@ -364,6 +369,7 @@ export default async function DashboardLayout({
               smsLive={smsLive}
               draftApprovalsOn={isDraftApprovalsOn({ SF_DRAFT_APPROVALS: process.env.SF_DRAFT_APPROVALS })}
               phoneWhatsappOn={isPhoneWhatsappEnabled(orgId, process.env.PHONE_WHATSAPP_ENABLED_ORGS)}
+              personalLinesOn={personalLinesOn}
               agencyMode={agencyMode}
             />
             {/* overflow-x-clip (not overflow-x-hidden): overflow-y-auto here
@@ -383,6 +389,7 @@ export default async function DashboardLayout({
               <DemoBanner />
               <TestModeBanner testMode={activeOrg?.testMode ?? false} />
               <AgencyKeyBanner show={showAgencyKeyBanner} />
+              {isOperatorSession ? <PlatformSupportContextBanner /> : null}
               {isSwitchedOrg && activeOrg ? (
                 <div className="mb-5 rounded-2xl border border-border/80 bg-card/75 px-4 py-3 text-sm text-muted-foreground shadow-(--shadow-xs)">
                   <span className="font-medium text-foreground">{activeOrg.name}</span> active · {" "}

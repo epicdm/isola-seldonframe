@@ -20,6 +20,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
+import { resolveOperatorPortalContext } from "@/lib/auth/operator-portal-context";
+import { isSupportSessionContext } from "@/lib/operator-portal/session";
 import { checkRateLimit } from "@/lib/utils/rate-limit";
 import { isVisionVerifyOn, isWinLadderOn } from "@/lib/web-build/policy";
 import { ensureWorkspaceCopilotAgent } from "@/lib/agents/copilot/ensure-agent";
@@ -74,6 +76,12 @@ export async function POST(request: NextRequest) {
   // can't otherwise prove a `let`/`const`-from-a-nullable-fn stays non-null
   // across a function-declaration boundary.
   const orgId: string = orgIdOrNull;
+  // A human support session may inspect the effective tenant in the browser,
+  // but must not lend that impersonated context to an agent with broad tools.
+  const operatorContext = await resolveOperatorPortalContext();
+  if (isSupportSessionContext(operatorContext?.user)) {
+    return NextResponse.json({ error: "support_session_agent_access_denied" }, { status: 403 });
+  }
   const user = await getCurrentUser();
   if (!user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

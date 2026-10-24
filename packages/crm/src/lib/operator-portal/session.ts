@@ -32,10 +32,17 @@ export type OperatorTokenPayload = {
   /** v1.21 hook: agency support session origin user id. NULL on
    *  normal operator-direct sessions. */
   supportOriginUserId?: string | null;
+  /** Audit row that authorizes an audited support session. */
+  supportSessionId?: string | null;
   /** EPIC 2026-10-20: issue time (ms). Set on every newly minted token; tokens minted before this field existed derive it from
    *  `exp` minus their kind's TTL (see operatorTokenIssuedAt). */
   iat?: number;
 };
+
+/** A support-context session is for a human operator; never lend it to an agent run. */
+export function isSupportSessionContext(user: { supportOriginUserId?: string | null } | null | undefined): boolean {
+  return Boolean(user?.supportOriginUserId);
+}
 
 // EPIC 2026-10-20 — per-workspace operator-session cut-off (Port dec-owner-epic-tenant-transfer-revised-design-approved-2026-10-20).
 // The tokens are stateless, so revocation is a server-side comparison on every read: a token issued at or before the workspace's

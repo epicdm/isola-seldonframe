@@ -1,9 +1,9 @@
 // ROUTE-LEVEL test of POST /api/webhooks/personal-line/[orgId] — the exported route handler itself, production wiring:
 // real HMAC verification, real parser, real drizzle store on a SCRATCH Postgres (full schema), real link, real
 // moveDealToStage (the kanban path), real emitSeldonEvent -> workflow_event_log. No seam except the env/key file.
-// The four lifecycle bodies are the EXACT bytes plsvc's emitter produced in its own route-level run
-// (PL_LIFECYCLE_FIXTURE_IN = plsvc test/pl-lifecycle-emitter.test.ts output); they are re-signed here with the test key
-// (same signature scheme — the vector test in both repos proves it). Every refusal has its positive twin (Law 19).
+// The route tests can consume the emitter's captured bytes through PL_LIFECYCLE_FIXTURE_IN. CI uses the local
+// versioned protocol fixture so it still exercises the real route and database without depending on another repo's
+// transient test output. Both paths are re-signed with this fictional test key. Every refusal has its positive twin.
 //
 // Opt-in, same guard as the other DB specs: refuses unless NEON_LOCAL_HOST is set AND PL_LIFECYCLE_DB_TEST=scratch.
 import assert from "node:assert/strict";
@@ -11,6 +11,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import test, { before, describe } from "node:test";
 
 import { and, eq, sql } from "drizzle-orm";
@@ -46,7 +47,8 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     }), { params: Promise.resolve({ orgId }) });
   const body = (type: string, subject: string, over: Record<string, unknown> = {}) => {
     const base = JSON.parse(produced[type]);
-    return JSON.stringify({ ...base, event_id: randomUUID(), subject_id: subject, ...over });
+    const plAccountId = "pl_account_id" in over ? over.pl_account_id : base.pl_account_id === null ? null : `acct_${subject}`;
+    return JSON.stringify({ ...base, event_id: randomUUID(), subject_id: subject, pl_account_id: plAccountId, ...over });
   };
   const count = async (q: ReturnType<typeof sql>) => Number(((await db.execute(q)) as any).rows?.[0]?.n ?? (await db.execute(q) as any)[0]?.n);
   const dealsOf = async (orgId: string) => db.select().from(S.deals).where(eq(S.deals.orgId, orgId));
@@ -57,7 +59,9 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
   };
 
   before(async () => {
-    produced = JSON.parse(readFileSync(String(process.env.PL_LIFECYCLE_FIXTURE_IN), "utf8"));
+    const fixturePath = process.env.PL_LIFECYCLE_FIXTURE_IN
+      ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../fixtures/personal-line-lifecycle-events.json");
+    produced = JSON.parse(readFileSync(fixturePath, "utf8"));
     assert.deepEqual(Object.keys(produced).sort(), ["pl.app_activated", "pl.first_call", "pl.line_created", "pl.signup_started"]);
     writeFileSync(keyFile, KEY + "\n");
     ({ db } = await import("@/db"));
@@ -83,7 +87,7 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
   const configure = () => {
     process.env.PL_LIFECYCLE_KEY_FILE = keyFile;
     process.env.PL_LIFECYCLE_KID = "v1";
-    process.env.PL_LIFECYCLE_TENANT_ORGS = `epic=${EPIC},nostage=${NOSTAGE}`;
+    process.env.PL_LIFECYCLE_TENANT_ORGS = `epic=${EPIC},foreign=${FOREIGN},nostage=${NOSTAGE}`;
   };
 
   test("NOT CONFIGURED (deployed dark): 503 and nothing written; positive twin: the same signed body is accepted once configured", async () => {
@@ -130,6 +134,14 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     ]);
     const [deal] = await plDealOf(EPIC, subject);
     assert.equal((deal.customFields as any).plAccountId, JSON.parse(produced["pl.line_created"]).pl_account_id);
+    const associations = await db.select().from(S.workspaceServiceAssociations).where(and(
+      eq(S.workspaceServiceAssociations.orgId, EPIC), eq(S.workspaceServiceAssociations.provider, "personal_line"),
+      eq(S.workspaceServiceAssociations.externalSubjectId, subject),
+    ));
+    assert.equal(associations.length, 1);
+    assert.equal(associations[0].tenantKey, "epic");
+    assert.equal(associations[0].externalAccountId, JSON.parse(produced["pl.line_created"]).pl_account_id);
+    assert.equal(associations[0].sourceEventId, JSON.parse(produced["pl.line_created"]).event_id);
     // the contact is NEW (source personal_line), linked by identity; the self-entered one with the same phone is not adopted
     const ident: any = await db.execute(sql`select contact_id from external_identities where org_id = ${EPIC}::uuid and external_id = ${subject}`);
     const contactId = (ident.rows ?? ident)[0].contact_id;
@@ -149,6 +161,7 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
   test("REPLAY: every body delivered again -> 200 duplicate, nothing new (no contact, deal, activity or stage event)", async () => {
     configure();
     const snap = async () => [await count(sql`select count(*)::int n from contacts where org_id = ${EPIC}::uuid`), (await dealsOf(EPIC)).length,
+      await count(sql`select count(*)::int n from workspace_service_associations where org_id = ${EPIC}::uuid`),
       await count(sql`select count(*)::int n from activities where org_id = ${EPIC}::uuid`), (await stageEvents(EPIC)).length];
     const s0 = await snap();
     for (const type of Object.keys(produced)) {
@@ -157,6 +170,62 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
       assert.equal((await r.json()).status, "duplicate");
     }
     assert.deepEqual(await snap(), s0);
+  });
+
+  test("one signed upstream account cannot be associated to two subscriber subjects", async () => {
+    configure();
+    const accountId = "acct_shared-service-account";
+    assert.equal((await post(EPIC, body("pl.line_created", "subj_assoc_owner", { pl_account_id: accountId }))).status, 200);
+    const conflict = await post(EPIC, body("pl.line_created", "subj_assoc_other", { pl_account_id: accountId }));
+    assert.equal(conflict.status, 409);
+    assert.equal((await conflict.json()).error, "service_association_conflict");
+    const associations = await db.select().from(S.workspaceServiceAssociations).where(and(
+      eq(S.workspaceServiceAssociations.provider, "personal_line"), eq(S.workspaceServiceAssociations.tenantKey, "epic"),
+      eq(S.workspaceServiceAssociations.externalAccountId, accountId),
+    ));
+    assert.equal(associations.length, 1);
+    assert.equal(associations[0].externalSubjectId, "subj_assoc_owner");
+    assert.equal((await plDealOf(EPIC, "subj_assoc_other")).length, 0);
+  });
+
+  test("tenant read model and HTTP handlers never expose a foreign workspace contact", async () => {
+    configure();
+    const epicSubject = `subj_read_epic_${randomUUID().slice(0, 8)}`;
+    const foreignSubject = `subj_read_foreign_${randomUUID().slice(0, 8)}`;
+    assert.equal((await post(EPIC, body("pl.line_created", epicSubject, { facts: { did_masked: "+1 767 *** 1001" } }))).status, 200);
+    assert.equal((await post(FOREIGN, body("pl.line_created", foreignSubject, { tenant: "foreign", facts: { did_masked: "+1 767 *** 2002" } }))).status, 200);
+
+    const contactFor = async (orgId: string, subject: string) => {
+      const result: any = await db.execute(sql`select contact_id from external_identities where org_id = ${orgId}::uuid and provider = 'personal_line' and external_id = ${subject}`);
+      return (result.rows ?? result)[0]?.contact_id as string | undefined;
+    };
+    const epicContactId = await contactFor(EPIC, epicSubject);
+    const foreignContactId = await contactFor(FOREIGN, foreignSubject);
+    assert.ok(epicContactId);
+    assert.ok(foreignContactId);
+
+    const { listTenantPersonalLines, getTenantPersonalLine } = await import("@/lib/personal-lines/tenant-data");
+    const { createPersonalLinesListHandler, createPersonalLineDetailHandler } = await import("@/lib/personal-lines/http");
+    const epicLines = await listTenantPersonalLines(EPIC);
+    assert.ok(epicLines.some((line) => line.customerId === epicContactId && line.serviceAssociationStatus === "verified"));
+    assert.ok(!epicLines.some((line) => line.customerId === foreignContactId));
+    assert.deepEqual((await listTenantPersonalLines(EPIC, "1001")).map((line) => line.customerId), [epicContactId]);
+    assert.deepEqual(await listTenantPersonalLines(EPIC, "2002"), []);
+    assert.equal(await getTenantPersonalLine(EPIC, foreignContactId), null);
+
+    const listHandler = createPersonalLinesListHandler(async () => EPIC, listTenantPersonalLines);
+    const listResponse = await listHandler(new Request(`http://uplink.test/api/personal-lines?orgId=${FOREIGN}`));
+    assert.equal(listResponse.status, 200);
+    const listed = await listResponse.json() as { lines: Array<{ customerId: string }> };
+    assert.ok(listed.lines.some((line) => line.customerId === epicContactId));
+    assert.ok(!listed.lines.some((line) => line.customerId === foreignContactId));
+    const searchResponse = await listHandler(new Request(`http://uplink.test/api/personal-lines?orgId=${FOREIGN}&search=2002`));
+    assert.equal(searchResponse.status, 200);
+    assert.deepEqual((await searchResponse.json() as { lines: Array<{ customerId: string }> }).lines, []);
+
+    const detailHandler = createPersonalLineDetailHandler(async () => EPIC, getTenantPersonalLine);
+    const detailResponse = await detailHandler(new Request(`http://uplink.test/api/personal-lines/${foreignContactId}?orgId=${FOREIGN}`), foreignContactId);
+    assert.equal(detailResponse.status, 404);
   });
 
   test("OUT OF ORDER: first call arrives first -> deal created AT First call; the older events never move it back", async () => {
@@ -207,8 +276,11 @@ describe("Personal Line lifecycle ingress -> Default pipeline (route level, scra
     assert.equal((await post(EPIC, body("pl.signup_started", "subj_t1", { tenant: "other" }))).status, 403);
     assert.equal((await post(FOREIGN, body("pl.signup_started", "subj_t2"))).status, 403);
     assert.equal((await post(NOSTAGE, body("pl.signup_started", "subj_t3"))).status, 403);   // epic's tenant, allowlisted path of ANOTHER tenant
-    assert.equal((await dealsOf(FOREIGN)).length, 0);
-    assert.equal(await count(sql`select count(*)::int n from integration_event_inbox where external_id in ('subj_t1','subj_t2','subj_t3')`), 0);
+    const deniedForeignDeals = await db.execute(sql`select id from deals where org_id = ${FOREIGN}::uuid and custom_fields->>'plSubjectId' in ('subj_t1','subj_t2','subj_t3')`);
+    const deniedDealRows = (deniedForeignDeals as any).rows ?? deniedForeignDeals;
+    assert.equal(deniedDealRows.length, 0, `denied events must not create a deal in the foreign tenant: ${JSON.stringify(deniedDealRows)}`);
+    const deniedRows = await db.execute(sql`select org_id, external_id, event_id from integration_event_inbox where external_id in ('subj_t1','subj_t2','subj_t3') order by external_id`);
+    assert.equal(await count(sql`select count(*)::int n from integration_event_inbox where external_id in ('subj_t1','subj_t2','subj_t3')`), 0, JSON.stringify((deniedRows as any).rows ?? deniedRows));
     // positive twin: the second allowlisted tenant on its own path is accepted
     assert.equal((await post(NOSTAGE, body("pl.signup_started", "subj_t4", { tenant: "nostage" }))).status, 200);
   });
