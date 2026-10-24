@@ -1,6 +1,6 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { getAIClient } from "@/lib/ai/client";
@@ -515,23 +515,62 @@ export async function installVerticalPack(orgId: string, pack: VerticalPack): Pr
   if (!org) throw new Error("Organization not found");
 
   const installedAt = new Date().toISOString();
-  const settings = { ...((org.settings ?? {}) as Record<string, unknown>) };
-  const priorPacks = (settings.verticalPacks ?? {}) as Record<string, unknown>;
-  settings.verticalPacks = {
-    ...priorPacks,
-    [validated.id]: {
-      ...validated,
-      installed_at: installedAt,
-    },
-  };
+  const packPayload = JSON.stringify(validated);
+  const requestedBlocks = [...new Set(validated.block_ids)];
 
-  const existingBlocks = Array.isArray(org.enabledBlocks) ? org.enabledBlocks : [];
-  const nextBlocks = Array.from(new Set([...existingBlocks, ...validated.block_ids]));
+  // Merge only the verticalPacks.<id> subtree in SQL. A read/modify/write of
+  // the whole settings object can erase an unrelated concurrent workspace
+  // setting update. Preserve the first installed_at value so retries are
+  // observably idempotent, and append blocks only once while preserving their
+  // existing order.
+  const settingsUpdate = sql<typeof organizations.$inferInsert.settings>`
+    jsonb_set(
+      jsonb_set(
+        COALESCE(${organizations.settings}, '{}'::jsonb),
+        ARRAY['verticalPacks']::text[],
+        COALESCE(${organizations.settings} -> 'verticalPacks', '{}'::jsonb),
+        true
+      ),
+      ARRAY['verticalPacks', ${validated.id}]::text[],
+      ${packPayload}::jsonb || jsonb_build_object(
+        'installed_at', COALESCE(
+          ${organizations.settings} #>> ARRAY['verticalPacks', ${validated.id}, 'installed_at']::text[],
+          ${installedAt}
+        )
+      ),
+      true
+    )
+  `;
+  const enabledBlocksUpdate = sql<typeof organizations.$inferInsert.enabledBlocks>`
+    ARRAY(
+      SELECT block_name
+      FROM (
+        SELECT block_name, MIN(position) AS first_position
+        FROM unnest(
+          COALESCE(${organizations.enabledBlocks}, ARRAY[]::text[]) || ${requestedBlocks}::text[]
+        ) WITH ORDINALITY AS blocks(block_name, position)
+        GROUP BY block_name
+      ) AS unique_blocks
+      ORDER BY first_position
+    )
+  `;
 
-  await db
+  const [updated] = await db
     .update(organizations)
-    .set({ settings, enabledBlocks: nextBlocks, updatedAt: new Date() })
-    .where(eq(organizations.id, orgId));
+    .set({ settings: settingsUpdate, enabledBlocks: enabledBlocksUpdate, updatedAt: new Date() })
+    .where(eq(organizations.id, orgId))
+    .returning({ settings: organizations.settings, enabledBlocks: organizations.enabledBlocks });
+  if (!updated) throw new Error("Organization not found");
+
+  const savedSettings = (updated.settings ?? {}) as Record<string, unknown>;
+  const savedPacks = savedSettings.verticalPacks && typeof savedSettings.verticalPacks === "object"
+    ? savedSettings.verticalPacks as Record<string, unknown>
+    : {};
+  const savedPack = savedPacks[validated.id] && typeof savedPacks[validated.id] === "object"
+    ? savedPacks[validated.id] as Record<string, unknown>
+    : {};
+  const savedInstalledAt = typeof savedPack.installed_at === "string" ? savedPack.installed_at : installedAt;
+  const nextBlocks = updated.enabledBlocks ?? [];
 
   void writeEvent(orgId, "vertical_pack_installed", {
     pack_id: validated.id,
@@ -545,7 +584,7 @@ export async function installVerticalPack(orgId: string, pack: VerticalPack): Pr
   return {
     orgId,
     packId: validated.id,
-    installedAt,
+    installedAt: savedInstalledAt,
     enabledBlocks: nextBlocks,
   };
 }
