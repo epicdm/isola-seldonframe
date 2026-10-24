@@ -35,23 +35,33 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-console.log(`Running ${files.length} unit test file(s) via node:test + tsx:`);
-for (const f of files) console.log(`  - packages/crm/${f.replace(/\\/g, "/")}`);
-console.log();
-
-const result = spawnSync(
-  process.execPath,
-  ["--import", "tsx", "--test", ...files],
-  {
-    stdio: "inherit",
-    cwd: crmRoot,
-    env: process.env,
-  }
+// Windows limits a process command line to 32,767 characters. Keep batches
+// small enough that the runner behaves the same on Windows and Linux.
+const batchSize = 50;
+const batches = Array.from({ length: Math.ceil(files.length / batchSize) }, (_, i) =>
+  files.slice(i * batchSize, (i + 1) * batchSize)
 );
 
-if (result.error) {
-  console.error(result.error.message);
-  process.exit(1);
+console.log(`Running ${files.length} unit test file(s) in ${batches.length} batches via node:test + tsx.`);
+let failed = false;
+for (const [index, batch] of batches.entries()) {
+  console.log(`\nBatch ${index + 1}/${batches.length} (${batch.length} files)`);
+  const result = spawnSync(
+    process.execPath,
+    ["--experimental-test-module-mocks", "--import", "tsx", "--test", ...batch],
+    {
+      stdio: "inherit",
+      cwd: crmRoot,
+      env: process.env,
+    }
+  );
+
+  if (result.error) {
+    console.error(result.error.message);
+    failed = true;
+    break;
+  }
+  if (result.status !== 0) failed = true;
 }
 
-process.exit(result.status ?? 1);
+process.exit(failed ? 1 : 0);
