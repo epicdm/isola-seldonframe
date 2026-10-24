@@ -29,7 +29,7 @@ export function PersonalLineContactCard({ line }: { line: PersonalLineRecord }) 
         </> : <div><dt className="text-xs text-muted-foreground">Live service data</dt><dd className="mt-1 font-medium">{evidence.status === "not_linked" ? "Service association not available" : evidence.status === "association_mismatch" ? "Service association needs review" : "Temporarily unavailable"}</dd></div>}
         <div><dt className="text-xs text-muted-foreground">Updated</dt><dd className="mt-1 font-medium">{new Date(line.updatedAt).toLocaleString()}</dd></div>
       </dl>
-      <p className="mt-4 text-xs text-muted-foreground">Live status is read through the shared service association. Recorded credits are wallet events and are not a payment settlement report.</p>
+      <p className="mt-4 text-xs text-muted-foreground">Live status is read from the configured Personal Line service and checked against its recorded service number. Recorded credits are wallet events and are not a payment settlement report.</p>
     </section>
   );
 }
