@@ -14,7 +14,7 @@
 import { sql, and, or, eq, ilike, lt, desc, count } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 import { db } from "@/db";
-import { users, organizations, memberships, activities } from "@/db/schema";
+import { users, organizations, memberships, orgMembers, activities } from "@/db/schema";
 import { PLANS, type TierId } from "@/lib/billing/plans";
 
 const PLAN_LABEL: Record<string, string> = Object.fromEntries(
@@ -157,9 +157,36 @@ export type UserDetailWorkspace = {
   lastActivityAt: string | null;
   /** "owner" or "member" — relationship of this user to the workspace. */
   relation: "owner" | "member";
+  /** Role resolved using the same rules as getCurrentWorkspaceRole. Null means no org_members/user-org grant. */
+  effectiveRole: string | null;
+  roleSource: "users.role" | "org_members.role" | null;
   /** For memberships: status (active, paused, etc.). */
   membershipStatus?: string;
 };
+
+export function resolveEffectiveWorkspaceRole(input: {
+  userId: string;
+  primaryOrgId: string;
+  userRole: string;
+  workspaceId: string;
+  isOwner: boolean;
+  memberRole: string | null;
+}): { effectiveRole: string | null; roleSource: "users.role" | "org_members.role" | null } {
+  // This mirrors getCurrentWorkspaceRole: the user's primary workspace role
+  // takes precedence, then org_members, then users.role for an owned workspace.
+  if (input.primaryOrgId === input.workspaceId) {
+    return { effectiveRole: input.userRole, roleSource: "users.role" };
+  }
+  if (input.memberRole) {
+    return { effectiveRole: input.memberRole, roleSource: "org_members.role" };
+  }
+  if (input.isOwner) {
+    return { effectiveRole: input.userRole, roleSource: "users.role" };
+  }
+  // Legacy `memberships` rows are displayed for history, but getOrgId does
+  // not use them to grant active workspace access.
+  return { effectiveRole: null, roleSource: null };
+}
 
 export type UserDetail = {
   id: string;
@@ -177,8 +204,10 @@ export async function getUserDetail(userId: string): Promise<UserDetail | null> 
   const [user] = await db
     .select({
       id: users.id,
+      orgId: users.orgId,
       name: users.name,
       email: users.email,
+      role: users.role,
       emailVerified: users.emailVerified,
       planId: users.planId,
       stripeCustomerId: users.stripeCustomerId,
@@ -189,6 +218,12 @@ export async function getUserDetail(userId: string): Promise<UserDetail | null> 
     .limit(1);
 
   if (!user) return null;
+
+  const appMemberships = await db
+    .select({ orgId: orgMembers.orgId, role: orgMembers.role })
+    .from(orgMembers)
+    .where(eq(orgMembers.userId, userId));
+  const appRoleByOrg = new Map(appMemberships.map((membership) => [membership.orgId, membership.role]));
 
   // Workspaces owned
   const owned = await db
@@ -247,6 +282,7 @@ export async function getUserDetail(userId: string): Promise<UserDetail | null> 
       createdAt: w.createdAt.toISOString(),
       lastActivityAt: lastActivityMap.get(w.id)?.toISOString() ?? null,
       relation: "owner" as const,
+      ...resolveEffectiveWorkspaceRole({ userId, primaryOrgId: user.orgId, userRole: user.role, workspaceId: w.id, isOwner: true, memberRole: appRoleByOrg.get(w.id) ?? null }),
     })),
     ...joined.map((j) => ({
       id: j.org.id,
@@ -256,6 +292,7 @@ export async function getUserDetail(userId: string): Promise<UserDetail | null> 
       createdAt: j.org.createdAt.toISOString(),
       lastActivityAt: lastActivityMap.get(j.orgId)?.toISOString() ?? null,
       relation: "member" as const,
+      ...resolveEffectiveWorkspaceRole({ userId, primaryOrgId: user.orgId, userRole: user.role, workspaceId: j.org.id, isOwner: false, memberRole: appRoleByOrg.get(j.org.id) ?? null }),
       membershipStatus: j.status,
     })),
   ];
