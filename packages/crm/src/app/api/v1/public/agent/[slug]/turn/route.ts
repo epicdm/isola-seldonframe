@@ -60,6 +60,8 @@ import {
   type TrustedRelayToolContext,
 } from "@/lib/agents/mcp/relay-context";
 import { getCurrentUser, getOrgId } from "@/lib/auth/helpers";
+import { resolveOperatorPortalContext } from "@/lib/auth/operator-portal-context";
+import { isSupportSessionContext } from "@/lib/operator-portal/session";
 import {
   PUBLIC_TURN_RATE_LIMITED_MESSAGE,
   checkPublicTurnAllowed,
@@ -185,6 +187,15 @@ export async function POST(
   let isAuthenticatedOperator = false;
   if (requestedTestMode) {
     try {
+      // A SaaS support session may inspect the tenant in the dashboard, but
+      // it must not turn that browser impersonation into agent tool authority.
+      const operatorContext = await resolveOperatorPortalContext();
+      if (isSupportSessionContext(operatorContext?.user)) {
+        return NextResponse.json(
+          { error: "support_session_agent_access_denied" },
+          { status: 403, headers: CORS_HEADERS },
+        );
+      }
       const user = await getCurrentUser();
       // The test-mode bypass is for the operators OF THIS WORKSPACE only. A signed-in user of another workspace
       // (or an admin-token guest of another workspace) is treated like any anonymous caller.

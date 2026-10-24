@@ -29,6 +29,7 @@ const RELAY_KEY = "relay-fixture-key-0123456789abcdef0123456789"; // test-only, 
 const WRONG_KEY = "wrong-fixture-key-0123456789abcdef0123456789";
 
 const modelCalls: string[] = [];
+let supportMode = false;
 let seq = 0;
 const sid = () => `abl-sess-${(++seq).toString(36)}-${randomBytes(4).toString("hex")}`;
 let ipSeq = 10;
@@ -118,6 +119,13 @@ describe("Public turn route: anonymous abuse limits, verified-relay exemption", 
     mock.module(pathToFileURL(path.join(crm, "src/lib/auth/helpers.ts")).href, {
       namedExports: { getCurrentUser: async () => null, getOrgId: async () => null },
     });
+    mock.module(pathToFileURL(path.join(crm, "src/lib/auth/operator-portal-context.ts")).href, {
+      namedExports: {
+        resolveOperatorPortalContext: async () => supportMode
+          ? { user: { supportOriginUserId: "fixture-platform-operator" } }
+          : null,
+      },
+    });
     mock.module(pathToFileURL(path.join(crm, "src/lib/analytics/record-agent-activation.ts")).href, {
       namedExports: { recordAgentConversationStarted: async () => undefined },
     });
@@ -139,6 +147,19 @@ describe("Public turn route: anonymous abuse limits, verified-relay exemption", 
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.message, "fixture reply");
     assert.equal(modelCalls.length, calls + 1);
+  });
+
+  test("a SaaS support browser cannot use the authenticated agent test-mode path", async () => {
+    supportMode = true;
+    try {
+      await assertRefusedWithoutModelCall(
+        () => turn({ ip: freshIp(), headers: { "x-test-mode": "1" } }),
+        403,
+        "support_session_agent_access_denied",
+      );
+    } finally {
+      supportMode = false;
+    }
   });
 
   test("the restored defaults are 12 a minute and 150 a day per IP, and 1500 a day per agent", async () => {
