@@ -74,7 +74,7 @@ export default async function UserDetailPage({
       </header>
 
       <p className="text-xs text-muted-foreground">
-        Effective app role follows the dashboard authorization sources: the user&apos;s primary workspace role or an active workspace role grant. A legacy membership record without an app role grant does not authorize workspace access.
+        Effective app role follows dashboard authorization: workspace ownership, a native owner/admin/staff membership, or the legacy primary-workspace owner role. A legacy membership history row alone does not grant access.
       </p>
 
       {/* Workspaces owned */}
@@ -149,7 +149,7 @@ function WorkspaceTable({
     createdAt: string;
     lastActivityAt: string | null;
     effectiveRole: string | null;
-    roleSource: "users.role" | "org_members.role" | null;
+    roleSource: "organizations.owner_id" | "users.role" | "org_members.role" | null;
     membershipStatus?: string;
   }>;
   showMembershipStatus?: boolean;

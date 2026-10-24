@@ -157,9 +157,9 @@ export type UserDetailWorkspace = {
   lastActivityAt: string | null;
   /** "owner" or "member" — relationship of this user to the workspace. */
   relation: "owner" | "member";
-  /** Role resolved using the same rules as getCurrentWorkspaceRole. Null means no org_members/user-org grant. */
+  /** Role resolved using the native owner/admin/staff rules. */
   effectiveRole: string | null;
-  roleSource: "users.role" | "org_members.role" | null;
+  roleSource: "organizations.owner_id" | "users.role" | "org_members.role" | null;
   /** For memberships: status (active, paused, etc.). */
   membershipStatus?: string;
 };
@@ -171,20 +171,24 @@ export function resolveEffectiveWorkspaceRole(input: {
   workspaceId: string;
   isOwner: boolean;
   memberRole: string | null;
-}): { effectiveRole: string | null; roleSource: "users.role" | "org_members.role" | null } {
-  // This mirrors getCurrentWorkspaceRole: the user's primary workspace role
-  // takes precedence, then org_members, then users.role for an owned workspace.
-  if (input.primaryOrgId === input.workspaceId) {
-    return { effectiveRole: input.userRole, roleSource: "users.role" };
-  }
-  if (input.memberRole) {
-    return { effectiveRole: input.memberRole, roleSource: "org_members.role" };
-  }
+}): { effectiveRole: "owner" | "admin" | "staff" | null; roleSource: "organizations.owner_id" | "org_members.role" | "users.role" | null } {
+  // Match loadWorkspaceRole/resolveWorkspaceRoleFromFacts. Workspace ownership
+  // outranks membership, only the native owner/admin/staff/member values grant
+  // access, and a primary workspace row grants owner only when users.role says
+  // owner. Unknown role strings fail closed instead of looking authorized.
   if (input.isOwner) {
-    return { effectiveRole: input.userRole, roleSource: "users.role" };
+    return { effectiveRole: "owner", roleSource: "organizations.owner_id" };
   }
-  // Legacy `memberships` rows are displayed for history, but getOrgId does
-  // not use them to grant active workspace access.
+  if (input.memberRole === "owner") return { effectiveRole: "owner", roleSource: "org_members.role" };
+  if (input.memberRole === "admin") return { effectiveRole: "admin", roleSource: "org_members.role" };
+  if (input.memberRole === "staff" || input.memberRole === "member") {
+    return { effectiveRole: "staff", roleSource: "org_members.role" };
+  }
+  if (input.primaryOrgId === input.workspaceId && input.userRole === "owner") {
+    return { effectiveRole: "owner", roleSource: "users.role" };
+  }
+  // Legacy `memberships` rows are displayed for history, but do not grant an
+  // effective app role by themselves.
   return { effectiveRole: null, roleSource: null };
 }
 
