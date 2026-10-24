@@ -81,8 +81,8 @@ describe("tenant Personal Line read model", () => {
     const calls: string[] = [];
     const detailReader = createTenantPersonalLineReader(
       async (orgId, contactId) => rows.filter((item) => item.orgId === orgId && (!contactId || item.customerId === contactId)),
-      async (accountId) => {
-        calls.push(accountId);
+      async (orgId, accountId) => {
+        calls.push(`${orgId}:${accountId}`);
         return { status: "association_mismatch" };
       },
     );
@@ -92,7 +92,7 @@ describe("tenant Personal Line read model", () => {
     assert.equal(await detailReader.get(b, "contact-a"), null);
     assert.deepEqual(calls, []);
     const line = await detailReader.get(a, "contact-a");
-    assert.deepEqual(calls, ["account-a"]);
+    assert.deepEqual(calls, [`${a}:account-a`]);
     assert.deepEqual(line?.serviceEvidence, { status: "association_mismatch" });
   });
 });

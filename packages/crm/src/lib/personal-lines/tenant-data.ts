@@ -57,7 +57,7 @@ function projectRecord(row: SubjectFactsRow, serviceEvidence: PersonalLineServic
 /** All reads require the caller's server-resolved org id and query by that tenant first. */
 export function createTenantPersonalLineReader(
   readRows: TenantFactsReader,
-  readService: (accountId: string) => Promise<PersonalLineServiceEvidence> = readPersonalLineServiceEvidence,
+  readService: (orgId: string, accountId: string) => Promise<PersonalLineServiceEvidence> = readPersonalLineServiceEvidence,
 ) {
   return {
     async list(orgId: string, search = ""): Promise<PersonalLineRecord[]> {
@@ -75,7 +75,7 @@ export function createTenantPersonalLineReader(
       const [row] = await readRows(orgId, contactId);
       if (!row) return null;
       const accountId = typeof row.facts?.pl_account_id === "string" ? row.facts.pl_account_id : null;
-      const serviceEvidence = accountId ? await readService(accountId).catch(() => ({ status: "unavailable" as const })) : { status: "not_linked" as const };
+      const serviceEvidence = accountId ? await readService(orgId, accountId).catch(() => ({ status: "unavailable" as const })) : { status: "not_linked" as const };
       return projectRecord(row, serviceEvidence);
     },
   };

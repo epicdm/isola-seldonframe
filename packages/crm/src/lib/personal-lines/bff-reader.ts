@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { parseTenantOrgs } from "@/lib/personal-line/config";
 
 export type PersonalLineCreditEvidence = {
   at: string;
@@ -28,6 +29,10 @@ export type PersonalLineServiceEvidence =
 type BffReaderOptions = {
   baseUrl?: string;
   readTokenFile?: string;
+  /** The single tenant key this BFF credential is authorized to serve. */
+  tenantKey?: string;
+  /** Injected only for tests; production reads the signed-ingress tenant map. */
+  tenantOrgs?: ReadonlyMap<string, string> | null;
   fetchImpl?: typeof fetch;
   readFile?: (path: string) => string;
 };
@@ -110,10 +115,18 @@ function projectVerifiedDetail(detail: Record<string, unknown>, service: Record<
 export function createPersonalLineBffReader(options: BffReaderOptions = {}) {
   const baseUrl = (options.baseUrl ?? process.env.PERSONAL_LINE_BFF_URL)?.replace(/\/+$/, "");
   const tokenFile = options.readTokenFile ?? process.env.PERSONAL_LINE_READ_TOKEN_FILE;
+  const tenantKey = options.tenantKey ?? process.env.PERSONAL_LINE_BFF_TENANT;
   const fetchImpl = options.fetchImpl ?? fetch;
   const readFile = options.readFile ?? ((path: string) => readFileSync(path, "utf8"));
 
-  return async function read(accountId: string): Promise<PersonalLineServiceEvidence> {
+  return async function read(orgId: string, accountId: string): Promise<PersonalLineServiceEvidence> {
+    const tenantOrgs = options.tenantOrgs ?? parseTenantOrgs(process.env.PL_LIFECYCLE_TENANT_ORGS);
+    const authorizedOrg = tenantKey ? tenantOrgs?.get(tenantKey) : null;
+    // bff-v2's customer-360 integration is EPIC/Odoo-bound. Never use its
+    // shared credential for another workspace merely because a signed event
+    // supplied an account ID there. The tenant key -> workspace binding is
+    // deployment configuration, not a user-supplied query parameter.
+    if (!authorizedOrg || authorizedOrg.toLowerCase() !== orgId.toLowerCase()) return { status: "unavailable" };
     if (!baseUrl || !tokenFile || !/^[A-Za-z0-9_-]{8,128}$/.test(accountId)) return { status: "unavailable" };
     let token: string;
     try {
