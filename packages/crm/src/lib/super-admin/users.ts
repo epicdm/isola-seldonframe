@@ -11,11 +11,13 @@
 // 60 seconds (shorter than the overview's 5min — the detail data
 // changes more often as users sign up + click around).
 
-import { sql, and, or, eq, ilike, lt, desc, count } from "drizzle-orm";
+import { sql, and, or, eq, ilike, lt, desc, count, inArray } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { unstable_cache } from "next/cache";
 import { db } from "@/db";
-import { users, organizations, memberships, orgMembers, activities } from "@/db/schema";
+import { users, organizations, memberships, orgMembers, partnerAgencies, activities } from "@/db/schema";
 import { PLANS, type TierId } from "@/lib/billing/plans";
+import { resolveWorkspaceRoleFromFacts, type WorkspaceRoleFacts } from "@/lib/auth/workspace-role";
 
 const PLAN_LABEL: Record<string, string> = Object.fromEntries(
   PLANS.map((p) => [p.id, p.name])
@@ -159,37 +161,27 @@ export type UserDetailWorkspace = {
   relation: "owner" | "member";
   /** Role resolved using the native owner/admin/staff rules. */
   effectiveRole: string | null;
-  roleSource: "organizations.owner_id" | "users.role" | "org_members.role" | null;
+  roleSource: "organizations.owner_id" | "organizations.parent_user_id" | "partner_agencies.owner_user_id" | "org_members.role" | "users.role" | null;
   /** For memberships: status (active, paused, etc.). */
   membershipStatus?: string;
 };
 
-export function resolveEffectiveWorkspaceRole(input: {
-  userId: string;
-  primaryOrgId: string;
-  userRole: string;
-  workspaceId: string;
-  isOwner: boolean;
-  memberRole: string | null;
-}): { effectiveRole: "owner" | "admin" | "staff" | null; roleSource: "organizations.owner_id" | "org_members.role" | "users.role" | null } {
-  // Match loadWorkspaceRole/resolveWorkspaceRoleFromFacts. Workspace ownership
-  // outranks membership, only the native owner/admin/staff/member values grant
-  // access, and a primary workspace row grants owner only when users.role says
-  // owner. Unknown role strings fail closed instead of looking authorized.
-  if (input.isOwner) {
-    return { effectiveRole: "owner", roleSource: "organizations.owner_id" };
-  }
-  if (input.memberRole === "owner") return { effectiveRole: "owner", roleSource: "org_members.role" };
-  if (input.memberRole === "admin") return { effectiveRole: "admin", roleSource: "org_members.role" };
-  if (input.memberRole === "staff" || input.memberRole === "member") {
-    return { effectiveRole: "staff", roleSource: "org_members.role" };
-  }
-  if (input.primaryOrgId === input.workspaceId && input.userRole === "owner") {
-    return { effectiveRole: "owner", roleSource: "users.role" };
-  }
-  // Legacy `memberships` rows are displayed for history, but do not grant an
-  // effective app role by themselves.
-  return { effectiveRole: null, roleSource: null };
+export function resolveEffectiveWorkspaceRole(input: WorkspaceRoleFacts): {
+  effectiveRole: "owner" | "admin" | "staff" | null;
+  roleSource: UserDetailWorkspace["roleSource"];
+} {
+  const effectiveRole = resolveWorkspaceRoleFromFacts(input);
+  if (!effectiveRole || !input.userId) return { effectiveRole: null, roleSource: null };
+  // Keep the displayed explanation in the same precedence order as the
+  // authoritative resolver. The role itself always comes from that resolver.
+  const roleSource: NonNullable<UserDetailWorkspace["roleSource"]> =
+    input.ownerId === input.userId ? "organizations.owner_id"
+      : input.parentUserId === input.userId ? "organizations.parent_user_id"
+        : input.agencyOwnerUserId === input.userId ? "partner_agencies.owner_user_id"
+          : input.membershipRole === "owner" ? "org_members.role"
+            : input.homeOrgId === input.orgId && input.homeRole === "owner" ? "users.role"
+              : "org_members.role";
+  return { effectiveRole, roleSource };
 }
 
 export type UserDetail = {
@@ -222,12 +214,6 @@ export async function getUserDetail(userId: string): Promise<UserDetail | null> 
     .limit(1);
 
   if (!user) return null;
-
-  const appMemberships = await db
-    .select({ orgId: orgMembers.orgId, role: orgMembers.role })
-    .from(orgMembers)
-    .where(eq(orgMembers.userId, userId));
-  const appRoleByOrg = new Map(appMemberships.map((membership) => [membership.orgId, membership.role]));
 
   // Workspaces owned
   const owned = await db
@@ -262,7 +248,7 @@ export async function getUserDetail(userId: string): Promise<UserDetail | null> 
   const joined = joinedRaw.filter((m) => !ownedIds.has(m.orgId));
 
   // Last activity per workspace (across the page's set)
-  const allOrgIds = [...owned.map((w) => w.id), ...joined.map((j) => j.orgId)];
+  const allOrgIds = [...new Set([...owned.map((w) => w.id), ...joined.map((j) => j.orgId)])];
   let lastActivityMap = new Map<string, Date>();
   if (allOrgIds.length) {
     const lastRows = await db
@@ -277,6 +263,36 @@ export async function getUserDetail(userId: string): Promise<UserDetail | null> 
     lastActivityMap = new Map(lastRows.map((r) => [r.orgId, new Date(r.lastAt)]));
   }
 
+  const roleFactsByOrg = new Map<string, WorkspaceRoleFacts>();
+  if (allOrgIds.length) {
+    const agencyWorkspace = alias(organizations, "role_agency_workspace");
+    const roleRows = await db
+      .select({
+        orgId: organizations.id,
+        ownerId: organizations.ownerId,
+        parentUserId: organizations.parentUserId,
+        agencyOwnerUserId: sql<string | null>`coalesce(${partnerAgencies.ownerUserId}, ${agencyWorkspace.ownerId})`,
+        membershipRole: orgMembers.role,
+      })
+      .from(organizations)
+      .leftJoin(orgMembers, and(eq(orgMembers.orgId, organizations.id), eq(orgMembers.userId, userId)))
+      .leftJoin(partnerAgencies, eq(partnerAgencies.id, organizations.parentAgencyId))
+      .leftJoin(agencyWorkspace, eq(agencyWorkspace.id, partnerAgencies.ownerWorkspaceId))
+      .where(inArray(organizations.id, allOrgIds));
+    for (const row of roleRows) {
+      roleFactsByOrg.set(row.orgId, {
+        orgId: row.orgId,
+        userId,
+        ownerId: row.ownerId ?? null,
+        parentUserId: row.parentUserId ?? null,
+        agencyOwnerUserId: row.agencyOwnerUserId ?? null,
+        membershipRole: row.membershipRole ?? null,
+        homeOrgId: user.orgId ?? null,
+        homeRole: user.role ?? null,
+      });
+    }
+  }
+
   const workspaces: UserDetailWorkspace[] = [
     ...owned.map((w) => ({
       id: w.id,
@@ -286,7 +302,10 @@ export async function getUserDetail(userId: string): Promise<UserDetail | null> 
       createdAt: w.createdAt.toISOString(),
       lastActivityAt: lastActivityMap.get(w.id)?.toISOString() ?? null,
       relation: "owner" as const,
-      ...resolveEffectiveWorkspaceRole({ userId, primaryOrgId: user.orgId, userRole: user.role, workspaceId: w.id, isOwner: true, memberRole: appRoleByOrg.get(w.id) ?? null }),
+      ...resolveEffectiveWorkspaceRole(roleFactsByOrg.get(w.id) ?? {
+        orgId: w.id, userId, ownerId: userId, parentUserId: null, agencyOwnerUserId: null,
+        membershipRole: null, homeOrgId: user.orgId ?? null, homeRole: user.role ?? null,
+      }),
     })),
     ...joined.map((j) => ({
       id: j.org.id,
@@ -296,7 +315,10 @@ export async function getUserDetail(userId: string): Promise<UserDetail | null> 
       createdAt: j.org.createdAt.toISOString(),
       lastActivityAt: lastActivityMap.get(j.orgId)?.toISOString() ?? null,
       relation: "member" as const,
-      ...resolveEffectiveWorkspaceRole({ userId, primaryOrgId: user.orgId, userRole: user.role, workspaceId: j.org.id, isOwner: false, memberRole: appRoleByOrg.get(j.org.id) ?? null }),
+      ...resolveEffectiveWorkspaceRole(roleFactsByOrg.get(j.org.id) ?? {
+        orgId: j.org.id, userId, ownerId: null, parentUserId: null, agencyOwnerUserId: null,
+        membershipRole: null, homeOrgId: user.orgId ?? null, homeRole: user.role ?? null,
+      }),
       membershipStatus: j.status,
     })),
   ];

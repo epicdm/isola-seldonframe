@@ -149,7 +149,7 @@ function WorkspaceTable({
     createdAt: string;
     lastActivityAt: string | null;
     effectiveRole: string | null;
-    roleSource: "organizations.owner_id" | "users.role" | "org_members.role" | null;
+    roleSource: "organizations.owner_id" | "organizations.parent_user_id" | "partner_agencies.owner_user_id" | "users.role" | "org_members.role" | null;
     membershipStatus?: string;
   }>;
   showMembershipStatus?: boolean;
